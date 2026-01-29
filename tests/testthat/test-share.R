@@ -257,6 +257,113 @@ test_that("share handles empty vectors", {
     close(shared)
 })
 
+test_that("share handles zero-length vectors of all types", {
+    # Double
+    x <- double(0)
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+
+    # Logical
+    x <- logical(0)
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+
+    # Character
+    x <- character(0)
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+
+    # Raw
+    x <- raw(0)
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+})
+
+test_that("share handles single-element vectors", {
+    # Single integer
+    x <- 1L
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+
+    # Single double
+    x <- 3.14
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_equal(x, recovered)
+    close(shared)
+
+    # Single character
+    x <- "hello"
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+
+    # Single logical
+    x <- TRUE
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+
+    # Single NA
+    x <- NA
+    shared <- share(x)
+    recovered <- fetch(shared)
+    expect_identical(x, recovered)
+    close(shared)
+})
+
+test_that("share handles single-element matrix and array", {
+    # 1x1 matrix
+    mat <- matrix(42, nrow = 1, ncol = 1)
+    shared <- share(mat)
+    recovered <- fetch(shared)
+    expect_identical(mat, recovered)
+    close(shared)
+
+    # 1x1x1 array
+    arr <- array(42, dim = c(1, 1, 1))
+    shared <- share(arr)
+    recovered <- fetch(shared)
+    expect_identical(arr, recovered)
+    close(shared)
+})
+
+test_that("share handles empty data.frame", {
+    # Zero-row data.frame
+    df <- data.frame(a = integer(0), b = character(0), stringsAsFactors = FALSE)
+    shared <- share(df)
+    recovered <- fetch(shared)
+    expect_identical(df, recovered)
+    close(shared)
+
+    # Zero-column data.frame
+    df <- data.frame()
+    shared <- share(df)
+    recovered <- fetch(shared)
+    expect_identical(df, recovered)
+    close(shared)
+})
+
+test_that("share handles empty list", {
+    lst <- list()
+    shared <- share(lst)
+    recovered <- fetch(shared)
+    expect_identical(lst, recovered)
+    close(shared)
+})
+
 test_that("share handles NULL elements in lists", {
     lst <- list(a = 1, b = NULL, c = 3)
     shared <- share(lst)

@@ -291,3 +291,76 @@ test_that("shard_map() handles COW policies", {
 
   pool_stop()
 })
+
+test_that("shard_map() handles single-element input", {
+  skip_on_cran()
+
+  # Single element with n=1
+  result <- shard_map(1, function(shard) {
+    sum(shard$idx)
+  }, workers = 2)
+
+  expect_s3_class(result, "shard_result")
+  expect_true(succeeded(result))
+
+  res <- results(result)
+  expect_equal(res[[1]], 1)
+
+  pool_stop()
+})
+
+test_that("shard_map() handles single shard", {
+  skip_on_cran()
+
+  # Single shard with block_size larger than n
+  blocks <- shards(5, block_size = 100, workers = 2)
+  expect_equal(blocks$num_shards, 1)
+
+  result <- shard_map(blocks, function(shard) {
+    sum(shard$idx)
+  }, workers = 2)
+
+  expect_true(succeeded(result))
+  expect_equal(results(result)[[1]], sum(1:5))
+
+  pool_stop()
+})
+
+test_that("shard_map() handles block_size equal to n", {
+  skip_on_cran()
+
+  # Exactly one shard
+  blocks <- shards(10, block_size = 10, workers = 2)
+  expect_equal(blocks$num_shards, 1)
+
+  result <- shard_map(blocks, function(shard) {
+    length(shard$idx)
+  }, workers = 2)
+
+  expect_true(succeeded(result))
+  expect_equal(results(result)[[1]], 10)
+
+  pool_stop()
+})
+
+test_that("shard_map() with borrowed input handles single element", {
+  skip_on_cran()
+
+  X <- matrix(1:10, nrow = 10, ncol = 1)
+
+  blocks <- shards(ncol(X), block_size = 10, workers = 2)
+  expect_equal(blocks$num_shards, 1)
+
+  result <- shard_map(blocks,
+    borrow = list(X = X),
+    fun = function(shard, X) {
+      sum(X[, shard$idx, drop = FALSE])
+    },
+    workers = 2
+  )
+
+  expect_true(succeeded(result))
+  expect_equal(results(result)[[1]], sum(1:10))
+
+  pool_stop()
+})
