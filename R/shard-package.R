@@ -6,6 +6,13 @@
 #' The shard package provides a parallel execution runtime that emphasizes
 #' deterministic memory behavior and efficient handling of large shared inputs.
 #'
+#' @section Output Buffers:
+#' * [buffer()] - Create typed writable output buffer
+#' * [buffer_open()] - Open existing buffer from another process
+#' * [buffer_path()] - Get buffer path for cross-process sharing
+#' * [buffer_info()] - Get buffer information
+#' * [buffer_close()] - Close and release buffer
+#'
 #' @section Worker Pool Management:
 #' * [pool_create()] - Create a supervised worker pool
 #' * [pool_stop()] - Stop the worker pool

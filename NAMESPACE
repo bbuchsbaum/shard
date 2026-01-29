@@ -26,6 +26,13 @@ export(segment_protect)
 export(is_windows)
 export(available_backings)
 
+# Buffer API
+export(buffer)
+export(buffer_open)
+export(buffer_path)
+export(buffer_info)
+export(buffer_close)
+
 # S3 methods
 S3method(print, shard_dispatch_result)
 S3method(print, shard_health_report)
@@ -33,6 +40,18 @@ S3method(print, shard_pool)
 S3method(print, shard_queue)
 S3method(print, shard_worker)
 S3method(print, shard_segment)
+S3method(print, shard_buffer)
+S3method(length, shard_buffer)
+S3method(dim, shard_buffer)
+S3method("[", shard_buffer)
+S3method("[<-", shard_buffer)
+S3method(as.vector, shard_buffer)
+S3method(as.double, shard_buffer)
+S3method(as.integer, shard_buffer)
+S3method(as.logical, shard_buffer)
+S3method(as.raw, shard_buffer)
+S3method(as.matrix, shard_buffer)
+S3method(as.array, shard_buffer)
 
 # Imports
 importFrom(parallel, clusterCall)
