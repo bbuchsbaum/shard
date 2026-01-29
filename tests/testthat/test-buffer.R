@@ -220,3 +220,41 @@ test_that("buffer logical type works", {
     expect_equal(buf[c(2, 4, 6, 8, 10)], rep(FALSE, 5))
     buffer_close(buf)
 })
+
+test_that("buffer handles single-element dimension", {
+    # Single-element double buffer
+    buf <- buffer("double", dim = 1)
+    expect_equal(buf$n, 1)
+    expect_equal(length(buf), 1)
+    expect_equal(buf[], 0)
+
+    buf[1] <- 42
+    expect_equal(buf[1], 42)
+    expect_equal(buf[], 42)
+    buffer_close(buf)
+
+    # Single-element integer buffer
+    buf <- buffer("integer", dim = 1)
+    buf[1] <- 99L
+    expect_equal(buf[1], 99L)
+    buffer_close(buf)
+
+    # Single-element logical buffer
+    buf <- buffer("logical", dim = 1)
+    expect_equal(buf[1], FALSE)
+    buf[1] <- TRUE
+    expect_equal(buf[1], TRUE)
+    buffer_close(buf)
+})
+
+test_that("buffer handles 1x1 matrix dimension", {
+    buf <- buffer("double", dim = c(1, 1))
+    expect_equal(dim(buf), c(1, 1))
+    expect_equal(length(buf), 1)
+
+    buf[1, 1] <- 42
+    expect_equal(buf[1, 1], 42)
+    expect_equal(buf[], matrix(42, 1, 1))
+
+    buffer_close(buf)
+})
