@@ -27,6 +27,72 @@
 #' @useDynLib shard, .registration = TRUE
 NULL
 
+# Internal helper: check for non-serializable objects
+# Returns NULL on success, stops with error on failure
+validate_serializable <- function(x, path = "x") {
+    # Check for functions (closures)
+    if (is.function(x)) {
+        stop("Cannot share functions (closures).\n",
+             "  Found at: ", path, "\n",
+             "  Hint: Extract the data you need and share that instead.",
+             call. = FALSE)
+    }
+
+    # Check for external pointers
+    if (typeof(x) == "externalptr") {
+        stop("Cannot share external pointers.\n",
+             "  Found at: ", path, "\n",
+             "  External pointers reference memory that cannot be serialized.",
+             call. = FALSE)
+    }
+
+    # Check for connections
+    if (inherits(x, "connection")) {
+        stop("Cannot share connection objects.\n",
+             "  Found at: ", path, "\n",
+             "  Connections cannot be serialized.",
+             call. = FALSE)
+    }
+
+    # Recursively check environments
+    if (is.environment(x)) {
+        # Skip base/global/empty environments (these serialize fine)
+        if (identical(x, baseenv()) ||
+            identical(x, globalenv()) ||
+            identical(x, emptyenv())) {
+            return(invisible(NULL))
+        }
+
+        # Check contents of user environments
+        for (nm in names(x)) {
+            validate_serializable(x[[nm]], paste0(path, "$", nm))
+        }
+    }
+
+    # Recursively check lists
+    if (is.list(x) && !is.data.frame(x)) {
+        nms <- names(x)
+        for (i in seq_along(x)) {
+            item_path <- if (!is.null(nms) && nzchar(nms[i])) {
+                paste0(path, "$", nms[i])
+            } else {
+                paste0(path, "[[", i, "]]")
+            }
+            validate_serializable(x[[i]], item_path)
+        }
+    }
+
+    # Recursively check S4 slots
+    if (isS4(x)) {
+        slot_names <- slotNames(x)
+        for (sn in slot_names) {
+            validate_serializable(slot(x, sn), paste0(path, "@", sn))
+        }
+    }
+
+    invisible(NULL)
+}
+
 #' Share an R Object for Parallel Access
 #'
 #' Creates a shared memory representation of an R object. The object is
@@ -87,8 +153,20 @@ share <- function(x,
                   name = NULL) {
     backing <- match.arg(backing)
 
-    # Serialize the object
-    serialized <- serialize(x, connection = NULL, xdr = FALSE)
+    # Validate input is serializable
+    validate_serializable(x)
+
+    # Serialize the object (with tryCatch for edge cases)
+    serialized <- tryCatch(
+        serialize(x, connection = NULL, xdr = FALSE),
+        error = function(e) {
+            stop("Cannot share object: serialization failed.\n",
+                 "Reason: ", conditionMessage(e), "\n",
+                 "Objects containing closures, external pointers, or ",
+                 "certain connection types cannot be shared.",
+                 call. = FALSE)
+        }
+    )
     size <- length(serialized)
 
     # Create segment with enough space for the serialized data
