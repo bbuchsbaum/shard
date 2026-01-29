@@ -1,0 +1,44 @@
+/*
+ * init.c - R package initialization for shard
+ *
+ * Registers C routines with R and handles package load/unload.
+ */
+
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/Rdynload.h>
+#include <R_ext/Visibility.h>
+
+#include "shard_shm.h"
+
+/* Callable methods from R */
+static const R_CallMethodDef CallEntries[] = {
+    {"C_shard_segment_create",    (DL_FUNC) &C_shard_segment_create,    4},
+    {"C_shard_segment_open",      (DL_FUNC) &C_shard_segment_open,      3},
+    {"C_shard_segment_close",     (DL_FUNC) &C_shard_segment_close,     2},
+    {"C_shard_segment_addr",      (DL_FUNC) &C_shard_segment_addr,      1},
+    {"C_shard_segment_size",      (DL_FUNC) &C_shard_segment_size,      1},
+    {"C_shard_segment_path",      (DL_FUNC) &C_shard_segment_path,      1},
+    {"C_shard_segment_write_raw", (DL_FUNC) &C_shard_segment_write_raw, 3},
+    {"C_shard_segment_read_raw",  (DL_FUNC) &C_shard_segment_read_raw,  3},
+    {"C_shard_segment_protect",   (DL_FUNC) &C_shard_segment_protect,   1},
+    {"C_shard_segment_info",      (DL_FUNC) &C_shard_segment_info,      1},
+    {"C_shard_is_windows",        (DL_FUNC) &C_shard_is_windows,        0},
+    {"C_shard_available_backings",(DL_FUNC) &C_shard_available_backings,0},
+    {NULL, NULL, 0}
+};
+
+/* Package initialization */
+attribute_visible void R_init_shard(DllInfo *dll) {
+    R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
+    R_useDynamicSymbols(dll, FALSE);
+    /* Note: Not using R_forceSymbols to allow string-based .Call */
+
+    /* Initialize shared memory subsystem */
+    shard_shm_init();
+}
+
+/* Package cleanup (called on unload) */
+void R_unload_shard(DllInfo *dll) {
+    shard_shm_cleanup();
+}

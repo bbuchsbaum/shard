@@ -17,11 +17,6 @@ Encoding: UTF-8
 LazyData: true
 Depends:
     R (>= 4.1.0)
-Imports:
-    parallel,
-    stats,
-    utils,
-    methods
 Suggests:
     bench,
     foreach,
@@ -41,3 +36,4 @@ NeedsCompilation: yes
 URL: https://github.com/your-org/shard
 BugReports: https://github.com/your-org/shard/issues
 SystemRequirements: POSIX shared memory (optional), memory-mapped files
+Config/testthat/edition: 3

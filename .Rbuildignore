@@ -1,0 +1,9 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.git$
+^\.beads$
+^\.runtime$
+^configure$
+^cleanup$
+^shard\.Rcheck$
+^shard.*\.tar\.gz$
