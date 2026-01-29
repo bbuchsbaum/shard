@@ -12,6 +12,9 @@
 //! - **Shards** - Index descriptors for dividing work across workers.
 //!   Use [`shards()`] to create shard descriptors.
 //!
+//! - **Share planning** - Analyze structures before sharing to understand what
+//!   will be shared, kept, or aliased. Use [`share_plan::share_plan()`].
+//!
 //! # Accessing shared data: fetch() vs materialize()
 //!
 //! The [`shared`] module provides two ways to access data:
@@ -23,6 +26,7 @@
 
 pub mod shards;
 pub mod shared;
+pub mod share_plan;
 
 // Re-export main types at crate root
 pub use shards::{
@@ -31,4 +35,9 @@ pub use shards::{
 
 pub use shared::{
     Fetchable, Materializable, SharedDiagnostics, SharedError, SharedSegment, SharedView,
+};
+
+pub use share_plan::{
+    share_plan, CyclePolicy, ShareAction, ShareMode, SharePlan, SharePlanConfig,
+    SharePlanNode, SharePlanSummary, ShareReason, ValueInfo, ValueType,
 };
