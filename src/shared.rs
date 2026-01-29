@@ -504,4 +504,122 @@ mod tests {
         assert_eq!(view.get(2), Some(&30));
         assert_eq!(view.get(3), None);
     }
+
+    // Tests for type preservation (R logical/raw equivalents)
+    // These verify that materialize() preserves the original type
+    // without coercion, unlike arithmetic-based approaches.
+
+    #[test]
+    fn test_materialize_preserves_bool_type() {
+        // bool corresponds to R's logical type
+        let segment = SharedSegment::from_vec(vec![true, false, true, false, true]);
+
+        // Materialize should return Vec<bool>, not Vec<i32> or other numeric type
+        let materialized: Vec<bool> = segment.materialize();
+
+        assert_eq!(materialized, vec![true, false, true, false, true]);
+        assert_eq!(materialized.len(), 5);
+
+        // Verify individual values
+        assert!(materialized[0]);
+        assert!(!materialized[1]);
+        assert!(materialized[2]);
+    }
+
+    #[test]
+    fn test_materialize_slice_preserves_bool_type() {
+        let segment = SharedSegment::from_vec(vec![true, true, false, false, true]);
+
+        let slice: Vec<bool> = segment.materialize_slice(1, 4).unwrap();
+
+        assert_eq!(slice, vec![true, false, false]);
+    }
+
+    #[test]
+    fn test_fetch_preserves_bool_type() {
+        let segment = SharedSegment::from_vec(vec![false, true, false]);
+
+        let view = segment.fetch();
+
+        // View should be &[bool]
+        assert_eq!(view.as_slice(), &[false, true, false]);
+        assert!(!view[0]);
+        assert!(view[1]);
+    }
+
+    #[test]
+    fn test_materialize_preserves_u8_type() {
+        // u8 corresponds to R's raw type
+        let segment = SharedSegment::from_vec(vec![0u8, 127, 255, 42, 0]);
+
+        // Materialize should return Vec<u8>, not error or coerce
+        let materialized: Vec<u8> = segment.materialize();
+
+        assert_eq!(materialized, vec![0u8, 127, 255, 42, 0]);
+        assert_eq!(materialized.len(), 5);
+
+        // Verify byte values are preserved exactly
+        assert_eq!(materialized[0], 0);
+        assert_eq!(materialized[1], 127);
+        assert_eq!(materialized[2], 255); // Max u8 value
+    }
+
+    #[test]
+    fn test_materialize_slice_preserves_u8_type() {
+        let segment = SharedSegment::from_vec(vec![10u8, 20, 30, 40, 50]);
+
+        let slice: Vec<u8> = segment.materialize_slice(2, 5).unwrap();
+
+        assert_eq!(slice, vec![30u8, 40, 50]);
+    }
+
+    #[test]
+    fn test_fetch_preserves_u8_type() {
+        let segment = SharedSegment::from_vec(vec![0xFFu8, 0x00, 0xAB]);
+
+        let view = segment.fetch();
+
+        // View should be &[u8]
+        assert_eq!(view.as_slice(), &[0xFFu8, 0x00, 0xAB]);
+        assert_eq!(view[0], 255);
+        assert_eq!(view[1], 0);
+    }
+
+    #[test]
+    fn test_bool_diagnostics_tracking() {
+        let segment = SharedSegment::from_vec(vec![true, false, true]);
+
+        let _m = segment.materialize();
+
+        // 3 bools = 3 bytes (bool is 1 byte in Rust)
+        assert_eq!(segment.materialized_bytes(), 3);
+    }
+
+    #[test]
+    fn test_u8_diagnostics_tracking() {
+        let segment = SharedSegment::from_vec(vec![1u8, 2, 3, 4]);
+
+        let _m = segment.materialize();
+
+        // 4 u8s = 4 bytes
+        assert_eq!(segment.materialized_bytes(), 4);
+    }
+
+    #[test]
+    fn test_empty_bool_segment() {
+        let segment: SharedSegment<bool> = SharedSegment::from_vec(vec![]);
+
+        assert!(segment.is_empty());
+        let materialized = segment.materialize();
+        assert!(materialized.is_empty());
+    }
+
+    #[test]
+    fn test_empty_u8_segment() {
+        let segment: SharedSegment<u8> = SharedSegment::from_vec(vec![]);
+
+        assert!(segment.is_empty());
+        let materialized = segment.materialize();
+        assert!(materialized.is_empty());
+    }
 }
