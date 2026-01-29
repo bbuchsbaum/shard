@@ -1,0 +1,34 @@
+# R package ignores
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Build artifacts
+src/*.o
+src/*.so
+src/*.dll
+*.tar.gz
+
+# Documentation
+docs/
+doc/
+
+# Test artifacts
+tests/testthat/_snaps/
+coverage.html
+*.gcov
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Beads database files (tracked separately)
+.beads/*.db
+.beads/*.db-wal
+.beads/*.db-shm

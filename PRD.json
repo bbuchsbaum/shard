@@ -1,0 +1,789 @@
+{
+  "metadata": {
+    "document_type": "PRD",
+    "version": "1.0.0",
+    "product_name": "shard",
+    "tagline": "Deterministic, zero-copy parallel execution for R",
+    "created": "2026-01-28",
+    "status": "draft"
+  },
+
+  "elevator_pitch": "shard introduces a new parallel execution contract for R: (1) Large inputs are shared and immutable, (2) Results go into explicit output buffers, (3) Memory stability is enforced via worker supervision and recycling. This eliminates the common causes of flaky parallel memory behavior in R: duplicated inputs, hidden copies, long-lived worker heap drift, and unpredictable GC timing.",
+
+  "problem_statement": {
+    "summary": "R parallelism is often fast until it isn't",
+    "pain_points": [
+      "Memory spikes from serialization + duplication",
+      "Silent copy-on-modify",
+      "Heap drift and fragmentation across long runs",
+      "OOMs that appear random depending on scheduling",
+      "foreach conceptually returns values not side effects, but common usage patterns accidentally build huge intermediate lists"
+    ],
+    "current_assumption": "The existing ecosystem largely assumes 'user code behaves'",
+    "shard_assumption": "shard assumes it might not — and still keeps memory bounded"
+  },
+
+  "goals": {
+    "functional": [
+      "Shared immutable inputs usable across R objects (vectors/matrices/arrays) with cheap views",
+      "Explicit output buffers that allow disjoint writes without locks",
+      "Parallel map that does not serialize shared inputs per task",
+      "Parallel map that supports chunked dispatch",
+      "Parallel map that handles worker recycling safely",
+      "Diagnostics that prove peak memory stays bounded",
+      "Diagnostics that prove memory returns after completion (or after recycling)",
+      "Diagnostics that prove hidden copies are minimized/measurable"
+    ],
+    "non_functional": [
+      "CRAN-compatible build and behavior",
+      "Cross-platform: Linux/macOS (shm + mmap), Windows (mmap file-backed)",
+      "Stable API surface (small, composable)"
+    ],
+    "success_metrics": [
+      "Peak RSS significantly reduced vs baseline foreach + doParallel for large shared inputs",
+      "End-of-run RSS returns close to baseline (no runaway drift)",
+      "Near-linear scaling on embarrassingly parallel numeric workloads",
+      "Materialized bytes near zero in ideal cases"
+    ]
+  },
+
+  "target_users": {
+    "primary": [
+      "Scientific computing with large matrices/arrays",
+      "Simulation and resampling",
+      "High-throughput modeling (per-column/voxel/regression)"
+    ],
+    "flagship_workload": "Voxelwise GLM / classification analyses over voxel sets"
+  },
+
+  "user_stories": [
+    {
+      "id": "US-001",
+      "story": "I have a huge matrix X and I want to run per-column models in parallel without copying X 8 times.",
+      "acceptance_criteria": [
+        "share(X) creates a single shared memory segment",
+        "All workers attach to same segment without serialization",
+        "copy_report() shows 0 bytes materialized for X",
+        "Peak RSS is approximately base + sizeof(X) + worker_overhead, not base + N*sizeof(X)"
+      ]
+    },
+    {
+      "id": "US-002",
+      "story": "I run 10,000 simulation tasks; memory shouldn't creep upward after 2,000 tasks.",
+      "acceptance_criteria": [
+        "Worker RSS monitored continuously",
+        "Workers recycled when RSS drift exceeds threshold",
+        "End-of-run RSS within 20% of baseline RSS",
+        "mem_report() shows recycle events and RSS timeline"
+      ]
+    },
+    {
+      "id": "US-003",
+      "story": "If a worker leaks, the runtime should detect and recycle it, and my job should still finish.",
+      "acceptance_criteria": [
+        "Worker health monitoring detects RSS drift",
+        "Automatic worker recycling without job failure",
+        "Uncompleted chunks requeued to new workers",
+        "Job completes with correct results despite worker recycling",
+        "task_report() shows retry counts per task"
+      ]
+    },
+    {
+      "id": "US-004",
+      "story": "I want a report that explains peak memory and whether hidden copies occurred.",
+      "acceptance_criteria": [
+        "shard::report() returns comprehensive shard_report object",
+        "Report includes: workers used, recycle events, peak RSS, max drift, task counts, materialized bytes, CoW violations",
+        "print(report) produces human-readable summary",
+        "Detailed reports available via mem_report(), cow_report(), copy_report(), task_report(), segment_report()"
+      ]
+    }
+  ],
+
+  "scope": {
+    "v1_in_scope": [
+      "share() shared immutable segments (mmap/shm)",
+      "buffer() typed writable output buffers",
+      "shards() index/block creation with simple autotuning",
+      "shard_map() parallel execution with chunking + supervision",
+      "arena() as semantic scope for compiled kernels and arbitrary R code",
+      "Diagnostics + reports",
+      "doShard companion package"
+    ],
+    "v1_out_of_scope": [
+      "Multi-machine scheduling (v2.0)",
+      "Full page-fault write tracing engine (COW++ advanced mode)",
+      "Large library of built-in kernels"
+    ],
+    "v2_preview": [
+      "Distributed coordinator + leases + retry (multi-machine)",
+      "Shared FS mode (HPC) first; object-store chunking second",
+      "Network worker protocol",
+      "Stronger COW audit engine"
+    ]
+  },
+
+  "packages": {
+    "shard": {
+      "description": "Core package: shared memory, buffers, worker runtime, diagnostics",
+      "dependencies": ["R (>= 4.0.0)"],
+      "suggests": ["testthat", "bench", "ggplot2"]
+    },
+    "doShard": {
+      "description": "foreach adapter that depends on foreach + shard, registers backend, translates foreach semantics into shard runtime",
+      "dependencies": ["foreach", "shard", "iterators"],
+      "rationale": "Mirrors existing ecosystem pattern: foreach relies on registered backend via setDoPar()"
+    }
+  },
+
+  "api": {
+    "shard_core": {
+      "share": {
+        "signature": "share(x, backing = c('auto','mmap','shm'), path = NULL, readonly = TRUE)",
+        "description": "Produces a shared object with view semantics. Default is read-only. Returns S3 object (often ALTREP-backed for atomic vectors).",
+        "parameters": {
+          "x": "R object to share (vectors/matrices/arrays)",
+          "backing": "Storage backend: auto, mmap, or shm",
+          "path": "Optional file path for mmap backing",
+          "readonly": "Whether segment is read-only (default TRUE)"
+        },
+        "returns": "S3 shared object with view semantics",
+        "acceptance_criteria": [
+          "Creates shared memory segment accessible by worker processes",
+          "ALTREP wrapper prevents unnecessary materialization",
+          "Subsetting returns views, not copies",
+          "dataptr_calls tracked for diagnostics",
+          "materialize_calls tracked for diagnostics",
+          "readonly=TRUE prevents write access"
+        ]
+      },
+      "buffer": {
+        "signature": "buffer(type, dim, backing = c('auto','mmap','shm'), init = NA, path = NULL)",
+        "description": "Typed writable output buffer. Supports disjoint writes by shard index.",
+        "parameters": {
+          "type": "One of: 'double', 'integer', 'logical', 'raw'",
+          "dim": "Dimensions of buffer (vector or matrix dims)",
+          "backing": "Storage backend",
+          "init": "Initial value (default NA)",
+          "path": "Optional file path for mmap backing"
+        },
+        "returns": "S3 buffer object with slice-addressable writes",
+        "acceptance_criteria": [
+          "Supports atomic types: double, integer, logical, raw",
+          "Allows disjoint writes without locks",
+          "Slice assignment works by shard index",
+          "Multiple workers can write to non-overlapping regions simultaneously",
+          "Buffer contents persist across worker recycling"
+        ]
+      },
+      "shards": {
+        "signature": "shards(n, block_size = c('auto', integer), strategy = c('contiguous','strided'))",
+        "description": "Produces shard descriptors (index vectors or range pairs)",
+        "parameters": {
+          "n": "Total number of items to shard",
+          "block_size": "Items per shard, or 'auto' for autotuning",
+          "strategy": "Index assignment strategy"
+        },
+        "returns": "Shard descriptors for use with shard_map",
+        "acceptance_criteria": [
+          "auto block_size considers worker count and expected scratch memory",
+          "contiguous strategy assigns consecutive indices per shard",
+          "strided strategy interleaves indices across shards",
+          "All indices from 1:n are covered exactly once",
+          "Descriptors are lightweight (index vectors or range pairs)"
+        ]
+      },
+      "shard_map": {
+        "signature": "shard_map(shards, borrow, out, fun, workers, profile, mem_cap, recycle, cow, chunk_size, seed, diagnostics)",
+        "description": "Core parallel execution engine",
+        "parameters": {
+          "shards": "Shard descriptors from shards()",
+          "borrow": "Named list of shared inputs (must not be mutated)",
+          "out": "Named list of output buffers",
+          "fun": "Function with signature function(shard, ..., out...)",
+          "workers": "Number of worker processes",
+          "profile": "Execution profile: balanced, strict, fast",
+          "mem_cap": "Memory cap (e.g., '24GB')",
+          "recycle": "Recycling policy: auto, never, threshold, task",
+          "cow": "Copy-on-write policy: deny, audit, allow",
+          "chunk_size": "Iterations per dispatched chunk",
+          "seed": "RNG seed for reproducibility",
+          "diagnostics": "Which diagnostics to capture"
+        },
+        "returns": "Run handle with results and diagnostics",
+        "acceptance_criteria": [
+          "Does not serialize shared inputs per task",
+          "Chunks tasks to reduce RPC overhead",
+          "Monitors worker RSS and triggers recycling per policy",
+          "Handles worker death: restart worker, requeue chunks",
+          "Borrowed inputs trigger error/warn/allow per cow policy on mutation",
+          "Results written to out buffers by shard index",
+          "seed enables deterministic per-iteration RNG",
+          "Returns run handle for diagnostics access"
+        ]
+      },
+      "arena": {
+        "signature": "arena(expr, strict = FALSE)",
+        "description": "Semantic scope that signals 'this code is scratchy; don't let temporaries accumulate'",
+        "parameters": {
+          "expr": "Expression to evaluate",
+          "strict": "If TRUE, forbids escaping large objects and triggers aggressive recycling"
+        },
+        "returns": "Result of expr",
+        "acceptance_criteria": [
+          "For compiled kernels: provides real scratch arenas",
+          "For arbitrary R code: triggers post-task checks",
+          "strict=TRUE warns/errors on escaping large objects",
+          "strict=TRUE triggers aggressive recycling on growth detection"
+        ]
+      }
+    },
+
+    "shard_diagnostics": {
+      "report": {
+        "signature": "report(x = NULL, level = c('summary','workers','tasks','segments'))",
+        "description": "Primary entry point for run diagnostics",
+        "parameters": {
+          "x": "Shard run handle (or NULL for current pool state)",
+          "level": "Detail level for report"
+        },
+        "returns": "S3 shard_report object",
+        "acceptance_criteria": [
+          "summary level shows: workers, recycles, tasks, failures, peak RSS, end RSS, copies, CoW violations",
+          "workers level includes per-worker time series",
+          "tasks level includes per-task metrics",
+          "segments level includes shared segment details",
+          "print() produces human-readable summary"
+        ]
+      },
+      "mem_report": {
+        "signature": "mem_report(x)",
+        "returns": "Data frame of memory metrics"
+      },
+      "cow_report": {
+        "signature": "cow_report(x)",
+        "returns": "Data frame of copy-on-write events"
+      },
+      "copy_report": {
+        "signature": "copy_report(x)",
+        "returns": "Data frame of materialization/copy events"
+      },
+      "task_report": {
+        "signature": "task_report(x)",
+        "returns": "Data frame of per-task metrics"
+      },
+      "segment_report": {
+        "signature": "segment_report(x)",
+        "returns": "Data frame of shared segment metrics"
+      }
+    },
+
+    "doShard": {
+      "registerDoShard": {
+        "signature": "registerDoShard(workers = NULL, profile = c('balanced','strict','fast'), mem_cap = NULL, recycle = c('auto','never','threshold','task'), cow = c('deny','audit','allow'), share = c('auto','manual'), share_min_bytes = '64MB', dispatcher = c('fifo','mem_aware'), chunk_size = 'auto', verbose = FALSE)",
+        "description": "Registers the doShard backend for foreach %dopar%",
+        "parameters": {
+          "workers": "Number of workers (default: available cores or safe fraction)",
+          "profile": "Execution profile with preset defaults",
+          "mem_cap": "Total memory cap",
+          "recycle": "Worker recycling policy",
+          "cow": "Copy-on-write policy",
+          "share": "Export-sharing policy",
+          "share_min_bytes": "Minimum size for auto-sharing",
+          "dispatcher": "Task dispatch strategy",
+          "chunk_size": "Iterations per chunk",
+          "verbose": "Enable verbose output"
+        },
+        "acceptance_criteria": [
+          "Creates/attaches shard worker pool",
+          "Calls foreach::setDoPar() with doShard backend",
+          "profile='strict' enables stronger safety + more frequent recycling",
+          "profile='balanced' provides good defaults for most users",
+          "profile='fast' minimizes overhead with fewer checks",
+          "Workers persist across multiple foreach calls",
+          "Compatible with getDoParWorkers(), getDoParName(), getDoParVersion()"
+        ]
+      },
+      "stopDoShard": {
+        "signature": "stopDoShard()",
+        "description": "Stops worker pool and unregisters backend",
+        "acceptance_criteria": [
+          "Terminates all worker processes",
+          "Releases shared memory segments",
+          "Unregisters backend or restores previous backend"
+        ]
+      },
+      "withDoShard": {
+        "signature": "withDoShard(expr, ...)",
+        "description": "Temporarily registers doShard for a single expression",
+        "acceptance_criteria": [
+          "Registers doShard before expr",
+          "Restores previous backend after expr",
+          "Works like doFuture pattern"
+        ]
+      },
+      "operators": {
+        "%dopar%": {
+          "description": "Standard foreach operator - compatibility mode with foreach semantics preserved"
+        },
+        "%doshard%": {
+          "description": "Shard-contract mode with borrowed inputs, explicit outputs, stronger checks",
+          "acceptance_criteria": [
+            "Enforces shard borrowing semantics",
+            "Requires explicit output specification",
+            "Enables stronger mutation checks"
+          ]
+        }
+      },
+      "options_shard": {
+        "description": "Backend-specific options via .options.shard in foreach()",
+        "fields": {
+          "data_policy": {
+            "share": "Character vector of export names to store as shared segments",
+            "share_min_bytes": "Override for auto-share threshold",
+            "borrow": "Character vector of inputs treated as read-only in task scope",
+            "cow": "'deny' | 'audit' | 'allow'",
+            "cow_budget_task": "Per-task copy budget (if cow='allow')",
+            "cow_budget_worker": "Per-worker copy budget (if cow='allow')"
+          },
+          "outputs": {
+            "out": "Named list of shard buffers from buffer()",
+            "out_assign": "Custom function(out, tag, result) -> NULL",
+            "return": "'foreach' (default) | 'out' | 'none'"
+          },
+          "execution": {
+            "profile": "Override backend profile per loop",
+            "mem_cap": "Per-loop memory cap override",
+            "recycle": "Per-loop recycling override",
+            "chunk_size": "Iterations per dispatched chunk",
+            "seed": "NULL or numeric for deterministic RNG",
+            "error_handling": "'stop' | 'pass'"
+          },
+          "diagnostics": {
+            "diagnostics": "Subset of c('mem','cow','copies','timing','gc')",
+            "trace": "TRUE/FALSE for extra debug info"
+          }
+        },
+        "acceptance_criteria": [
+          "All fields are optional with sensible defaults",
+          "share field controls which exports become shared segments",
+          "out field enables buffer-aware accumulator path",
+          "return='out' returns output buffers instead of list",
+          "return='none' drops results for side-effect-only benchmarking"
+        ]
+      }
+    }
+  },
+
+  "metrics": {
+    "worker_metrics": {
+      "description": "Time series captured at: start of run, end of each chunk, before/after recycle",
+      "fields": {
+        "worker_id": "Worker identifier",
+        "pid": "Process ID",
+        "host": "Host name (always local in v1.0)",
+        "rss_bytes": "Resident set size",
+        "vms_bytes": "Virtual memory size",
+        "cpu_user_sec": "User CPU seconds (optional)",
+        "cpu_sys_sec": "System CPU seconds (optional)",
+        "gc_trigger_count": "GC triggers if measurable",
+        "r_heap_used_bytes": "R heap via gc() diffs (best effort)",
+        "recycle_count": "Times this worker slot recycled",
+        "status": "ok | recycle_pending | restarting | dead"
+      },
+      "derived_charts": [
+        "RSS over time per worker",
+        "RSS baseline drift"
+      ]
+    },
+    "task_metrics": {
+      "description": "Per shard / per chunk metrics",
+      "fields": {
+        "task_id": "Tag identifier",
+        "chunk_id": "Chunk identifier",
+        "worker_id": "Assigned worker",
+        "t_start": "Start timestamp",
+        "t_end": "End timestamp",
+        "duration_ms": "Duration in milliseconds",
+        "result_bytes": "Serialized size or written bytes",
+        "rss_delta_bytes": "Worker RSS change (after - before)",
+        "errors": "Condition class/message if any",
+        "retries": "Retry count if recycled mid-run"
+      }
+    },
+    "segment_metrics": {
+      "description": "Shared inputs + output buffers",
+      "fields": {
+        "segment_id": "Segment identifier",
+        "type": "input | output",
+        "backing": "mmap_file | shm | etc",
+        "nbytes_total": "Total size",
+        "nbytes_resident": "Resident size (best effort)",
+        "refcount_workers": "Workers attached",
+        "created_at": "Creation timestamp",
+        "destroyed_at": "Destruction timestamp",
+        "path": "File path if file-backed (hidden in print)"
+      }
+    },
+    "copy_metrics": {
+      "description": "Copy/materialization tracking per share() object",
+      "fields": {
+        "dataptr_calls": "Times DATAPTR was called",
+        "materialize_calls": "Times data was materialized",
+        "materialized_bytes": "Total bytes materialized",
+        "forced_writable_calls": "Times R requested writable pointer",
+        "slice_view_count": "Number of view slices created"
+      },
+      "killer_metric": "materialized_bytes = 0 proves zero-copy behavior"
+    },
+    "cow_metrics": {
+      "description": "Copy-on-write reporting",
+      "fields": {
+        "worker_id": "Worker identifier",
+        "segment_id": "Segment identifier",
+        "private_bytes_delta": "Private bytes change per run/chunk",
+        "cow_events_est": "Estimated CoW events (optional)",
+        "policy_action": "none | warn | fail_task | recycle_worker"
+      },
+      "modes": {
+        "deny": "No reporting needed; writes error out",
+        "allow": "Report estimated private bytes via RSS + segment heuristics",
+        "audit": "Linux-first with /proc/<pid>/smaps for mapping-level stats"
+      }
+    }
+  },
+
+  "execution_model": {
+    "worker_pool": {
+      "description": "Spawn N R worker processes that persist but are supervised",
+      "acceptance_criteria": [
+        "Workers spawn as separate R processes",
+        "Workers persist across multiple shard_map calls",
+        "Worker health monitored via RSS tracking",
+        "Workers recycled on RSS drift threshold"
+      ]
+    },
+    "dispatch": {
+      "description": "Chunk tasks into bundles, send minimal metadata",
+      "acceptance_criteria": [
+        "Tasks grouped into chunks of chunk_size",
+        "Messages contain only: shard ids + params + compiled expr id + handles",
+        "Function registry caches compiled fun on workers",
+        "Avoids per-task closure shipping"
+      ]
+    },
+    "failure_semantics": {
+      "description": "Handle worker death gracefully",
+      "acceptance_criteria": [
+        "Dead worker detected and restarted",
+        "Uncompleted chunks requeued to new workers",
+        "Idempotence via disjoint output slicing",
+        "Rerunning shard overwrites only its own slice"
+      ]
+    }
+  },
+
+  "memory_model": {
+    "borrowing": {
+      "description": "Borrowed inputs are logically immutable in task scope",
+      "mutation_behavior": {
+        "deny": "Error on mutation attempt",
+        "audit": "Allow but fail/warn if detected",
+        "allow": "Allow with budgets + reporting"
+      },
+      "default_rationale": "cow='deny' is default because it prevents silently masking bugs, prevents accidental near-full copies via page-level CoW, keeps semantics unsurprising and CRAN-safe"
+    }
+  },
+
+  "dopar_backend_implementation": {
+    "function": "dopar_shard(obj, expr, envir, data)",
+    "algorithm": [
+      {
+        "step": 1,
+        "name": "Validate",
+        "actions": [
+          "Ensure inherits(obj, 'foreach')",
+          "Parse opts <- obj$options$shard %||% list()"
+        ]
+      },
+      {
+        "step": 2,
+        "name": "Build task iterator",
+        "actions": [
+          "it <- iterators::iter(obj)",
+          "Extract per-iteration argument environments"
+        ]
+      },
+      {
+        "step": 3,
+        "name": "Compute exports",
+        "actions": [
+          "Use foreach export discovery (or respect .export/.noexport)",
+          "Apply share policy: manual (only opts$share) or auto (share exports > share_min_bytes of supported types)"
+        ]
+      },
+      {
+        "step": 4,
+        "name": "Materialize shared exports once",
+        "actions": [
+          "For each export in share set: shared_obj <- shard::share(val, backing='auto')",
+          "Replace export payload with lightweight handle (segment id + metadata)",
+          "Workers attach via shard::attach(handle)"
+        ]
+      },
+      {
+        "step": 5,
+        "name": "Packages",
+        "actions": [
+          "Load obj$packages on workers once per loop (or cache across loops)"
+        ]
+      },
+      {
+        "step": 6,
+        "name": "Compile expression",
+        "actions": [
+          "Compile expr once when possible to reduce per-iteration overhead"
+        ]
+      },
+      {
+        "step": 7,
+        "name": "Chunk + dispatch",
+        "actions": [
+          "Group iterations into chunks of opts$chunk_size",
+          "Dispatch chunks to shard workers",
+          "Send only: tags + argument values + compiled expr id + handles"
+        ]
+      },
+      {
+        "step": 8,
+        "name": "Result handling",
+        "actions": [
+          "If opts$out set: use buffer-aware accumulator writing to out by tag",
+          "Else: use standard foreach accumulator (list / .combine)"
+        ]
+      },
+      {
+        "step": 9,
+        "name": "Errors",
+        "actions": [
+          "Capture errors per tag",
+          "Respect obj$errorHandling: 'stop' raises after first failure, 'pass' includes errors in result"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Validates foreach object before processing",
+      "Shared exports materialized exactly once",
+      "Workers receive handles, not full data",
+      "Chunking reduces dispatch overhead",
+      "Buffer accumulator avoids building huge lists",
+      "Error handling matches foreach semantics"
+    ]
+  },
+
+  "buffer_accumulator": {
+    "constructor": "makeShardAccum(it, out, out_assign, return_mode)",
+    "methods": {
+      "accumulate.shardaccum": {
+        "description": "Accumulate single result",
+        "behavior": [
+          "If out_assign provided: call out_assign(out, tag, result)",
+          "Else for vector-ish returns: out[[name]][tag] <- result",
+          "Else for matrix-ish returns: slice assignment based on tag"
+        ]
+      },
+      "getResult.shardaccum": {
+        "description": "Get final results",
+        "behavior": {
+          "out": "Return out buffers (preferred)",
+          "none": "Return NULL",
+          "foreach": "Fall back to list (not recommended if out exists)"
+        }
+      }
+    },
+    "acceptance_criteria": [
+      "Writes results directly to buffers without growing lists",
+      "Supports vector and matrix slice assignment",
+      "Custom out_assign enables flexible result handling",
+      "return_mode controls final output type"
+    ]
+  },
+
+  "combine_strategies": {
+    "streaming_reducers": {
+      "operators": ["+", "*", "min", "max", "sum"],
+      "description": "Implement in master as streaming reduction as results arrive",
+      "acceptance_criteria": [
+        "No intermediate list allocation",
+        "Results reduced incrementally"
+      ]
+    },
+    "buffer_combines": {
+      "operators": ["c", "rbind", "cbind"],
+      "condition": "Fixed-size per-iteration results",
+      "description": "Infer shape from first iteration, allocate buffer, write by tag",
+      "acceptance_criteria": [
+        "Shape inferred from first result",
+        "Buffer allocated once",
+        "Results written by tag index"
+      ]
+    },
+    "fallback": {
+      "description": "Unknown .combine uses foreach default behavior"
+    }
+  },
+
+  "flagship_kernel": {
+    "name": "QR-once + chunked QtY + triangular solves",
+    "deliverable": "Vignette + benchmark script; optionally shard_lm_many() helper",
+    "algorithm": [
+      "Precompute QR of X once",
+      "For each block of responses: apply Qt to Y_chunk using LAPACK reflectors (no explicit Q)",
+      "Solve R β = Z1 with triangular solve",
+      "Compute RSS from bottom rows of Z (no residual materialization)",
+      "Write into output buffers"
+    ],
+    "acceptance_criteria": [
+      "QR factorization computed once and shared",
+      "No explicit Q materialization",
+      "Qt application via LAPACK reflectors",
+      "Results written to pre-allocated buffers",
+      "Demonstrates both speed and stable memory"
+    ]
+  },
+
+  "benchmark_plan": {
+    "delivery": "inst/bench/ scripts (not run on CRAN) + vignette plots/tables",
+    "suites": [
+      {
+        "name": "Many regressions",
+        "description": "LM / GLM-like workloads"
+      },
+      {
+        "name": "Simulation sweeps",
+        "description": "10k-100k iterations"
+      },
+      {
+        "name": "Columnwise ops",
+        "description": "Statistical operations per column"
+      },
+      {
+        "name": "MVPA/searchlight",
+        "description": "Optional neuroscience workload"
+      }
+    ],
+    "metrics_recorded": [
+      "Wall time",
+      "Speedup vs workers",
+      "Peak RSS total and per-worker",
+      "End RSS vs baseline",
+      "Materialized bytes (copies)",
+      "Recycle events count",
+      "Task retry counts"
+    ]
+  },
+
+  "cran_compatibility": {
+    "requirements": [
+      "Conservative defaults",
+      "All temp files have secure permissions and are finalizer-cleaned",
+      "No requirement for fork()",
+      "No requirement for Linux-only features",
+      "Any OS-specific COW audit is guarded and optional"
+    ],
+    "platform_support": {
+      "linux": "Full support including CoW audit via /proc/smaps",
+      "macos": "Full support; CoW audit best-effort",
+      "windows": "File-backed mmap; CoW audit limited"
+    }
+  },
+
+  "deliverables": {
+    "shard_package": {
+      "components": [
+        "Core API (share, buffer, shards, shard_map, arena)",
+        "Diagnostics API (report, mem_report, cow_report, copy_report, task_report, segment_report)",
+        "Worker pool management",
+        "Cross-platform shared memory backend"
+      ],
+      "vignettes": [
+        {
+          "title": "Shared inputs + explicit outputs",
+          "content": "Introduction to share() and buffer() APIs"
+        },
+        {
+          "title": "Memory determinism via recycling",
+          "content": "Worker supervision and recycling strategies"
+        },
+        {
+          "title": "Voxelwise GLM case study",
+          "content": "Flagship kernel demonstration"
+        }
+      ]
+    },
+    "doShard_package": {
+      "components": [
+        "registerDoShard()",
+        "stopDoShard()",
+        "withDoShard()",
+        "%doshard% operator",
+        ".options.shard support",
+        "Buffer-aware accumulator"
+      ]
+    }
+  },
+
+  "risks_and_mitigations": [
+    {
+      "risk": "ALTREP edge cases / forced materialization",
+      "mitigation": "Track counters + document triggers + provide copy_report()"
+    },
+    {
+      "risk": "Worker recycling overhead",
+      "mitigation": "Balanced profile recycles only on drift; chunking amortizes startup"
+    },
+    {
+      "risk": "Platform differences in memory stats",
+      "mitigation": "Best-effort cross-platform RSS; mapping-level audit optional"
+    },
+    {
+      "risk": "Users expect to mutate inputs",
+      "mitigation": "Clear error messages + cow='allow' with budgets + explicit copy_shared()"
+    }
+  ],
+
+  "acceptance_criteria_summary": {
+    "memory_determinism": [
+      "Peak RSS significantly reduced vs foreach + doParallel for large shared inputs",
+      "End-of-run RSS returns close to baseline (within 20%)",
+      "Worker RSS monitored and recycled on drift threshold",
+      "Diagnostics prove bounded memory behavior"
+    ],
+    "zero_copy": [
+      "share() creates single shared segment per object",
+      "Workers attach without serialization",
+      "copy_report() shows materialized_bytes = 0 in ideal cases",
+      "ALTREP wrappers prevent unnecessary copies",
+      "Subsetting returns views not copies"
+    ],
+    "foreach_compatibility": [
+      "registerDoShard() works with standard %dopar%",
+      "Compatible with getDoParWorkers/Name/Version",
+      ".combine semantics preserved",
+      "Error handling matches foreach specification"
+    ],
+    "cran_ready": [
+      "No fork() requirement",
+      "Cross-platform (Linux/macOS/Windows)",
+      "Conservative defaults",
+      "Proper cleanup via finalizers",
+      "Optional OS-specific features are guarded"
+    ],
+    "diagnostics": [
+      "shard_report captures all key metrics",
+      "Human-readable print output",
+      "Data-frame friendly sub-reports",
+      "Per-worker, per-task, per-segment detail available"
+    ]
+  }
+}
