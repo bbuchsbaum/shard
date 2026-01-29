@@ -30,6 +30,15 @@ export(materialize)
 export(is_shared)
 export(shared_info)
 
+# ALTREP shared vectors
+export(shared_vector)
+export(shared_view)
+export(shared_diagnostics)
+export(shared_reset_diagnostics)
+export(shared_segment)
+export(is_shared_vector)
+export(as_shared)
+
 # Utility functions
 export(is_windows)
 export(available_backings)
