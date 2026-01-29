@@ -45,6 +45,13 @@ export(shared_segment)
 export(is_shared_vector)
 export(as_shared)
 
+# Buffer API
+export(buffer)
+export(buffer_open)
+export(buffer_path)
+export(buffer_info)
+export(buffer_close)
+
 # Utility functions
 export(is_windows)
 export(available_backings)
@@ -67,6 +74,18 @@ S3method(print, shard_result)
 S3method(length, shard_descriptor)
 S3method("[", shard_descriptor)
 S3method("[[", shard_descriptor)
+S3method(print, shard_buffer)
+S3method(length, shard_buffer)
+S3method(dim, shard_buffer)
+S3method("[", shard_buffer)
+S3method("[<-", shard_buffer)
+S3method(as.vector, shard_buffer)
+S3method(as.double, shard_buffer)
+S3method(as.integer, shard_buffer)
+S3method(as.logical, shard_buffer)
+S3method(as.raw, shard_buffer)
+S3method(as.matrix, shard_buffer)
+S3method(as.array, shard_buffer)
 
 # Imports
 importFrom(parallel, clusterCall)
