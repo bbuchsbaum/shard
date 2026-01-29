@@ -60,6 +60,11 @@ export(copy_report)
 export(task_report)
 export(segment_report)
 
+# Arena API
+export(arena)
+export(in_arena)
+export(arena_depth)
+
 # Utility functions
 export(is_windows)
 export(available_backings)
@@ -95,6 +100,7 @@ S3method(as.raw, shard_buffer)
 S3method(as.matrix, shard_buffer)
 S3method(as.array, shard_buffer)
 S3method(print, shard_report)
+S3method(print, arena_result)
 
 # Imports
 importFrom(parallel, clusterCall)
