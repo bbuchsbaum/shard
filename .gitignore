@@ -10,6 +10,9 @@ src/*.o
 src/*.so
 src/*.dll
 *.tar.gz
+*.Rcheck/
+configure
+cleanup
 
 # Documentation
 docs/
