@@ -94,12 +94,15 @@ pool_get <- function() {
 
 #' Stop the Worker Pool
 #'
-#' Terminates all worker processes and releases resources.
+#' Terminates all worker processes and releases resources. Waits for workers
+#' to actually terminate before returning.
 #'
 #' @param pool A `shard_pool` object. If NULL, uses the current pool.
+#' @param timeout Numeric. Seconds to wait for workers to terminate (default 5).
+#'   Returns after timeout even if workers are still alive.
 #' @return NULL (invisibly).
 #' @export
-pool_stop <- function(pool = NULL) {
+pool_stop <- function(pool = NULL, timeout = 5) {
   if (is.null(pool)) {
     pool <- .pool_env$pool
   }
@@ -108,9 +111,37 @@ pool_stop <- function(pool = NULL) {
     return(invisible(NULL))
   }
 
+  # Collect PIDs before killing
+  pids <- vapply(pool$workers, function(w) {
+    if (is.null(w)) NA_integer_ else w$pid
+  }, integer(1))
+  alive_pids <- pids[!is.na(pids)]
+
+  # Fast path: if all workers already dead, just clean up
+  if (length(alive_pids) > 0) {
+    alive_check <- vapply(alive_pids, pid_is_alive, logical(1))
+    if (!any(alive_check)) {
+      .pool_env$pool <- NULL
+      return(invisible(NULL))
+    }
+  }
+
+  # Kill all workers
   for (w in pool$workers) {
     if (!is.null(w)) {
       worker_kill(w)
+    }
+  }
+
+  # Wait for workers to terminate with timeout
+  if (length(alive_pids) > 0 && timeout > 0) {
+    deadline <- Sys.time() + timeout
+    while (Sys.time() < deadline) {
+      still_alive <- vapply(alive_pids, pid_is_alive, logical(1))
+      if (!any(still_alive)) {
+        break
+      }
+      Sys.sleep(0.1)
     }
   }
 

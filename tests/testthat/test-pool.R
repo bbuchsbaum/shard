@@ -90,6 +90,63 @@ test_that("pool_stop clears the pool", {
   expect_false(is.null(pool_get()))
 })
 
+test_that("pool_stop waits for workers to terminate", {
+  skip_on_cran()
+
+  pool <- pool_create(n = 2)
+
+  # Get worker PIDs before stopping
+  pids <- vapply(pool$workers, function(w) w$pid, integer(1))
+  expect_true(all(!is.na(pids)))
+
+  # Workers should be alive
+  alive_before <- vapply(pids, pid_is_alive, logical(1))
+  expect_true(all(alive_before))
+
+  pool_stop()
+
+  # Workers should be dead after pool_stop returns
+  # Allow small buffer for OS process cleanup
+  Sys.sleep(0.3)
+  alive_after <- vapply(pids, pid_is_alive, logical(1))
+  expect_true(all(!alive_after))
+})
+
+test_that("pool_stop returns immediately when workers already dead", {
+  skip_on_cran()
+
+  pool <- pool_create(n = 2)
+  pids <- vapply(pool$workers, function(w) w$pid, integer(1))
+
+  # Kill workers manually first
+  for (pid in pids) {
+    tools::pskill(pid, signal = 9L)
+  }
+  Sys.sleep(0.3)  # Wait for processes to die
+
+  # Verify workers are dead
+  expect_true(all(!vapply(pids, pid_is_alive, logical(1))))
+
+  # pool_stop should return quickly (fast path)
+  start_time <- Sys.time()
+  pool_stop()
+  elapsed <- as.numeric(Sys.time() - start_time, units = "secs")
+
+  # Should complete in well under the default 5s timeout
+  expect_lt(elapsed, 1)
+  expect_null(pool_get())
+})
+
+test_that("pool_stop respects timeout parameter", {
+  skip_on_cran()
+
+  pool <- pool_create(n = 1)
+
+  # Stop with explicit timeout
+  pool_stop(timeout = 2)
+  expect_null(pool_get())
+})
+
 test_that("pool_get returns current pool", {
   # Initially NULL
   pool_stop()  # Ensure clean state
