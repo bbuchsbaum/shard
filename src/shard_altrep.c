@@ -57,8 +57,19 @@ static shard_segment_t *get_segment(shard_altrep_info_t *info) {
     return (shard_segment_t *)R_ExternalPtrAddr(info->segment_ptr);
 }
 
-/* Helper: Get data pointer for the vector */
+/* Helper: Get data pointer for the vector.
+ * If the vector has been materialized (data2 is a non-ALTREP vector), returns that.
+ * Note: Views store the parent ALTREP in data2 for reference counting, so we
+ * must check if data2 is ALTREP (parent ref) vs regular vector (materialized). */
 static void *get_data_ptr(SEXP x, shard_altrep_info_t *info) {
+    /* Check if we have a materialized copy in data2 */
+    SEXP data2 = R_altrep_data2(x);
+    if (data2 != R_NilValue && !ALTREP(data2)) {
+        /* data2 is a regular vector - this is our materialized COW copy */
+        return DATAPTR(data2);
+    }
+
+    /* Otherwise use the shared memory segment */
     shard_segment_t *seg = get_segment(info);
     if (!seg) return NULL;
 
@@ -211,14 +222,37 @@ static void *altvec_dataptr(SEXP x, Rboolean writable) {
     if (!info) return NULL;
 
     /*
-     * Note: We don't error when writable=TRUE and readonly=TRUE because
-     * many R functions call DATAPTR with writable=TRUE even for read-only
-     * operations. The underlying memory protection (via mprotect on Unix)
-     * will prevent actual writes if the segment is protected.
-     *
-     * If the segment is truly protected via segment_protect(), any write
-     * attempt will trigger a segfault at the OS level.
+     * Enforce readonly via copy-on-write: when writable access is requested
+     * but the vector is readonly, materialize to a private copy stored in
+     * data2. Subsequent accesses will use the materialized copy.
      */
+    if (writable && info->readonly) {
+        SEXP data2 = R_altrep_data2(x);
+
+        /* Check if we already have a materialized copy */
+        if (data2 == R_NilValue) {
+            /* Materialize: allocate R vector and copy shared memory data */
+            info->materialize_calls++;
+            R_xlen_t n = info->length;
+            SEXP materialized = PROTECT(allocVector(info->sexp_type, n));
+
+            void *src = get_data_ptr(x, info);
+            if (src && n > 0) {
+                memcpy(DATAPTR(materialized), src, n * info->element_size);
+            }
+
+            /* Store in data2 for future access */
+            R_set_altrep_data2(x, materialized);
+            UNPROTECT(1);
+
+            info->dataptr_calls++;
+            return DATAPTR(materialized);
+        }
+
+        /* Already materialized - return the copy */
+        info->dataptr_calls++;
+        return DATAPTR(data2);
+    }
 
     info->dataptr_calls++;
     return get_data_ptr(x, info);

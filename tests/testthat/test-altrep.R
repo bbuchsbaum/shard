@@ -110,18 +110,31 @@ test_that("shared_diagnostics tracks dataptr and materialize calls", {
     expect_equal(sum_val, sum(1:100))
 })
 
-test_that("readonly prevents write access", {
+test_that("readonly prevents write access via copy-on-write", {
     seg <- segment_create(400)
     segment_write(seg, 1:100, offset = 0)
-    segment_protect(seg)
 
+    # Create readonly vector on UNPROTECTED segment
     x <- shared_vector(seg, "integer", length = 100, readonly = TRUE)
 
     # Reading should work
     expect_equal(x[1], 1L)
+    expect_equal(x[50], 50L)
 
-    # Writing should error (when actually attempting to get writable pointer)
-    # Note: R may not always trigger the error depending on internal optimizations
+    # Attempt to write - this should trigger copy-on-write
+    # The original shared memory should NOT be mutated
+    x[1] <- 999L
+
+    # x now has the modified value (it was copied internally)
+    expect_equal(x[1], 999L)
+
+    # But the underlying shared memory should still have the original value
+    # Verify by creating a new view of the same segment
+    y <- shared_vector(seg, "integer", length = 100, readonly = TRUE)
+    expect_equal(y[1], 1L)  # Original value preserved
+
+    # x is still technically a shared_vector ALTREP, but now backed by a copy
+    expect_true(is_shared_vector(x))
 })
 
 test_that("is_shared_vector correctly identifies ALTREP vectors", {
