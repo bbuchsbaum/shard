@@ -32,3 +32,9 @@ Thumbs.db
 .beads/*.db
 .beads/*.db-wal
 .beads/*.db-shm
+
+# Gas Town (added by gt)
+.runtime/
+.claude/
+.beads/
+.logs/
