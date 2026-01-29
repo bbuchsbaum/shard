@@ -22,6 +22,16 @@ export(segment_write)
 export(segment_read)
 export(segment_protect)
 
+# ALTREP shared vectors
+export(shared_vector)
+export(shared_view)
+export(shared_diagnostics)
+export(shared_reset_diagnostics)
+export(shared_segment)
+export(is_shared_vector)
+export(as_shared)
+export(materialize)
+
 # Utility functions
 export(is_windows)
 export(available_backings)

@@ -10,9 +10,11 @@
 #include <R_ext/Visibility.h>
 
 #include "shard_shm.h"
+#include "shard_altrep.h"
 
 /* Callable methods from R */
 static const R_CallMethodDef CallEntries[] = {
+    /* Segment functions */
     {"C_shard_segment_create",    (DL_FUNC) &C_shard_segment_create,    4},
     {"C_shard_segment_open",      (DL_FUNC) &C_shard_segment_open,      3},
     {"C_shard_segment_close",     (DL_FUNC) &C_shard_segment_close,     2},
@@ -25,6 +27,13 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_segment_info",      (DL_FUNC) &C_shard_segment_info,      1},
     {"C_shard_is_windows",        (DL_FUNC) &C_shard_is_windows,        0},
     {"C_shard_available_backings",(DL_FUNC) &C_shard_available_backings,0},
+    /* ALTREP functions */
+    {"C_shard_altrep_create",           (DL_FUNC) &C_shard_altrep_create,           5},
+    {"C_shard_altrep_view",              (DL_FUNC) &C_shard_altrep_view,              3},
+    {"C_shard_altrep_diagnostics",       (DL_FUNC) &C_shard_altrep_diagnostics,       1},
+    {"C_is_shard_altrep",                (DL_FUNC) &C_is_shard_altrep,                1},
+    {"C_shard_altrep_segment",           (DL_FUNC) &C_shard_altrep_segment,           1},
+    {"C_shard_altrep_reset_diagnostics", (DL_FUNC) &C_shard_altrep_reset_diagnostics, 1},
     {NULL, NULL, 0}
 };
 
@@ -36,6 +45,9 @@ attribute_visible void R_init_shard(DllInfo *dll) {
 
     /* Initialize shared memory subsystem */
     shard_shm_init();
+
+    /* Initialize ALTREP classes */
+    shard_altrep_init(dll);
 }
 
 /* Package cleanup (called on unload) */
