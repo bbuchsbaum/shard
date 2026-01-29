@@ -52,6 +52,11 @@ export(buffer_path)
 export(buffer_info)
 export(buffer_close)
 
+# Arena API
+export(arena)
+export(in_arena)
+export(arena_depth)
+
 # Utility functions
 export(is_windows)
 export(available_backings)
@@ -86,6 +91,7 @@ S3method(as.logical, shard_buffer)
 S3method(as.raw, shard_buffer)
 S3method(as.matrix, shard_buffer)
 S3method(as.array, shard_buffer)
+S3method(print, arena_result)
 
 # Imports
 importFrom(parallel, clusterCall)
@@ -96,6 +102,7 @@ importFrom(parallel, stopCluster)
 importFrom(stats, setNames)
 importFrom(tools, pskill)
 importFrom(utils, capture.output)
+importFrom(utils, object.size)
 
 # Load compiled code
 useDynLib(shard, .registration = TRUE)
