@@ -1,0 +1,248 @@
+#' @title Individual Worker Control
+#' @description Spawn, monitor, and control individual R worker processes.
+#' @name worker
+NULL
+
+#' Spawn a Worker Process
+#'
+#' Creates a new R worker process using parallel sockets.
+#'
+#' @param id Integer. Worker identifier.
+#' @param init_expr Expression to evaluate on startup.
+#' @param packages Character vector. Packages to load.
+#'
+#' @return A `shard_worker` object.
+#' @keywords internal
+worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
+  # Use makeCluster to spawn a single worker
+  # This creates a socket connection to an R process
+  cl <- parallel::makeCluster(1L, type = "PSOCK", outfile = "")
+  node <- cl[[1]]
+
+  # Get the PID of the worker
+  pid <- tryCatch(
+    parallel::clusterCall(cl, function() Sys.getpid())[[1]],
+    error = function(e) NA_integer_
+  )
+
+  # Load packages if specified
+  if (length(packages) > 0) {
+    parallel::clusterCall(cl, function(pkgs) {
+      for (pkg in pkgs) {
+        suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+      }
+    }, packages)
+  }
+
+  # Run init expression if specified
+  if (!is.null(init_expr)) {
+    parallel::clusterCall(cl, function(expr) {
+      eval(expr, envir = globalenv())
+    }, init_expr)
+  }
+
+  structure(
+    list(
+      id = id,
+      pid = pid,
+      cluster = cl,
+      node = node,
+      spawned_at = Sys.time(),
+      rss_baseline = NA_real_,
+      recycle_count = 0L,
+      status = "ok"
+    ),
+    class = "shard_worker"
+  )
+}
+
+#' Check if Worker is Alive
+#'
+#' Tests whether the worker process is still running.
+#'
+#' @param worker A `shard_worker` object.
+#' @return Logical. TRUE if worker is alive.
+#' @keywords internal
+worker_is_alive <- function(worker) {
+  if (is.null(worker) || is.null(worker$cluster)) {
+    return(FALSE)
+  }
+
+  # Try a simple ping
+  tryCatch({
+    result <- parallel::clusterCall(worker$cluster, function() TRUE)
+    isTRUE(result[[1]])
+  }, error = function(e) {
+    FALSE
+  })
+}
+
+#' Get Worker RSS (Resident Set Size)
+#'
+#' Queries the worker's memory usage via the ps package if available,
+#' otherwise falls back to /proc on Linux or ps command.
+#'
+#' @param worker A `shard_worker` object.
+#' @return Numeric. RSS in bytes, or NA if unavailable.
+#' @keywords internal
+worker_rss <- function(worker) {
+  if (is.null(worker) || is.na(worker$pid)) {
+    return(NA_real_)
+  }
+
+  rss_get_pid(worker$pid)
+}
+
+#' Kill a Worker Process
+#'
+#' Terminates the worker process and closes connections.
+#'
+#' @param worker A `shard_worker` object.
+#' @return NULL (invisibly).
+#' @keywords internal
+worker_kill <- function(worker) {
+  if (is.null(worker)) {
+    return(invisible(NULL))
+  }
+
+  tryCatch({
+    parallel::stopCluster(worker$cluster)
+  }, error = function(e) {
+    # If cluster stop fails, try to kill the process directly
+    if (!is.na(worker$pid)) {
+      tryCatch({
+        tools::pskill(worker$pid, signal = 15L)  # SIGTERM
+        Sys.sleep(0.1)
+        if (pid_is_alive(worker$pid)) {
+          tools::pskill(worker$pid, signal = 9L)  # SIGKILL
+        }
+      }, error = function(e2) NULL)
+    }
+  })
+
+  invisible(NULL)
+}
+
+#' Recycle a Worker
+#'
+#' Kills the current worker and spawns a fresh replacement.
+#' The new worker inherits the same ID but has a fresh R process.
+#'
+#' @param worker A `shard_worker` object.
+#' @param init_expr Expression to evaluate on startup.
+#' @param packages Character vector. Packages to load.
+#' @return A new `shard_worker` object.
+#' @keywords internal
+worker_recycle <- function(worker, init_expr = NULL, packages = NULL) {
+  id <- worker$id
+  old_recycle_count <- worker$recycle_count %||% 0L
+
+  # Kill the old worker
+
+  worker_kill(worker)
+
+  # Spawn a fresh one
+  new_worker <- worker_spawn(id, init_expr, packages)
+  new_worker$recycle_count <- old_recycle_count + 1L
+
+  new_worker
+}
+
+#' Evaluate Expression in Worker
+#'
+#' Sends an expression to the worker for evaluation.
+#'
+#' @param worker A `shard_worker` object.
+#' @param expr Expression to evaluate.
+#' @param envir Environment containing variables needed by expr.
+#' @param timeout Numeric. Seconds to wait for result.
+#' @return The result of evaluation.
+#' @keywords internal
+worker_eval <- function(worker, expr, envir = parent.frame(), timeout = 3600) {
+  if (!worker_is_alive(worker)) {
+    stop("Worker ", worker$id, " is not alive", call. = FALSE)
+  }
+
+  # Capture variables from environment that are referenced in expr
+  expr_vars <- all.vars(expr)
+  export_env <- new.env(parent = emptyenv())
+  for (v in expr_vars) {
+    if (exists(v, envir = envir, inherits = TRUE)) {
+      export_env[[v]] <- get(v, envir = envir, inherits = TRUE)
+    }
+  }
+
+  # Send to worker
+  tryCatch({
+    # Export variables
+    if (length(ls(export_env)) > 0) {
+      parallel::clusterExport(worker$cluster, ls(export_env), envir = export_env)
+    }
+
+    # Evaluate expression
+    result <- parallel::clusterCall(worker$cluster, function(e) {
+      eval(e, envir = globalenv())
+    }, expr)
+
+    result[[1]]
+  }, error = function(e) {
+    stop("Worker ", worker$id, " evaluation failed: ", conditionMessage(e), call. = FALSE)
+  })
+}
+
+#' Get Worker Metrics
+#'
+#' Returns current metrics for a worker.
+#'
+#' @param worker A `shard_worker` object.
+#' @return A list of worker metrics.
+#' @keywords internal
+worker_metrics <- function(worker) {
+  alive <- worker_is_alive(worker)
+  rss <- if (alive) worker_rss(worker) else NA_real_
+
+  list(
+    worker_id = worker$id,
+    pid = worker$pid,
+    host = "localhost",
+    status = if (alive) "ok" else "dead",
+    rss_bytes = rss,
+    rss_baseline = worker$rss_baseline,
+    recycle_count = worker$recycle_count %||% 0L,
+    spawned_at = worker$spawned_at
+  )
+}
+
+#' @export
+print.shard_worker <- function(x, ...) {
+  cat("shard worker [", x$id, "]\n", sep = "")
+  cat("  PID:", x$pid, "\n")
+  cat("  Status:", if (worker_is_alive(x)) "alive" else "dead", "\n")
+  cat("  RSS baseline:", format_bytes(x$rss_baseline), "\n")
+  cat("  Recycles:", x$recycle_count %||% 0L, "\n")
+  cat("  Spawned:", format(x$spawned_at), "\n")
+  invisible(x)
+}
+
+#' Check if PID is Alive
+#'
+#' @param pid Process ID to check.
+#' @return Logical.
+#' @keywords internal
+pid_is_alive <- function(pid) {
+  if (is.na(pid)) return(FALSE)
+
+  # Use ps package if available
+  if (requireNamespace("ps", quietly = TRUE)) {
+    tryCatch({
+      p <- ps::ps_handle(pid)
+      ps::ps_is_running(p)
+    }, error = function(e) FALSE)
+  } else {
+    # Fallback: try to send signal 0
+    tryCatch({
+      tools::pskill(pid, signal = 0L)
+      TRUE
+    }, error = function(e) FALSE)
+  }
+}
