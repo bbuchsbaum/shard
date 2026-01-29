@@ -695,3 +695,31 @@ SEXP C_shard_altrep_reset_diagnostics(SEXP x) {
 
     return R_NilValue;
 }
+
+/* Materialize an ALTREP vector to a standard R vector */
+SEXP C_shard_altrep_materialize(SEXP x) {
+    if (!ALTREP(x)) {
+        error("x must be a shard ALTREP vector");
+    }
+
+    shard_altrep_info_t *info = get_info(x);
+    if (!info) {
+        error("Invalid shard ALTREP vector");
+    }
+
+    /* Increment materialize counter */
+    info->materialize_calls++;
+
+    /* Allocate standard R vector */
+    R_xlen_t n = info->length;
+    SEXP result = PROTECT(allocVector(info->sexp_type, n));
+
+    /* Copy data from shared memory to R vector */
+    void *src = get_data_ptr(x, info);
+    if (src && n > 0) {
+        memcpy(DATAPTR(result), src, n * info->element_size);
+    }
+
+    UNPROTECT(1);
+    return result;
+}

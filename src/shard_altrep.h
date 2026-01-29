@@ -81,4 +81,15 @@ attribute_visible SEXP C_shard_altrep_segment(SEXP x);
  */
 attribute_visible SEXP C_shard_altrep_reset_diagnostics(SEXP x);
 
+/*
+ * Materialize an ALTREP shared vector to a standard R vector
+ *
+ * Creates a copy of the shared data as a standard R vector.
+ * Increments the materialize_calls counter.
+ *
+ * @param x         ALTREP shared vector
+ * @return          Standard R vector with copied data
+ */
+attribute_visible SEXP C_shard_altrep_materialize(SEXP x);
+
 #endif /* SHARD_ALTREP_H */

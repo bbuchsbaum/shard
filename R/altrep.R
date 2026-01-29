@@ -255,26 +255,3 @@ as_shared <- function(x, readonly = TRUE, backing = "auto") {
                   readonly = readonly)
 }
 
-#' Materialize a shared vector to a standard R vector
-#'
-#' Creates a copy of the shared data as a standard R vector.
-#' This is useful when you need to modify the data or when
-#' passing to functions that don't work well with ALTREP.
-#'
-#' @param x A shard ALTREP vector
-#' @return A standard R vector with the same data
-#' @export
-#' @examples
-#' \dontrun{
-#' x <- as_shared(1:100)
-#' y <- materialize(x)  # Standard vector copy
-#' is_shared_vector(y)  # FALSE
-#' }
-materialize <- function(x) {
-    if (!is_shared_vector(x)) {
-        stop("x must be a shard ALTREP vector")
-    }
-
-    # Force a deep copy
-    x + 0L * x[1]  # Triggers coercion
-}
