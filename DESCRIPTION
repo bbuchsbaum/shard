@@ -1,0 +1,43 @@
+Package: shard
+Type: Package
+Title: Deterministic, Zero-Copy Parallel Execution for R
+Version: 0.1.0
+Authors@R:
+    c(person("First", "Last", email = "you@example.org", role = c("aut", "cre")),
+      person("First", "Last", role = "ctb"))
+Description: Provides a parallel execution runtime for R that emphasizes
+    deterministic memory behavior and efficient handling of large shared inputs.
+    'shard' enables zero-copy parallel reads via shared/memory-mapped segments,
+    encourages explicit output buffers to avoid large result aggregation, and
+    supervises worker processes to mitigate memory drift via controlled recycling.
+    Diagnostics report peak memory usage, end-of-run memory return, and hidden
+    copy/materialization events to support reproducible performance benchmarking.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Depends:
+    R (>= 4.1.0)
+Imports:
+    parallel,
+    stats,
+    utils,
+    methods
+Suggests:
+    bench,
+    foreach,
+    doParallel,
+    future.apply,
+    iterators,
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    ps,
+    jsonlite
+VignetteBuilder:
+    knitr
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+NeedsCompilation: yes
+URL: https://github.com/your-org/shard
+BugReports: https://github.com/your-org/shard/issues
+SystemRequirements: POSIX shared memory (optional), memory-mapped files
