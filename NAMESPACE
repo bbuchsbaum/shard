@@ -22,6 +22,14 @@ export(segment_write)
 export(segment_read)
 export(segment_protect)
 
+# High-level share API
+export(share)
+export(share_open)
+export(fetch)
+export(materialize)
+export(is_shared)
+export(shared_info)
+
 # Utility functions
 export(is_windows)
 export(available_backings)
@@ -33,6 +41,12 @@ S3method(print, shard_pool)
 S3method(print, shard_queue)
 S3method(print, shard_worker)
 S3method(print, shard_segment)
+S3method(print, shard_shared)
+S3method(close, shard_shared)
+S3method(fetch, shard_shared)
+S3method(fetch, default)
+S3method(materialize, shard_shared)
+S3method(materialize, default)
 
 # Imports
 importFrom(parallel, clusterCall)

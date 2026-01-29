@@ -6,6 +6,13 @@
 #' The shard package provides a parallel execution runtime that emphasizes
 #' deterministic memory behavior and efficient handling of large shared inputs.
 #'
+#' @section Zero-Copy Shared Data:
+#' * [share()] - Share an R object for parallel access
+#' * [fetch()] - Retrieve data from a shared object
+#' * [materialize()] - Alias for fetch()
+#' * [is_shared()] - Check if an object is shared
+#' * [shared_info()] - Get information about a shared object
+#'
 #' @section Worker Pool Management:
 #' * [pool_create()] - Create a supervised worker pool
 #' * [pool_stop()] - Stop the worker pool
