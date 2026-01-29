@@ -6,6 +6,12 @@
 #' The shard package provides a parallel execution runtime that emphasizes
 #' deterministic memory behavior and efficient handling of large shared inputs.
 #'
+#' @section Core API:
+#' * [shard_map()] - Primary parallel execution entry point
+#' * [shards()] - Create shard descriptors with autotuning
+#' * [results()] - Extract results from a shard_map run
+#' * [succeeded()] - Check if shard_map completed without failures
+#'
 #' @section Zero-Copy Shared Data:
 #' * [share()] - Share an R object for parallel access
 #' * [fetch()] - Retrieve data from a shared object
