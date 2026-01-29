@@ -93,6 +93,261 @@ validate_serializable <- function(x, path = "x") {
     invisible(NULL)
 }
 
+# Helper: get object identity (memory address) for alias detection
+object_identity <- function(x) {
+    # Use data.table::address() if available for more reliable address extraction
+    # Fall back to lobstr::obj_addr() or manual extraction from capture.output
+    if (requireNamespace("data.table", quietly = TRUE)) {
+        return(data.table::address(x))
+    }
+    # Extract memory address from environment representation
+    # This gives consistent identity for the same object
+    addr <- capture.output(.Internal(inspect(x)))[1]
+    # Extract the hex address from the output
+    m <- regmatches(addr, regexpr("@[0-9a-f]+", addr))
+    if (length(m) > 0) m else paste0("obj_", sample.int(1e9, 1))
+}
+
+# Helper: check if object is a shareable atomic type
+is_shareable_atomic <- function(x) {
+    # Shareable: numeric vectors (double, integer, complex), logical, raw
+    # Not shareable: character, lists, environments, functions, etc.
+    if (is.atomic(x) && !is.null(x)) {
+        mode <- typeof(x)
+        return(mode %in% c("double", "integer", "logical", "raw", "complex"))
+    }
+    FALSE
+}
+
+# Internal: traverse object for deep sharing with memoization
+# Returns a structure with shared segments and alias information
+share_deep_traverse <- function(x,
+                                env,
+                                path = "<root>",
+                                depth = 0,
+                                min_bytes = 64 * 1024 * 1024,
+                                backing = "auto",
+                                readonly = TRUE,
+                                max_depth = Inf,
+                                cycle_policy = "error") {
+    # Get object identity for memoization and cycle detection
+    identity <- object_identity(x)
+
+    # Check for cycle (currently in traversal stack)
+    if (exists(identity, envir = env$in_progress, inherits = FALSE)) {
+        if (cycle_policy == "error") {
+            stop("Cycle detected during deep sharing.\n",
+                 "  Path: ", path, "\n",
+                 "  Object is self-referential.\n",
+                 "  Use cycle='skip' to skip cyclic references instead.",
+                 call. = FALSE)
+        }
+        # cycle='skip': return a marker indicating cycle
+        return(structure(
+            list(
+                type = "cycle",
+                path = path,
+                identity = identity
+            ),
+            class = "shard_deep_cycle"
+        ))
+    }
+
+    # Check for alias (already seen and shared)
+    if (exists(identity, envir = env$seen, inherits = FALSE)) {
+        original <- get(identity, envir = env$seen, inherits = FALSE)
+        return(structure(
+            list(
+                type = "alias",
+                path = path,
+                identity = identity,
+                alias_of = original$path,
+                alias_node_id = original$node_id,
+                shared = original$shared,
+                value = original$value  # For aliases to kept values
+            ),
+            class = "shard_deep_alias"
+        ))
+    }
+
+    # Mark as in-progress for cycle detection
+    assign(identity, TRUE, envir = env$in_progress)
+    on.exit(rm(list = identity, envir = env$in_progress), add = TRUE)
+
+    # Assign a node ID for tracking
+    env$next_id <- env$next_id + 1
+    node_id <- env$next_id
+
+    # Determine what to do with this object
+    if (is_shareable_atomic(x) && object.size(x) >= min_bytes) {
+        # Share this atomic object
+        shared <- share(x, backing = backing, readonly = readonly)
+
+        # Record in seen table for alias detection
+        assign(identity, list(
+            path = path,
+            node_id = node_id,
+            shared = shared
+        ), envir = env$seen)
+
+        # Track the shared segment for cleanup
+        env$segments <- c(env$segments, list(shared))
+
+        return(structure(
+            list(
+                type = "shared",
+                path = path,
+                node_id = node_id,
+                identity = identity,
+                shared = shared
+            ),
+            class = "shard_deep_node"
+        ))
+    } else if (is.list(x) && !is.data.frame(x) && depth < max_depth) {
+        # Recursively process list elements
+        nms <- names(x)
+        children <- vector("list", length(x))
+        names(children) <- nms
+
+        for (i in seq_along(x)) {
+            child_path <- if (!is.null(nms) && nzchar(nms[i])) {
+                paste0(path, "$", nms[i])
+            } else {
+                paste0(path, "[[", i, "]]")
+            }
+            children[[i]] <- share_deep_traverse(
+                x[[i]], env, child_path, depth + 1,
+                min_bytes, backing, readonly, max_depth, cycle_policy
+            )
+        }
+
+        # Record in seen table
+        assign(identity, list(
+            path = path,
+            node_id = node_id,
+            shared = NULL
+        ), envir = env$seen)
+
+        return(structure(
+            list(
+                type = "container",
+                container_type = "list",
+                path = path,
+                node_id = node_id,
+                identity = identity,
+                children = children,
+                original_class = class(x),
+                original_names = nms
+            ),
+            class = "shard_deep_container"
+        ))
+    } else if (is.data.frame(x) && depth < max_depth) {
+        # Process data.frame columns
+        children <- vector("list", ncol(x))
+        names(children) <- names(x)
+
+        for (i in seq_along(x)) {
+            child_path <- paste0(path, "$", names(x)[i])
+            children[[i]] <- share_deep_traverse(
+                x[[i]], env, child_path, depth + 1,
+                min_bytes, backing, readonly, max_depth, cycle_policy
+            )
+        }
+
+        # Record in seen table
+        assign(identity, list(
+            path = path,
+            node_id = node_id,
+            shared = NULL
+        ), envir = env$seen)
+
+        return(structure(
+            list(
+                type = "container",
+                container_type = "data.frame",
+                path = path,
+                node_id = node_id,
+                identity = identity,
+                children = children,
+                original_class = class(x),
+                original_names = names(x),
+                original_nrow = nrow(x),
+                original_row_names = attr(x, "row.names")
+            ),
+            class = "shard_deep_container"
+        ))
+    } else {
+        # Keep as-is (small atomic, unshareable type, or max depth reached)
+        # Record in seen table (including value for alias reconstruction)
+        assign(identity, list(
+            path = path,
+            node_id = node_id,
+            shared = NULL,
+            value = x
+        ), envir = env$seen)
+
+        return(structure(
+            list(
+                type = "kept",
+                path = path,
+                node_id = node_id,
+                identity = identity,
+                value = x
+            ),
+            class = "shard_deep_kept"
+        ))
+    }
+}
+
+# Internal: reconstruct object from deep shared structure
+fetch_deep_reconstruct <- function(node) {
+    if (inherits(node, "shard_deep_node")) {
+        # Shared atomic - fetch from shared segment
+        return(fetch(node$shared))
+    } else if (inherits(node, "shard_deep_alias")) {
+        # Alias - fetch from the original shared segment or return kept value
+        if (!is.null(node$shared)) {
+            return(fetch(node$shared))
+        } else {
+            # Alias to a kept value - return the stored value
+            return(node$value)
+        }
+    } else if (inherits(node, "shard_deep_cycle")) {
+        # Cycle marker - return NULL or special marker
+        # This shouldn't normally be reached if cycle='error'
+        return(NULL)
+    } else if (inherits(node, "shard_deep_kept")) {
+        # Kept value - return as-is
+        return(node$value)
+    } else if (inherits(node, "shard_deep_container")) {
+        # Container - reconstruct recursively
+        children <- lapply(node$children, fetch_deep_reconstruct)
+
+        if (node$container_type == "data.frame") {
+            # Reconstruct data.frame
+            result <- structure(
+                children,
+                class = node$original_class,
+                names = node$original_names,
+                row.names = node$original_row_names
+            )
+        } else {
+            # Reconstruct list
+            result <- children
+            if (!is.null(node$original_names)) {
+                names(result) <- node$original_names
+            }
+            if (!identical(node$original_class, "list")) {
+                class(result) <- node$original_class
+            }
+        }
+        return(result)
+    } else {
+        # Unknown type - return as-is
+        return(node)
+    }
+}
+
 #' Share an R Object for Parallel Access
 #'
 #' Creates a shared memory representation of an R object. The object is
@@ -112,8 +367,17 @@ validate_serializable <- function(x, path = "x") {
 #'   the shared data (advanced use case).
 #' @param name Optional name for the shared object. If NULL (default), a unique
 #'   name is generated. Named shares can be opened by name in other processes.
+#' @param deep Logical. If TRUE, recursively traverse lists and data.frames,
+#'   sharing individual components that meet the size threshold. When FALSE
+#'   (default), the entire object is serialized as one unit.
+#' @param min_bytes Minimum size in bytes for an object to be shared when
+#'   deep=TRUE. Objects smaller than this threshold are kept in-place.
+#'   Default is 64MB (64 * 1024 * 1024).
+#' @param cycle How to handle cyclic references when deep=TRUE. Either "error"
+#'   (default) to stop with an error, or "skip" to skip cyclic references.
 #'
-#' @return A \code{shard_shared} object containing:
+#' @return A \code{shard_shared} object (when deep=FALSE) or
+#'   \code{shard_deep_shared} object (when deep=TRUE) containing:
 #'   \itemize{
 #'     \item \code{path}: The path or name of the shared segment
 #'     \item \code{backing}: The backing type used
@@ -146,15 +410,91 @@ validate_serializable <- function(x, path = "x") {
 #'
 #' # Clean up when done
 #' close(shared_mat)
+#'
+#' # Deep sharing with alias preservation
+#' big_mat <- matrix(rnorm(1e6), nrow = 1000)
+#' lst <- list(a = big_mat, b = big_mat)  # Same object referenced twice
+#' shared_lst <- share(lst, deep = TRUE, min_bytes = 1000)
+#' # Creates only ONE shared segment - both 'a' and 'b' reference it
 #' }
 share <- function(x,
                   backing = c("auto", "mmap", "shm"),
                   readonly = TRUE,
-                  name = NULL) {
+                  name = NULL,
+                  deep = FALSE,
+                  min_bytes = 64 * 1024 * 1024,
+                  cycle = c("error", "skip")) {
     backing <- match.arg(backing)
+    cycle <- match.arg(cycle)
 
     # Validate input is serializable
     validate_serializable(x)
+
+    # Deep sharing: traverse structure and share components individually
+    if (deep) {
+        # Create environment for memoization state
+        env <- new.env(parent = emptyenv())
+        env$seen <- new.env(parent = emptyenv())       # identity -> {path, node_id, shared}
+        env$in_progress <- new.env(parent = emptyenv()) # identity -> TRUE (cycle detection)
+        env$segments <- list()                          # All created segments for cleanup
+        env$next_id <- 0                               # Node ID counter
+
+        # Traverse and share
+        structure_tree <- share_deep_traverse(
+            x, env, "<root>", 0,
+            min_bytes, backing, readonly, Inf, cycle
+        )
+
+        # Count shared vs aliased
+        shared_count <- 0
+        alias_count <- 0
+        cycle_count <- 0
+        kept_count <- 0
+        total_shared_bytes <- 0
+
+        count_nodes <- function(node) {
+            if (inherits(node, "shard_deep_node")) {
+                shared_count <<- shared_count + 1
+                total_shared_bytes <<- total_shared_bytes + node$shared$size
+            } else if (inherits(node, "shard_deep_alias")) {
+                alias_count <<- alias_count + 1
+            } else if (inherits(node, "shard_deep_cycle")) {
+                cycle_count <<- cycle_count + 1
+            } else if (inherits(node, "shard_deep_kept")) {
+                kept_count <<- kept_count + 1
+            } else if (inherits(node, "shard_deep_container")) {
+                for (child in node$children) {
+                    count_nodes(child)
+                }
+            }
+        }
+        count_nodes(structure_tree)
+
+        return(structure(
+            list(
+                tree = structure_tree,
+                segments = env$segments,
+                backing = backing,
+                readonly = readonly,
+                summary = list(
+                    shared_count = shared_count,
+                    alias_count = alias_count,
+                    cycle_count = cycle_count,
+                    kept_count = kept_count,
+                    total_shared_bytes = total_shared_bytes
+                ),
+                class_info = list(
+                    type = if (is.data.frame(x)) "data.frame"
+                           else if (is.list(x)) "list"
+                           else "other",
+                    deep = TRUE
+                )
+            ),
+            class = "shard_deep_shared"
+        ))
+    }
+
+    # Standard (non-deep) sharing: serialize entire object
 
     # Serialize the object (with tryCatch for edge cases)
     serialized <- tryCatch(
@@ -268,6 +608,12 @@ fetch.shard_shared <- function(x, ...) {
 }
 
 #' @export
+fetch.shard_deep_shared <- function(x, ...) {
+    # Reconstruct the object from the shared structure tree
+    fetch_deep_reconstruct(x$tree)
+}
+
+#' @export
 fetch.default <- function(x, ...) {
     x
 }
@@ -320,16 +666,30 @@ close.shard_shared <- function(con, ...) {
     invisible(NULL)
 }
 
+#' @export
+#' @method close shard_deep_shared
+close.shard_deep_shared <- function(con, ...) {
+    # Close all shared segments
+    for (seg in con$segments) {
+        tryCatch(
+            close(seg),
+            error = function(e) NULL
+        )
+    }
+    invisible(NULL)
+}
+
 #' Check if Object is Shared
 #'
 #' @param x An object to check.
-#' @return TRUE if x is a \code{shard_shared} object, FALSE otherwise.
+#' @return TRUE if x is a \code{shard_shared} or \code{shard_deep_shared} object,
+#'   FALSE otherwise.
 #' @export
 #' @examples
 #' is_shared(share(1:10))  # TRUE
 #' is_shared(1:10)         # FALSE
 is_shared <- function(x) {
-    inherits(x, "shard_shared")
+    inherits(x, c("shard_shared", "shard_deep_shared"))
 }
 
 #' Get Information About a Shared Object
@@ -372,6 +732,26 @@ print.shard_shared <- function(x, ...) {
     } else {
         cat("  Original: ", info$mode, " vector [", info$length, "]\n", sep = "")
     }
+
+    invisible(x)
+}
+
+#' @export
+print.shard_deep_shared <- function(x, ...) {
+    cat("<shard_deep_shared>\n")
+    cat("  Type:", x$class_info$type, "\n")
+    cat("  Backing:", x$backing, "\n")
+    cat("  Read-only:", x$readonly, "\n")
+    cat("\n")
+    cat("  Summary:\n")
+    cat("    Shared segments:", x$summary$shared_count, "\n")
+    cat("    Aliased references:", x$summary$alias_count, "\n")
+    if (x$summary$cycle_count > 0) {
+        cat("    Cyclic references (skipped):", x$summary$cycle_count, "\n")
+    }
+    cat("    Kept in-place:", x$summary$kept_count, "\n")
+    cat("    Total shared bytes:",
+        format(x$summary$total_shared_bytes, big.mark = ","), "\n")
 
     invisible(x)
 }
