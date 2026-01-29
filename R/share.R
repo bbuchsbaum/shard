@@ -209,6 +209,10 @@ materialize.shard_shared <- function(x) {
 
 #' @export
 materialize.default <- function(x) {
+    # Handle raw ALTREP shared vectors (which have no special class)
+    if (is_shared_vector(x)) {
+        return(.Call("C_shard_altrep_materialize", x, PACKAGE = "shard"))
+    }
     x
 }
 
