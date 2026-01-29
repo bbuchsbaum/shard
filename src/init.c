@@ -34,6 +34,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_is_shard_altrep",                (DL_FUNC) &C_is_shard_altrep,                1},
     {"C_shard_altrep_segment",           (DL_FUNC) &C_shard_altrep_segment,           1},
     {"C_shard_altrep_reset_diagnostics", (DL_FUNC) &C_shard_altrep_reset_diagnostics, 1},
+    {"C_shard_altrep_materialize",       (DL_FUNC) &C_shard_altrep_materialize,       1},
     {NULL, NULL, 0}
 };
 
