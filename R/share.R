@@ -241,13 +241,21 @@ fetch <- function(x, ...) {
 
 #' @export
 fetch.shard_shared <- function(x, ...) {
-    # If we have a valid segment pointer, read directly
+    # Try using existing segment pointer (main process scenario)
+    # Wrap in tryCatch because pointer becomes invalid after serialization to workers
     if (!is.null(x$segment) && inherits(x$segment, "shard_segment")) {
-        raw_data <- segment_read(x$segment, offset = 0, size = x$size)
-        return(unserialize(raw_data))
+        result <- tryCatch({
+            raw_data <- segment_read(x$segment, offset = 0, size = x$size)
+            unserialize(raw_data)
+        }, error = function(e) NULL)
+
+        if (!is.null(result)) {
+            return(result)
+        }
+        # Pointer was invalid (e.g., in worker process), fall through to reopen
     }
 
-    # Otherwise, open by path (worker process scenario)
+    # Open by path (worker process scenario)
     if (is.null(x$path)) {
         stop("Cannot fetch: no path available", call. = FALSE)
     }
