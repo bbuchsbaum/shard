@@ -1,0 +1,7 @@
+# Makevars.win for shard package (Windows)
+#
+# Windows uses file-backed memory mapping via CreateFileMapping/MapViewOfFile.
+# No special libraries needed beyond the standard Windows API.
+
+PKG_CFLAGS = $(C_VISIBILITY)
+PKG_LIBS =
