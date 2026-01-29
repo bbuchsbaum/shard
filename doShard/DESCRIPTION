@@ -1,0 +1,25 @@
+Package: doShard
+Type: Package
+Title: Foreach Parallel Adapter for the 'shard' Package
+Version: 0.1.0
+Authors@R:
+    c(person("First", "Last", email = "you@example.org", role = c("aut", "cre")))
+Author: First Last [aut, cre]
+Maintainer: First Last <you@example.org>
+Description: Provides a foreach parallel adapter that uses the 'shard' package
+    as the parallel backend. This allows users to leverage shard's deterministic,
+    zero-copy parallel execution with worker supervision and memory monitoring
+    through the familiar foreach interface.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends:
+    R (>= 4.1.0),
+    foreach (>= 1.5.0)
+Imports:
+    shard,
+    iterators
+Suggests:
+    testthat (>= 3.0.0)
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Config/testthat/edition: 3
