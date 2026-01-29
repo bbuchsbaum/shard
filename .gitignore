@@ -11,6 +11,9 @@ src/*.so
 src/*.dll
 *.tar.gz
 
+# Rust build artifacts
+target/
+
 # Documentation
 docs/
 doc/
@@ -32,3 +35,9 @@ Thumbs.db
 .beads/*.db
 .beads/*.db-wal
 .beads/*.db-shm
+
+# Gas Town (added by gt)
+.runtime/
+.claude/
+.beads/
+.logs/

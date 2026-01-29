@@ -1,0 +1,22 @@
+[package]
+name = "shard"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic, zero-copy parallel execution for R"
+license = "MIT"
+repository = "https://github.com/your-org/shard"
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+# For potential future FFI with R
+thiserror = "1.0"
+
+[dev-dependencies]
+proptest = "1.0"
+
+[features]
+default = []
+# Feature for R FFI bindings (future)
+r-bindings = []
