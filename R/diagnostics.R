@@ -309,7 +309,9 @@ copy_report <- function(result = NULL) {
     buffer_bytes = 0,
     view_created = 0L,
     view_materialized = 0L,
-    view_materialized_bytes = 0
+    view_materialized_bytes = 0,
+    view_packed = 0L,
+    view_packed_bytes = 0
   )
 
   if (!is.null(result) && inherits(result, "shard_result")) {
@@ -343,6 +345,8 @@ copy_report <- function(result = NULL) {
       rpt$view_created <- vs$created %||% 0L
       rpt$view_materialized <- vs$materialized %||% 0L
       rpt$view_materialized_bytes <- vs$materialized_bytes %||% 0
+      rpt$view_packed <- vs$packed %||% 0L
+      rpt$view_packed_bytes <- vs$packed_bytes %||% 0
     }
   }
 
@@ -353,6 +357,8 @@ copy_report <- function(result = NULL) {
       rpt$view_created <- vd$created %||% 0L
       rpt$view_materialized <- vd$materialized %||% 0L
       rpt$view_materialized_bytes <- vd$materialized_bytes %||% 0
+      rpt$view_packed <- vd$packed %||% 0L
+      rpt$view_packed_bytes <- vd$packed_bytes %||% 0
     }
   }
 
@@ -679,6 +685,10 @@ print_copy_report <- function(x) {
     cat("  Created:", x$view_created %||% 0L, "\n")
     cat("  Materialized:", x$view_materialized %||% 0L, "\n")
     cat("  Materialized bytes:", format_bytes(x$view_materialized_bytes %||% 0), "\n")
+    if (!is.null(x$view_packed) || !is.null(x$view_packed_bytes)) {
+      cat("  Packed:", x$view_packed %||% 0L, "\n")
+      cat("  Packed bytes:", format_bytes(x$view_packed_bytes %||% 0), "\n")
+    }
   }
 }
 

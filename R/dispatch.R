@@ -79,7 +79,9 @@ dispatch_chunks <- function(chunks, fun, ...,
       res$view_delta <- list(
         created = (vd1$created %||% 0L) - (vd0$created %||% 0L),
         materialized = (vd1$materialized %||% 0L) - (vd0$materialized %||% 0L),
-        materialized_bytes = (vd1$materialized_bytes %||% 0) - (vd0$materialized_bytes %||% 0)
+        materialized_bytes = (vd1$materialized_bytes %||% 0) - (vd0$materialized_bytes %||% 0),
+        packed = (vd1$packed %||% 0L) - (vd0$packed %||% 0L),
+        packed_bytes = (vd1$packed_bytes %||% 0) - (vd0$packed_bytes %||% 0)
       )
     }
 
@@ -98,7 +100,8 @@ dispatch_chunks <- function(chunks, fun, ...,
   inflight <- vector("list", pool$n) # worker_id -> {chunk_id,start_time}
 
   chunks_processed <- 0L
-  view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0)
+  view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0,
+                     packed = 0L, packed_bytes = 0)
   copy_stats <- list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0)
 
   # Helper: receive a single result (non-blocking with small timeout) from any worker.
@@ -295,6 +298,8 @@ dispatch_chunks <- function(chunks, fun, ...,
       view_stats$created <- view_stats$created + (vd$created %||% 0L)
       view_stats$materialized <- view_stats$materialized + (vd$materialized %||% 0L)
       view_stats$materialized_bytes <- view_stats$materialized_bytes + (vd$materialized_bytes %||% 0)
+      view_stats$packed <- view_stats$packed + (vd$packed %||% 0L)
+      view_stats$packed_bytes <- view_stats$packed_bytes + (vd$packed_bytes %||% 0)
     }
 
     if (is.list(payload) && is.list(payload$copy_delta)) {

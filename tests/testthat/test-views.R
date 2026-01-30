@@ -34,14 +34,21 @@ test_that("views are serializable and remain usable after unserialize", {
   expect_equal(materialize(v2), X[, 3:7, drop = FALSE])
 })
 
-test_that("block views reject non-range selectors (gather not implemented)", {
+test_that("block views reject non-range selectors; view() auto-selects gather", {
   shard:::view_reset_diagnostics()
   X <- matrix(as.double(1:20), nrow = 4)
   Xsh <- share(X, backing = "mmap")
 
   expect_error(view_block(Xsh, cols = 1:3))
-  expect_error(view(Xsh, cols = 1:3, type = "auto"))
-  expect_error(view(Xsh, cols = 1:3, type = "gather"))
+
+  v1 <- view(Xsh, cols = 1:3, type = "auto")
+  expect_true(is_view(v1))
+  expect_false(is_block_view(v1))
+  expect_true(inherits(v1, "shard_view_gather"))
+  expect_equal(materialize(v1), X[, 1:3, drop = FALSE])
+
+  v2 <- view(Xsh, cols = 1:3, type = "gather")
+  expect_true(inherits(v2, "shard_view_gather"))
 })
 
 test_that("view_col_sums runs without materializing views", {

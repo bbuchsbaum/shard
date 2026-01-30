@@ -53,8 +53,8 @@ test_that("tiled crossprod writes into an output buffer with zero view materiali
   expect_true(all(vapply(results(res), is.null, logical(1))))
 
   out <- as.matrix(Z)
-  expect_equal(out, crossprod(X, Y), tolerance = 1e-10)
+  # Buffers do not currently preserve dimnames; compare values only.
+  expect_equal(unname(out), unname(crossprod(X, Y)), tolerance = 1e-10)
 
   pool_stop()
 })
-

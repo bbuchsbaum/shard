@@ -1194,3 +1194,86 @@ SEXP C_shard_mat_crossprod_block(SEXP x, SEXP y,
     UNPROTECT(1);
     return out;
 }
+
+SEXP C_shard_mat_crossprod_gather(SEXP x, SEXP y,
+                                  SEXP row_start, SEXP row_end,
+                                  SEXP x_col_start, SEXP x_col_end,
+                                  SEXP y_cols) {
+    int x_nrow = 0, x_ncol = 0, y_nrow = 0, y_ncol = 0;
+    shard_altrep_info_t *xinfo = NULL, *yinfo = NULL;
+
+    double *xp = mat_double_ptr(x, &xinfo, &x_nrow, &x_ncol);
+    double *yp = mat_double_ptr(y, &yinfo, &y_nrow, &y_ncol);
+
+    int rs = asInteger(row_start);
+    int re = asInteger(row_end);
+    int xcs = asInteger(x_col_start);
+    int xce = asInteger(x_col_end);
+
+    if (rs == NA_INTEGER || re == NA_INTEGER || xcs == NA_INTEGER || xce == NA_INTEGER) {
+        error("bounds must be non-NA integers");
+    }
+
+    if (rs < 1 || re < rs) error("row bounds out of range");
+    if (rs > x_nrow || re > x_nrow) error("row bounds exceed x nrow");
+    if (rs > y_nrow || re > y_nrow) error("row bounds exceed y nrow");
+
+    if (xcs < 1 || xce < xcs || xce > x_ncol) error("x col bounds out of range");
+
+    if (TYPEOF(y_cols) != INTSXP) {
+        y_cols = PROTECT(coerceVector(y_cols, INTSXP));
+    } else {
+        PROTECT(y_cols);
+    }
+    R_xlen_t ky_xl = XLENGTH(y_cols);
+    if (ky_xl < 1) {
+        UNPROTECT(1);
+        error("y_cols must be non-empty");
+    }
+
+    int nr = re - rs + 1;        /* rows participating in product */
+    int kx = xce - xcs + 1;      /* x columns */
+    int ky = (int)ky_xl;         /* gather columns */
+
+    /* A is a view into X (no packing needed for contiguous column blocks). */
+    int lda = x_nrow;
+    double *A = xp + (R_xlen_t)(xcs - 1) * (R_xlen_t)x_nrow + (R_xlen_t)(rs - 1);
+
+    /*
+     * Pack the gathered Y columns for rows rs..re into a contiguous scratch
+     * matrix B (nr x ky). This is an explicit, bounded copy that enables a
+     * BLAS-3 dgemm fast path without materializing a full slice.
+     */
+    double *B = (double *)R_alloc((size_t)nr * (size_t)ky, sizeof(double));
+    for (int j = 0; j < ky; j++) {
+        int col = INTEGER(y_cols)[j];
+        if (col == NA_INTEGER || col < 1 || col > y_ncol) {
+            UNPROTECT(1);
+            error("y_cols contains out-of-range indices");
+        }
+        double *src = yp + (R_xlen_t)(col - 1) * (R_xlen_t)y_nrow + (R_xlen_t)(rs - 1);
+        double *dst = B + (R_xlen_t)j * (R_xlen_t)nr;
+        memcpy(dst, src, (size_t)nr * sizeof(double));
+    }
+
+    /* Result: t(A) %*% B => (kx x ky) */
+    SEXP out = PROTECT(allocMatrix(REALSXP, kx, ky));
+    double *C = REAL(out);
+
+    const char transa = 'T';
+    const char transb = 'N';
+    const double alpha = 1.0;
+    const double beta = 0.0;
+    int m = kx;
+    int n = ky;
+    int k = nr;
+    int ldb = nr;
+    int ldc = kx;
+
+    F77_CALL(dgemm)(&transa, &transb, &m, &n, &k,
+                    &alpha, A, &lda, B, &ldb,
+                    &beta, C, &ldc FCONE FCONE);
+
+    UNPROTECT(2); /* y_cols, out */
+    return out;
+}

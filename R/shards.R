@@ -100,6 +100,43 @@ shards <- function(n,
   )
 }
 
+#' Create Shards from an Explicit Index List
+#'
+#' Constructs a `shard_descriptor` from a user-supplied list of index vectors.
+#' This is useful for non-contiguous workloads like searchlights/feature sets
+#' where each shard operates on an arbitrary subset.
+#'
+#' @param idxs List of integer vectors (1-based indices). Each element becomes
+#'   one shard with fields `id`, `idx`, and `len`.
+#' @return A `shard_descriptor`.
+#' @export
+shards_list <- function(idxs) {
+  if (!is.list(idxs)) stop("idxs must be a list", call. = FALSE)
+
+  shards <- vector("list", length(idxs))
+  for (i in seq_along(idxs)) {
+    idx <- idxs[[i]]
+    if (!is.numeric(idx) || is.null(idx)) stop("idxs[[", i, "]] must be a numeric/integer vector", call. = FALSE)
+    idx <- as.integer(idx)
+    if (length(idx) < 1L) stop("idxs[[", i, "]] must be non-empty", call. = FALSE)
+    if (anyNA(idx)) stop("idxs[[", i, "]] must not contain NA", call. = FALSE)
+    if (any(idx < 1L)) stop("idxs[[", i, "]] must be >= 1", call. = FALSE)
+
+    shards[[i]] <- list(id = i, idx = idx, len = length(idx))
+  }
+
+  structure(
+    list(
+      n = length(shards),
+      block_size = NA_integer_,
+      strategy = "list",
+      num_shards = length(shards),
+      shards = shards
+    ),
+    class = "shard_descriptor"
+  )
+}
+
 #' Autotune Block Size
 #'
 #' Determines optimal block size based on worker count and constraints.

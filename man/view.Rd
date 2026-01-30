@@ -13,10 +13,10 @@ view(x, rows = NULL, cols = NULL, type = c("auto", "block", "gather"))
 
 \item{cols}{Column selector. NULL (all cols) or idx_range().}
 
-\item{type}{View type. Currently only \code{"block"} is implemented.}
+\item{type}{View type. \code{"block"} or \code{"gather"} (or \code{"auto"}).}
 }
 \value{
-A view object of class \code{shard_view_block}.
+A view object.
 }
 \description{
 Create a view over a shared matrix

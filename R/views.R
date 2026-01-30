@@ -15,6 +15,8 @@ NULL
 .views_env$created <- 0L
 .views_env$materialized <- 0L
 .views_env$materialized_bytes <- 0
+.views_env$packed <- 0L
+.views_env$packed_bytes <- 0
 
 elem_size_bytes <- function(x) {
   switch(
@@ -75,6 +77,25 @@ idx_range_print <- function(r) {
   paste0("[", r$start, ":", r$end, "]")
 }
 
+idx_vec_validate <- function(idx, n, name = "idx") {
+  if (!is.numeric(idx) || is.null(idx)) {
+    stop(name, " must be a non-empty numeric/integer vector", call. = FALSE)
+  }
+  idx <- as.integer(idx)
+  if (anyNA(idx)) stop(name, " must not contain NA", call. = FALSE)
+  if (any(idx < 1L) || any(idx > n)) {
+    stop(name, " contains out-of-range indices (1..", n, ")", call. = FALSE)
+  }
+  idx
+}
+
+idx_print <- function(x) {
+  if (is.null(x)) return("(all)")
+  if (is_idx_range(x)) return(idx_range_print(x))
+  if (is.integer(x)) return(paste0("[gather n=", length(x), "]"))
+  "(unknown)"
+}
+
 view_layout <- function(x_dim, rows, cols) {
   if (length(x_dim) != 2L) return("unsupported")
   if (is.null(rows) && is.null(cols)) return("full")
@@ -86,6 +107,8 @@ view_layout <- function(x_dim, rows, cols) {
   if (is_idx_range(rows) && is.null(cols)) return("row_block_strided")
 
   if (is_idx_range(rows) && is_idx_range(cols)) return("submatrix_strided")
+
+  if ((is.null(rows) || is_idx_range(rows)) && is.integer(cols)) return("col_gather")
 
   "unsupported"
 }
@@ -166,27 +189,80 @@ view_block_build <- function(x, rows, cols) {
   )
 }
 
+#' Create a gather (indexed) view over a shared matrix
+#'
+#' Gather views describe non-contiguous column (or row) subsets without
+#' allocating a slice-sized matrix. shard-aware kernels can then choose to
+#' pack the requested indices into scratch explicitly (bounded and reportable)
+#' or run gather-aware compute paths.
+#'
+#' v1 note: only column-gather views are implemented (rows may be NULL or
+#' idx_range()).
+#'
+#' @param x A shared (share()d) atomic matrix (double/integer/logical/raw).
+#' @param rows Row selector. NULL (all rows) or idx_range().
+#' @param cols Integer vector of column indices (1-based).
+#' @return A view object of class `shard_view_gather`.
+#' @export
+view_gather <- function(x, rows = NULL, cols) {
+  view_validate_dims(x)
+  d <- dim(x)
+  nrow <- d[1]
+  ncol <- d[2]
+
+  if (!is.null(rows) && !is_idx_range(rows)) {
+    stop("rows must be NULL or idx_range() for gather views", call. = FALSE)
+  }
+  if (!is.null(rows) && rows$end > nrow) stop("rows end exceeds nrow", call. = FALSE)
+
+  cols <- idx_vec_validate(cols, ncol, name = "cols")
+
+  slice_dim <- c(idx_range_len(rows, nrow), length(cols))
+  es <- elem_size_bytes(x)
+  nbytes <- if (!is.na(es)) as.double(prod(slice_dim)) * as.double(es) else NA_real_
+
+  .views_env$created <- .views_env$created + 1L
+
+  structure(
+    list(
+      base = x,
+      dim = d,
+      rows = rows,
+      cols = cols,
+      dtype = typeof(x),
+      layout = "col_gather",
+      slice_dim = slice_dim,
+      nbytes_est = nbytes
+    ),
+    class = c("shard_view_gather", "shard_view")
+  )
+}
+
 #' Create a view over a shared matrix
 #'
 #' @param x A shared (share()d) atomic matrix (double/integer/logical/raw).
 #' @param rows Row selector. NULL (all rows) or idx_range().
 #' @param cols Column selector. NULL (all cols) or idx_range().
-#' @param type View type. Currently only `"block"` is implemented.
-#' @return A view object of class `shard_view_block`.
+#' @param type View type. `"block"` or `"gather"` (or `"auto"`).
+#' @return A view object.
 #' @export
 view <- function(x, rows = NULL, cols = NULL, type = c("auto", "block", "gather")) {
   type <- match.arg(type)
   view_validate_dims(x)
 
   if (type == "gather") {
-    stop("Gather views are not implemented yet", call. = FALSE)
+    if (is.null(cols)) stop("gather view requires cols", call. = FALSE)
+    return(view_gather(x, rows = rows, cols = cols))
   }
   if (type == "auto") {
-    # Auto-select block if selectors are ranges, else gather (future).
-    if ((!is.null(rows) && !is_idx_range(rows)) || (!is.null(cols) && !is_idx_range(cols))) {
-      stop("Gather views are not implemented yet; use idx_range() selectors.", call. = FALSE)
+    # Auto-select block for idx_range selectors, gather for integer selectors.
+    if (!is.null(cols) && is.numeric(cols) && !is_idx_range(cols)) {
+      return(view_gather(x, rows = rows, cols = cols))
     }
-    type <- "block"
+    if ((!is.null(rows) && !is_idx_range(rows)) || (!is.null(cols) && !is_idx_range(cols))) {
+      stop("Unsupported selectors for auto view; use idx_range() or integer indices.", call. = FALSE)
+    }
+    return(view_block_build(x, rows = rows, cols = cols))
   }
 
   view_block_build(x, rows = rows, cols = cols)
@@ -224,8 +300,8 @@ view_info <- function(v) {
     slice_dim = v$slice_dim,
     rows = v$rows,
     cols = v$cols,
-    rows_print = idx_range_print(v$rows),
-    cols_print = idx_range_print(v$cols),
+    rows_print = idx_print(v$rows),
+    cols_print = idx_print(v$cols),
     layout = v$layout,
     fast_path = fast_path,
     nbytes_est = v$nbytes_est,
@@ -263,6 +339,18 @@ print.shard_view_block <- function(x, ...) {
 }
 
 #' @export
+print.shard_view_gather <- function(x, ...) {
+  info <- view_info(x)
+  cat("shard_view_gather\n")
+  cat("  dtype:", info$dtype, "\n")
+  cat("  dim:", paste(info$dim, collapse = "x"), "\n")
+  cat("  slice:", paste(info$slice_dim, collapse = "x"),
+      " rows=", info$rows_print, " cols=", info$cols_print, "\n", sep = "")
+  cat("  layout:", info$layout, " fast_path:", info$fast_path, "\n")
+  invisible(x)
+}
+
+#' @export
 materialize.shard_view_block <- function(x) {
   # Materialization is explicit and counted.
   base <- x$base
@@ -281,6 +369,22 @@ materialize.shard_view_block <- function(x) {
   base[rows, cols, drop = FALSE]
 }
 
+#' @export
+materialize.shard_view_gather <- function(x) {
+  base <- x$base
+  d <- x$dim
+  rows <- idx_range_resolve(x$rows, d[1], name = "rows")
+  cols <- x$cols
+
+  .views_env$materialized <- .views_env$materialized + 1L
+  if (!is.null(x$nbytes_est) && is.finite(x$nbytes_est)) {
+    .views_env$materialized_bytes <- .views_env$materialized_bytes + x$nbytes_est
+  }
+
+  if (is.null(rows)) rows <- seq_len(d[1])
+  base[rows, cols, drop = FALSE]
+}
+
 #' View diagnostics
 #'
 #' Returns global counters for view creation/materialization. This is a simple
@@ -291,9 +395,11 @@ materialize.shard_view_block <- function(x) {
 #' @export
 view_diagnostics <- function() {
   list(
-    created = .views_env$created %||% 0L,
-    materialized = .views_env$materialized %||% 0L,
-    materialized_bytes = .views_env$materialized_bytes %||% 0
+    created = .views_env$created,
+    materialized = .views_env$materialized,
+    materialized_bytes = .views_env$materialized_bytes,
+    packed = .views_env$packed,
+    packed_bytes = .views_env$packed_bytes
   )
 }
 
@@ -301,6 +407,8 @@ view_reset_diagnostics <- function() {
   .views_env$created <- 0L
   .views_env$materialized <- 0L
   .views_env$materialized_bytes <- 0
+  .views_env$packed <- 0L
+  .views_env$packed_bytes <- 0
   invisible(NULL)
 }
 
@@ -335,8 +443,8 @@ view_col_sums <- function(v) {
 }
 
 view_xTy <- function(x, y_view, x_cols = NULL) {
-  if (!inherits(y_view, "shard_view_block")) {
-    stop("y_view must be a shard_view_block", call. = FALSE)
+  if (!inherits(y_view, "shard_view")) {
+    stop("y_view must be a shard view", call. = FALSE)
   }
   if (!is.matrix(x) && !(is_shared_vector(x) && !is.null(dim(x)) && length(dim(x)) == 2L)) {
     stop("x must be a matrix or a shared matrix backing", call. = FALSE)
@@ -349,9 +457,6 @@ view_xTy <- function(x, y_view, x_cols = NULL) {
   if (dX[1] != dY[1]) stop("x and y must have the same number of rows", call. = FALSE)
 
   rs <- if (is.null(y_view$rows)) c(1L, dY[1]) else c(y_view$rows$start, y_view$rows$end)
-  if (is.null(y_view$cols)) stop("y_view must specify cols for block views", call. = FALSE)
-  ycs <- y_view$cols$start
-  yce <- y_view$cols$end
 
   if (is.null(x_cols)) {
     xcs <- 1L
@@ -363,28 +468,74 @@ view_xTy <- function(x, y_view, x_cols = NULL) {
     if (xce > dX[2]) stop("x_cols end exceeds ncol(x)", call. = FALSE)
   }
 
+  if (!identical(y_view$dtype, "double") || !identical(typeof(x), "double")) {
+    # Keep this strict while the kernels are double-only.
+    stop("view_xTy currently supports double matrices only", call. = FALSE)
+  }
+
+  if (inherits(y_view, "shard_view_block")) {
+    if (is.null(y_view$cols)) stop("y_view must specify cols for block views", call. = FALSE)
+    ycs <- y_view$cols$start
+    yce <- y_view$cols$end
+
+    out <- .Call(
+      "C_shard_mat_crossprod_block",
+      x,
+      y_base,
+      as.integer(rs[1]),
+      as.integer(rs[2]),
+      as.integer(xcs),
+      as.integer(xce),
+      as.integer(ycs),
+      as.integer(yce),
+      PACKAGE = "shard"
+    )
+
+    dnX <- dimnames(x)
+    dnY <- dimnames(y_base)
+    if (!is.null(dnX) || !is.null(dnY)) {
+      rn <- if (!is.null(dnX) && length(dnX) == 2L) dnX[[2]] else NULL
+      cn <- if (!is.null(dnY) && length(dnY) == 2L) dnY[[2]] else NULL
+      if (!is.null(rn)) rn <- rn[xcs:xce]
+      if (!is.null(cn)) cn <- cn[ycs:yce]
+      dimnames(out) <- list(rn, cn)
+    }
+
+    return(out)
+  }
+
+  if (!inherits(y_view, "shard_view_gather")) {
+    stop("Unsupported view type for view_xTy", call. = FALSE)
+  }
+  if (is.null(y_view$cols) || !is.integer(y_view$cols)) {
+    stop("gather view must provide integer cols", call. = FALSE)
+  }
+
+  y_cols <- y_view$cols
   out <- .Call(
-    "C_shard_mat_crossprod_block",
+    "C_shard_mat_crossprod_gather",
     x,
     y_base,
     as.integer(rs[1]),
     as.integer(rs[2]),
     as.integer(xcs),
     as.integer(xce),
-    as.integer(ycs),
-    as.integer(yce),
+    as.integer(y_cols),
     PACKAGE = "shard"
   )
 
+  # Record controlled packing volume (scratch), distinct from view materialization.
+  nr <- as.integer(rs[2] - rs[1] + 1L)
+  .views_env$packed <- .views_env$packed + 1L
+  .views_env$packed_bytes <- .views_env$packed_bytes + (as.double(nr) * as.double(length(y_cols)) * 8)
+
   dnX <- dimnames(x)
   dnY <- dimnames(y_base)
-  if (!is.null(dnX) || !is.null(dnY)) {
-    rn <- if (!is.null(dnX) && length(dnX) == 2L) dnX[[2]] else NULL
-    cn <- if (!is.null(dnY) && length(dnY) == 2L) dnY[[2]] else NULL
-    if (!is.null(rn)) rn <- rn[xcs:xce]
-    if (!is.null(cn)) cn <- cn[ycs:yce]
-    dimnames(out) <- list(rn, cn)
-  }
+  rn <- if (!is.null(dnX) && length(dnX) == 2L) dnX[[2]] else NULL
+  cn <- if (!is.null(dnY) && length(dnY) == 2L) dnY[[2]] else NULL
+  if (!is.null(rn)) rn <- rn[xcs:xce]
+  if (!is.null(cn)) cn <- cn[y_cols]
+  if (!is.null(rn) || !is.null(cn)) dimnames(out) <- list(rn, cn)
 
   out
 }
