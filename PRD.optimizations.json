@@ -1,0 +1,408 @@
+{
+  "metadata": {
+    "document_type": "PRD",
+    "version": "1.0.0",
+    "product_name": "shard",
+    "title": "Optimization Handles: Views, Columnar Outputs, and Adaptive Runtime",
+    "created": "2026-01-30",
+    "status": "draft",
+    "owners": ["shard core"]
+  },
+  "elevator_pitch": "shard becomes more than 'share big arrays + explicit output buffers + worker recycling' by adding first-class optimization handles: zero-copy views for slicing-heavy workloads, schema-driven columnar table outputs for tibble-like results, and an adaptive runtime (auto-tuned sharding, memory-aware scheduling, fast-path kernels, scratch reuse, and optional low-overhead dispatch). Together these enable speed and bounded memory guarantees that are difficult or impossible in closure-serialized parallel backends.",
+  "problem_statement": {
+    "summary": "Most R parallelism is opaque to the runtime",
+    "pain_points": [
+      "Hidden copies during slicing (e.g., Y[, idx]) dominate memory and time even when inputs are shared",
+      "Results aggregation (bind_rows/rbind/c) causes peak-memory spikes and extra copies",
+      "Block-size selection is ad hoc; wrong defaults cause poor BLAS utilization or OOMs",
+      "Synchronized memory peaks (all workers allocate scratch at once) create random OOMs",
+      "Repeated malloc/free of temporaries causes allocator churn and drift across long runs",
+      "Small-task scheduling overhead dominates for fine-grained workloads",
+      "Users cannot easily prove where copies and materializations happened"
+    ],
+    "shard_assumption": "If the runtime can see and constrain data movement, allocation, and task boundaries, it can optimize predictably and keep memory bounded."
+  },
+  "goals": {
+    "functional": [
+      "Zero-copy slicing via explicit view objects (block views in v1.0; gather views in v1.1)",
+      "Tibble-friendly outputs via schema-driven columnar buffers and sinks (fixed buffers in v1.0; row-groups/partitioned sinks in v1.1)",
+      "Auto-tuned shard sizing based on telemetry and memory caps",
+      "Memory-aware scheduling to avoid synchronized peaks and paging",
+      "Kernel registry for compiled/optimized fast paths while retaining fun= generality",
+      "Worker-local scratch pools for native kernels with recycling as the safety valve",
+      "Optional ultra-low overhead dispatch mode for tiny tasks (shared queue + batching)",
+      "Streaming reductions and combine-without-gather patterns",
+      "Diagnostics that quantify materialization, copies, drift, and runtime decisions",
+      "Maintain backwards compatibility with shard_map(fun=...) and doShard (foreach adapter)"
+    ],
+    "non_functional": [
+      "CRAN-compatible build and behavior (core features)",
+      "Cross-platform: Linux/macOS/Windows (feature-gated advanced OS hints and affinity)",
+      "Stable, small API surface; advanced features behind explicit opt-in",
+      "Deterministic memory behavior remains a first-class constraint"
+    ],
+    "success_metrics": [
+      "Materialized slice bytes near zero for view-enabled kernels on contiguous block workloads",
+      "Peak RSS during tabular aggregation dramatically lower than bind_rows-based approaches",
+      "End-of-run RSS returns close to baseline after long runs (or after recycling)",
+      "Near-linear scaling on embarrassingly parallel numeric workloads where compute dominates",
+      "Scheduler avoids correlated peaks: fewer OOM/paging events at fixed mem_cap",
+      "Dispatch overhead is amortized for small tasks via batching/fast mode"
+    ]
+  },
+  "scope": {
+    "v1_0_in_scope": [
+      "Block views over shared matrices/arrays (contiguous row/col ranges)",
+      "Fixed-size table buffers (schema + column buffers + disjoint writes)",
+      "Kernel registry scaffolding and one flagship kernel using views + scratch reuse",
+      "Auto-shard sizing (heuristic baseline, telemetry collection, offline recommendations)",
+      "Streaming reductions for a small set of associative ops (sum/min/max) without gather",
+      "Diagnostics and reports covering views, table outputs, and copying/materialization"
+    ],
+    "v1_1_in_scope": [
+      "Gather/indexed views (non-contiguous columns/rows) with explicit packing modes",
+      "Row-group table sinks (variable row counts) and partitioned sinks (disk-backed)",
+      "Online auto-tuning of block size (adapt during run based on telemetry)",
+      "Memory-aware scheduling (throttle heavy tasks, interleave heavy/light, access-ordering)",
+      "Worker-local scratch pools with bounded growth policies",
+      "doShard smart combine for tabular outputs (bind_rows -> sink)"
+    ],
+    "v2_0_preview": [
+      "Optional shared-memory ring queue dispatch for ultra-low overhead tiny tasks",
+      "NUMA/affinity controls (opt-in, platform-dependent)",
+      "OS-level mmap advice/prefetch hooks (opt-in, platform-dependent)",
+      "Distributed coordinator + leases + retry (multi-machine)"
+    ],
+    "out_of_scope": [
+      "General 'views everywhere' drop-in replacement for base R matrices",
+      "List-columns as first-class table-buffer outputs (default policy: disallow)",
+      "Hard dependency on Arrow/Parquet in core (plugins may exist)"
+    ]
+  },
+  "roadmap": {
+    "v1_0": {
+      "theme": "Make the optimization contract real and benchmarkable",
+      "deliverables": [
+        "Block views and explicit materialize()",
+        "Schema + table_buffer() for fixed-row outputs",
+        "Kernel registry scaffold + one flagship kernel",
+        "View/table diagnostics integrated into report()",
+        "Benchmark suite: views vs slicing, buffers vs bind_rows, drift stress test"
+      ]
+    },
+    "v1_1": {
+      "theme": "Generalize to more workloads and reduce overhead",
+      "deliverables": [
+        "Gather views with gather-aware kernels or controlled packing",
+        "Row-group and partitioned table sinks for variable/huge outputs",
+        "Online autotuning + memory-aware scheduling",
+        "Scratch pools + policies for bounded growth",
+        "doShard improvements for tabular combines"
+      ]
+    },
+    "v2_0": {
+      "theme": "Advanced runtime engines and scale-out",
+      "deliverables": [
+        "Shared-memory ring queue dispatch (optional fast mode)",
+        "NUMA and affinity controls (opt-in)",
+        "I/O-aware mmap advice/prefetch (opt-in)",
+        "Distributed coordinator + leases + retry"
+      ]
+    }
+  },
+  "features": [
+    {
+      "id": "F-001",
+      "name": "Zero-copy views (block views)",
+      "target_release": "v1.0",
+      "summary": "Introduce explicit view objects that represent slices of shared matrices/arrays without allocating slice-sized copies.",
+      "api": {
+        "range": "range(start, end)",
+        "view": "view(x, rows = NULL, cols = NULL, type = c('auto','block','gather'))",
+        "view_block": "view_block(x, rows = NULL, cols = NULL)",
+        "materialize": "materialize(v)",
+        "view_info": "view_info(v)",
+        "predicates": ["is_view(x)", "is_block_view(x)"]
+      },
+      "acceptance_criteria": [
+        "Creating a block view over contiguous columns/rows is O(1) with respect to slice size (no iteration over elements).",
+        "view_block(shared_matrix, cols=range(a,b)) does not allocate a matrix of the slice size (validated by object.size(view) << object.size(slice) and diagnostics counters).",
+        "materialize(view_block(x, cols=range(a,b))) is identical to x[, a:b, drop=FALSE] for supported numeric types.",
+        "Views are serializable and can be reconstructed in PSOCK workers via reopenable shared handles.",
+        "Diagnostics report view_create_count, view_materialize_count, and view_materialize_bytes for a run."
+      ],
+      "benchmark_acceptance": [
+        "In a slicing-heavy benchmark, view-based kernels report view_materialize_bytes == 0 in the hot path for contiguous block workloads.",
+        "Peak RSS is lower than a baseline that uses explicit matrix slicing in each task."
+      ]
+    },
+    {
+      "id": "F-002",
+      "name": "Zero-copy views (gather/indexed views)",
+      "target_release": "v1.1",
+      "summary": "Support non-contiguous column/row selections using index maps without forcing dense copies.",
+      "api": {
+        "view_gather": "view_gather(x, rows = NULL, cols = integer())",
+        "layout": ["col_gather", "row_gather"],
+        "packing_policy": "packing_policy = c('never','auto','always')"
+      },
+      "acceptance_criteria": [
+        "Gather views carry an explicit index map and do not allocate a dense slice by default.",
+        "Kernels may either (a) operate gather-aware or (b) pack into scratch explicitly; packing is measurable via diagnostics (packed_bytes).",
+        "For gather views, diagnostics report gather_count, packed_bytes, and chosen_mode histogram."
+      ]
+    },
+    {
+      "id": "F-003",
+      "name": "Output buffers with write-pattern contracts (extended)",
+      "target_release": "v1.0",
+      "summary": "Extend existing buffer() outputs with explicit write contracts and layout hints to improve cache use and avoid locks.",
+      "api": {
+        "buffer": "buffer(type, dim, backing = c('auto','mmap','shm'), init = NA, path = NULL, layout = NULL, contract = c('disjoint','overlap_error'))",
+        "buffer_slice": "buffer_slice(buf, shard) -> view over output region"
+      },
+      "acceptance_criteria": [
+        "Default disjoint-write contract remains lock-free: concurrent writes to disjoint regions do not require locks.",
+        "Overlapping writes in contract='overlap_error' are detected and error (at least in debug mode).",
+        "Diagnostics can report output bytes written and per-buffer write counts."
+      ]
+    },
+    {
+      "id": "F-004",
+      "name": "Schema-driven columnar table outputs (fixed buffers)",
+      "target_release": "v1.0",
+      "summary": "Provide schema + table_buffer() to enable tibble-like outputs without per-shard tibble returns and bind_rows().",
+      "api": {
+        "schema": "schema(...)",
+        "types": ["int32()", "float64()", "bool()", "raw()", "factor(levels=...)"],
+        "table_buffer": "table_buffer(schema, nrow, backing = c('auto','mmap','shm'))",
+        "row_layout": "row_layout(shards, rows_per_shard)",
+        "table_write": "table_write(tbl, rows, data)",
+        "table_finalize": "table_finalize(tbl, materialize = c('never','auto','always'))",
+        "as_tibble": "as_tibble(tbl_or_handle)"
+      },
+      "acceptance_criteria": [
+        "table_buffer(schema, nrow) allocates typed column buffers and is serializable for workers (via handles) without copying full columns.",
+        "table_write enforces schema: unknown columns error; missing columns error; type mismatches error (no silent overflow).",
+        "Factor columns store integer codes with levels stored once in metadata; invalid levels error.",
+        "Disjoint row layouts support lock-free parallel writes without a bind_rows() step.",
+        "table_finalize(materialize='auto') materializes only if estimated size < threshold; otherwise returns a handle and warns on as_tibble()."
+      ],
+      "benchmark_acceptance": [
+        "In a benchmark that returns N rows per shard, table_buffer approach shows significantly lower peak RSS than 'return tibble + bind_rows' at comparable throughput.",
+        "Master process does not accumulate an O(num_shards) list of tibbles."
+      ]
+    },
+    {
+      "id": "F-005",
+      "name": "Schema-driven table outputs (row-groups and partitioned sinks)",
+      "target_release": "v1.1",
+      "summary": "Support variable-size and huge tabular outputs without master-side accumulation using row-groups and partitioned sinks.",
+      "api": {
+        "table_sink": "table_sink(schema, mode = c('row_groups','partitioned'), path = NULL, format = 'native')",
+        "table_write": "table_write(sink, shard_id, data)",
+        "table_finalize": "table_finalize(sink) -> shard_table or shard_dataset handle",
+        "iterate_row_groups": "iterate_row_groups(handle) -> iterator over groups",
+        "collect": "collect(shard_dataset_handle)"
+      },
+      "acceptance_criteria": [
+        "Row-group mode stores each shard output separately and returns a lightweight manifest handle.",
+        "Partitioned mode writes shard outputs to a partition directory and returns a dataset handle without loading all data into RAM.",
+        "String columns are supported at least in row-group/partitioned mode via a stable encoding (offsets + bytes per group), with diagnostics reporting bytes per group.",
+        "Default policy disallows list-columns in sinks/buffers; opt-in allows only if elements are serializable and under a strict size cap."
+      ]
+    },
+    {
+      "id": "F-006",
+      "name": "Auto-tuned shard sizing",
+      "target_release": "v1.1",
+      "summary": "Tune block_size based on mem_cap, worker count, kernel hints, and telemetry (time, RSS delta, paging signals).",
+      "api": {
+        "shards": "shards(n, block_size = c('auto', integer), strategy = c('contiguous','strided'), autotune = list(enabled=TRUE, warmup=..., max=...))",
+        "kernel_hints": "kernel_hints(list(scratch_bytes_fn=..., preferred_block_sizes=...))"
+      },
+      "acceptance_criteria": [
+        "With block_size='auto', the runtime selects an initial size based on mem_cap/workers and adjusts based on observed time and RSS deltas.",
+        "Autotuning never violates hard mem_cap; when approaching cap or paging signals, it reduces block size.",
+        "Diagnostics report chosen block sizes over time and resulting throughput."
+      ]
+    },
+    {
+      "id": "F-007",
+      "name": "Memory-aware scheduling (throttling heavy shards)",
+      "target_release": "v1.1",
+      "summary": "Avoid synchronized memory peaks by classifying shards/kernels by footprint and limiting concurrent heavy tasks.",
+      "api": {
+        "footprint_class": "footprint_class = c('tiny','medium','huge')",
+        "scheduler_policy": "scheduler_policy = list(max_huge_concurrency=2, interleave=TRUE, access_order='sequential')"
+      },
+      "acceptance_criteria": [
+        "The scheduler can cap concurrent 'huge' tasks and interleave heavy and light tasks.",
+        "On workloads with known heavy phases, peak RSS and paging events are reduced compared to naive FIFO scheduling under the same mem_cap.",
+        "Diagnostics report concurrency throttling decisions and queueing delays."
+      ]
+    },
+    {
+      "id": "F-008",
+      "name": "Kernel registry + fast paths",
+      "target_release": "v1.0",
+      "summary": "Provide a high-performance tier via a kernel registry while preserving fun= for generality.",
+      "api": {
+        "register_kernel": "register_kernel(name, signature, impl, footprint = NULL, supports_views = TRUE)",
+        "shard_map": "shard_map(..., kernel = NULL)"
+      },
+      "acceptance_criteria": [
+        "Users can select kernel='name' and the runtime dispatches a known implementation (R or compiled).",
+        "Known kernels can declare footprint estimates to aid scheduling/autotuning.",
+        "At least one flagship kernel ships using views + scratch reuse (e.g., many regressions with shared X and block views over Y)."
+      ]
+    },
+    {
+      "id": "F-009",
+      "name": "Worker-local scratch pools",
+      "target_release": "v1.1",
+      "summary": "Reuse temporaries within workers to reduce allocation churn; recycle workers when pools grow beyond bounds.",
+      "api": {
+        "scratch_pool": "scratch_pool_config(max_bytes=..., classes=...)",
+        "kernel_contract": "kernel declares scratch shapes/classes for reuse"
+      },
+      "acceptance_criteria": [
+        "Scratch allocations for repeated shard shapes are reused across shards (measured by reduced allocation counts and improved throughput).",
+        "Scratch pool growth is bounded by policy; exceeding bounds triggers worker recycle under the existing determinism model.",
+        "Diagnostics report scratch_pool_high_water and reuse hit rate."
+      ]
+    },
+    {
+      "id": "F-010",
+      "name": "Streaming reductions (combine without gather)",
+      "target_release": "v1.0",
+      "summary": "Provide reduction patterns that avoid gathering huge intermediate lists on the master.",
+      "api": {
+        "shard_reduce": "shard_reduce(shards, borrow, out, map, reduce, init, workers, chunk_size, ...) ",
+        "reducers": ["sum", "min", "max", "count", "histogram (v1.1)"]
+      },
+      "acceptance_criteria": [
+        "Tree reduction can combine per-worker partials without materializing all shard results on the master.",
+        "For associative reducers, memory stays bounded by partial size, not number of shards.",
+        "Diagnostics report partial sizes, combine steps, and peak memory during reduction."
+      ]
+    },
+    {
+      "id": "F-011",
+      "name": "Ultra-low overhead dispatch (fast mode)",
+      "target_release": "v2.0",
+      "summary": "Optional shared-memory ring queue dispatch for very small tasks to reduce socket/message overhead.",
+      "api": {
+        "dispatch_mode": "dispatch_mode = c('rpc_chunked','shm_queue')",
+        "queue": "shm_task_queue(config=...)"
+      },
+      "acceptance_criteria": [
+        "In shm_queue mode, per-task overhead is substantially reduced for tiny tasks compared to rpc_chunked mode (measured in tasks/sec).",
+        "Correctness is preserved under worker restarts and retries (tasks are idempotent and re-leaseable).",
+        "Mode is opt-in and feature-gated by platform support."
+      ]
+    },
+    {
+      "id": "F-012",
+      "name": "NUMA/affinity and mmap I/O hints (advanced)",
+      "target_release": "v2.0",
+      "summary": "Optional performance knobs for large servers and mmap-backed datasets: worker pinning, first-touch output, access-ordering, and OS hints/prefetch.",
+      "api": {
+        "affinity": "affinity_config(pin_workers=TRUE, strategy='compact')",
+        "io_hints": "io_hints(access='sequential', prefetch=TRUE)"
+      },
+      "acceptance_criteria": [
+        "Features are disabled by default and do not affect CRAN portability.",
+        "When enabled on supported platforms, measurable improvements are observed on large, bandwidth-bound workloads.",
+        "Diagnostics include whether knobs were enabled and basic counters (prefetch bytes, reorder decisions)."
+      ]
+    },
+    {
+      "id": "F-013",
+      "name": "Diagnostics feedback loop (recommendations)",
+      "target_release": "v1.1",
+      "summary": "Use telemetry to identify materialization hotspots and provide actionable recommendations.",
+      "api": {
+        "report": "report(run) -> shard_report with recommendations",
+        "recommendations": "recommendations(run) -> list"
+      },
+      "acceptance_criteria": [
+        "Reports identify top materialization sources (views materialized, bytes packed, large returns) and provide specific recommendations.",
+        "Reports include kernel/runtime decisions (autotune choices, throttling, recycling events) with timestamps.",
+        "Recommendations are deterministic given the same run telemetry."
+      ]
+    }
+  ],
+  "benchmarks": {
+    "principles": [
+      "Measure both time and memory (peak RSS and end RSS).",
+      "Measure copies/materialization bytes and packing bytes (not just RSS).",
+      "Include long-run drift and recycling behavior."
+    ],
+    "suite": [
+      {
+        "id": "B-001",
+        "name": "Views vs slicing",
+        "description": "Compare base slicing (Y[, a:b]) to block views + view-enabled kernels.",
+        "metrics": ["wall_time", "allocated_bytes", "peak_rss", "view_materialize_bytes"]
+      },
+      {
+        "id": "B-002",
+        "name": "Tabular outputs: bind_rows vs table_buffer",
+        "description": "Each shard produces k rows and m numeric columns; compare 'return tibble + bind_rows' with table_buffer writes.",
+        "metrics": ["wall_time", "peak_rss", "end_rss", "bytes_written", "master_accumulation_bytes"]
+      },
+      {
+        "id": "B-003",
+        "name": "Drift stress test",
+        "description": "Many shards over long runtime; confirm end RSS stability and recycling effectiveness.",
+        "metrics": ["peak_rss", "end_rss", "recycle_events", "throughput_over_time"]
+      },
+      {
+        "id": "B-004",
+        "name": "Autotune and scheduling stress",
+        "description": "Mix heavy/light shards; verify throttling reduces paging and avoids OOM under fixed mem_cap.",
+        "metrics": ["paging_signals", "peak_rss", "completed_tasks", "retries", "autotune_block_sizes"]
+      }
+    ]
+  },
+  "testing": {
+    "unit": [
+      "materialize(view) equals base slice for supported types and edge cases",
+      "schema/table_buffer enforces type and shape rules",
+      "table_write is idempotent for the same target range",
+      "kernel registry selects correct implementation"
+    ],
+    "integration": [
+      "Views and table handles serialize/unserialize across PSOCK workers",
+      "Long-run runs recycle workers and complete with correct results",
+      "doShard (when implemented) converts bind_rows combines into sinks without changing semantics for small results"
+    ],
+    "acceptance": [
+      "R CMD check passes on supported platforms for core (v1.x) features",
+      "Benchmark suite demonstrates the expected memory and copy reductions"
+    ]
+  },
+  "risks": [
+    {
+      "risk": "Users expect views to behave like full matrices everywhere",
+      "mitigation": "Views are explicit; provide materialize() and shard-aware kernels; avoid implicit as.matrix methods that hide copies."
+    },
+    {
+      "risk": "String and list columns complicate table outputs",
+      "mitigation": "Start with numeric/factor types in fixed buffers; add strings in row-group mode first; disallow list-cols by default with strict opt-in caps."
+    },
+    {
+      "risk": "Autotuning and scheduling add complexity and risk regressions",
+      "mitigation": "Feature-gate; start with conservative defaults; record all decisions in diagnostics; allow users to pin block_size and disable tuning."
+    }
+  ],
+  "open_questions": [
+    "Should shards() optionally return precomputed view descriptors to reduce per-task overhead?",
+    "Should view() support auto-sharing non-shared matrices via an explicit option (default off) for UX?",
+    "What is the minimal kernel set to make views and table outputs feel immediately valuable (beyond the flagship kernel)?",
+    "How should int64 be represented in core without heavy dependencies (omit in v1.0 vs strict double encoding)?",
+    "What are the default thresholds for auto-materialization in table_finalize(materialize='auto')?"
+  ]
+}
+
