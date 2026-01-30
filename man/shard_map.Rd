@@ -12,6 +12,8 @@ shard_map(
   kernel = NULL,
   scheduler_policy = NULL,
   autotune = NULL,
+  dispatch_mode = c("rpc_chunked", "shm_queue"),
+  dispatch_opts = NULL,
   workers = NULL,
   chunk_size = 1L,
   profile = c("default", "memory", "speed"),
@@ -62,6 +64,24 @@ precomputed shard descriptors.
 an integer \code{N}).
 \item \code{FALSE} / \code{"none"}: disable autotuning.
 \item a list: \code{list(mode="online", max_rounds=..., probe_shards_per_worker=..., min_shard_time=...)}
+}}
+
+\item{dispatch_mode}{Dispatch mode (advanced). \code{"rpc_chunked"} is the default
+supervised socket-based dispatcher. \code{"shm_queue"} is an opt-in fast mode
+that uses a shared-memory task queue to reduce per-task overhead for tiny
+tasks. In v1, \code{"shm_queue"} is only supported for \code{shard_map(N, ...)} with
+\code{chunk_size=1} and is intended for out-buffer/sink workflows (results are
+not gathered).}
+
+\item{dispatch_opts}{Optional list of dispatch-mode specific knobs (advanced).
+Currently:
+\itemize{
+\item For \code{dispatch_mode="shm_queue"}:
+\itemize{
+\item \code{block_size}: integer. If provided, overrides the default heuristic for
+contiguous shard block sizing.
+\item \code{queue_backing}: one of \code{"mmap"} or \code{"shm"} (default \code{"mmap"}).
+}
 }}
 
 \item{workers}{Integer. Number of worker processes. If NULL, uses existing

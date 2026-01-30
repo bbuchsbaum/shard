@@ -321,6 +321,37 @@ dim.shard_buffer <- function(x) {
     .buffer_diag_env$bytes <- .buffer_diag_env$bytes + (count * x$elem_size)
 }
 
+# Internal: write arbitrary indices safely without read/modify/write.
+# This is critical for disjoint parallel writes where indices are not one single
+# contiguous run (e.g., singleton writes when block_size=1).
+.buffer_write_indices <- function(x, idx, values) {
+    idx <- as.integer(idx)
+    if (length(idx) == 0) return(invisible(NULL))
+
+    # If indices are strictly increasing, coalesce adjacent runs and write each
+    # run as one contiguous segment write.
+    if (length(idx) == 1L || (all(!is.na(idx)) && all(diff(idx) >= 0L) && !anyDuplicated(idx))) {
+        run_start_pos <- 1L
+        for (k in 2L:(length(idx) + 1L)) {
+            is_break <- (k > length(idx)) || (idx[k] != (idx[k - 1L] + 1L))
+            if (is_break) {
+                start <- idx[run_start_pos]
+                end_pos <- k - 1L
+                .buffer_write_range(x, start, values[run_start_pos:end_pos])
+                run_start_pos <- k
+            }
+        }
+        return(invisible(NULL))
+    }
+
+    # Fallback: preserve R assignment semantics for duplicates/out-of-order by
+    # performing writes in the given order (last write wins).
+    for (k in seq_along(idx)) {
+        .buffer_write_range(x, idx[k], values[k])
+    }
+    invisible(NULL)
+}
+
 #' Extract Buffer Elements
 #'
 #' @param x A shard_buffer object.
@@ -434,11 +465,10 @@ dim.shard_buffer <- function(x) {
         if (length(i) > 1 && all(diff(i) == 1L)) {
             .buffer_write_range(x, i[1], value)
         } else {
-            # Non-contiguous: read all, modify, write back
-            # TODO: optimize for sparse writes
-            all_data <- .buffer_read_range(x, 1L, x$n)
-            all_data[i] <- value
-            .buffer_write_range(x, 1L, all_data)
+            # Non-contiguous: write indices directly to avoid read/modify/write.
+            # This keeps disjoint parallel writes correct (lock-free) and avoids
+            # clobbering other workers' updates.
+            .buffer_write_indices(x, i, value)
         }
         return(invisible(x))
     }

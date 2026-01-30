@@ -7,6 +7,8 @@
 #include "shard_shm.h"
 #include "shard_altrep.h"
 #include "shard_utils.h"
+#include "shard_taskq.h"
+#include "shard_affinity.h"
 
 /* Callable methods from R */
 static const R_CallMethodDef CallEntries[] = {
@@ -35,6 +37,18 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_mat_crossprod_block",      (DL_FUNC) &C_shard_mat_crossprod_block,      8},
     {"C_shard_mat_crossprod_gather",     (DL_FUNC) &C_shard_mat_crossprod_gather,     7},
     {"C_shard_obj_address",              (DL_FUNC) &C_shard_obj_address,              1},
+    /* Task queue (shm_queue) */
+    {"C_shard_taskq_init",               (DL_FUNC) &C_shard_taskq_init,               2},
+    {"C_shard_taskq_claim",              (DL_FUNC) &C_shard_taskq_claim,              2},
+    {"C_shard_taskq_mark_done",          (DL_FUNC) &C_shard_taskq_mark_done,          2},
+    {"C_shard_taskq_mark_error",         (DL_FUNC) &C_shard_taskq_mark_error,         3},
+    {"C_shard_taskq_reset_claims",       (DL_FUNC) &C_shard_taskq_reset_claims,       2},
+    {"C_shard_taskq_stats",              (DL_FUNC) &C_shard_taskq_stats,              1},
+    {"C_shard_taskq_failures",           (DL_FUNC) &C_shard_taskq_failures,           1},
+    /* Affinity + madvise (best-effort) */
+    {"C_shard_affinity_supported",       (DL_FUNC) &C_shard_affinity_supported,       0},
+    {"C_shard_set_affinity",             (DL_FUNC) &C_shard_set_affinity,             1},
+    {"C_shard_segment_madvise",          (DL_FUNC) &C_shard_segment_madvise,          2},
     {NULL, NULL, 0}
 };
 

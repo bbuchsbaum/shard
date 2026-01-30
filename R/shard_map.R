@@ -34,6 +34,18 @@ NULL
 #'     an integer `N`).
 #'   - `FALSE` / `"none"`: disable autotuning.
 #'   - a list: `list(mode="online", max_rounds=..., probe_shards_per_worker=..., min_shard_time=...)`
+#' @param dispatch_mode Dispatch mode (advanced). `"rpc_chunked"` is the default
+#'   supervised socket-based dispatcher. `"shm_queue"` is an opt-in fast mode
+#'   that uses a shared-memory task queue to reduce per-task overhead for tiny
+#'   tasks. In v1, `"shm_queue"` is only supported for `shard_map(N, ...)` with
+#'   `chunk_size=1` and is intended for out-buffer/sink workflows (results are
+#'   not gathered).
+#' @param dispatch_opts Optional list of dispatch-mode specific knobs (advanced).
+#'   Currently:
+#'   - For `dispatch_mode="shm_queue"`:
+#'     - `block_size`: integer. If provided, overrides the default heuristic for
+#'       contiguous shard block sizing.
+#'     - `queue_backing`: one of `"mmap"` or `"shm"` (default `"mmap"`).
 #' @param workers Integer. Number of worker processes. If NULL, uses existing
 #'   pool or creates one with `detectCores() - 1`.
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
@@ -87,6 +99,8 @@ shard_map <- function(shards,
                       kernel = NULL,
                       scheduler_policy = NULL,
                       autotune = NULL,
+                      dispatch_mode = c("rpc_chunked", "shm_queue"),
+                      dispatch_opts = NULL,
                       workers = NULL,
                       chunk_size = 1L,
                       profile = c("default", "memory", "speed"),
@@ -102,6 +116,9 @@ shard_map <- function(shards,
                       health_check_interval = 10L) {
   profile <- match.arg(profile)
   cow <- match.arg(cow)
+  dispatch_mode <- match.arg(dispatch_mode)
+  if (is.null(dispatch_opts)) dispatch_opts <- list()
+  if (!is.list(dispatch_opts)) stop("dispatch_opts must be NULL or a list", call. = FALSE)
 
   kernel_meta <- NULL
   if (!is.null(kernel)) {
@@ -123,7 +140,8 @@ shard_map <- function(shards,
       shard_times = list(),
       worker_usage = list(),
       kernel = kernel %||% NULL,
-      autotune = NULL
+      autotune = NULL,
+      dispatch_mode = dispatch_mode
     )
   } else {
     NULL
@@ -184,6 +202,72 @@ shard_map <- function(shards,
   # Export output buffer references if any
   if (length(out) > 0) {
     export_out_to_workers(pool, out)
+  }
+
+  # shm_queue fast mode: scalar N only, chunk_size=1, fire-and-forget.
+  if (identical(dispatch_mode, "shm_queue")) {
+    if (!shards_is_scalar_n) {
+      stop("dispatch_mode='shm_queue' currently requires shard_map(N, ...) with scalar N", call. = FALSE)
+    }
+    if (as.integer(chunk_size) != 1L) {
+      stop("dispatch_mode='shm_queue' currently requires chunk_size=1", call. = FALSE)
+    }
+    if (length(out) == 0) {
+      warning("dispatch_mode='shm_queue' does not gather results; prefer using out= buffers/sinks.", call. = FALSE)
+    }
+
+    block_size <- dispatch_opts$block_size %||% autotune_block_size(
+        n = n_items,
+        workers = workers,
+        min_shards_per_worker = 4L,
+        max_shards_per_worker = 64L
+      )
+    block_size <- as.integer(block_size)
+    if (is.na(block_size) || block_size < 1L) stop("dispatch_opts$block_size must be >= 1", call. = FALSE)
+
+    shards <- shards_lazy(n_items, block_size = block_size)
+
+    dispatch_result <- dispatch_shards_shm_queue_(
+      n = n_items,
+      block_size = block_size,
+      fun = fun,
+      borrow = borrow,
+      out = out,
+      pool = pool,
+      max_retries = max_retries,
+      timeout = timeout,
+      queue_backing = dispatch_opts$queue_backing %||% "mmap"
+    )
+
+    results <- dispatch_result$results
+
+    if (diagnostics) {
+      diag$end_time <- Sys.time()
+      diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
+      diag$health_checks <- dispatch_result$diagnostics$health_checks %||% list()
+      diag$shards_processed <- shards$num_shards
+      diag$chunks_dispatched <- shards$num_shards
+      diag$pool_stats <- dispatch_result$pool_stats
+      diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
+      diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
+      diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
+      diag$scratch_stats <- dispatch_result$diagnostics$scratch_stats %||% NULL
+      diag$shm_queue <- dispatch_result$diagnostics$taskq %||% NULL
+    }
+
+    return(structure(
+      list(
+        results = results,
+        failures = dispatch_result$failures,
+        shards = shards,
+        diagnostics = diag,
+        queue_status = dispatch_result$queue_status,
+        pool_stats = dispatch_result$pool_stats,
+        cow_policy = cow,
+        profile = profile
+      ),
+      class = "shard_result"
+    ))
   }
 
   # Create self-contained executor function for workers

@@ -291,30 +291,41 @@
       "id": "F-011",
       "name": "Ultra-low overhead dispatch (fast mode)",
       "target_release": "v2.0",
-      "summary": "Optional shared-memory ring queue dispatch for very small tasks to reduce socket/message overhead.",
+      "summary": "Optional shared-memory task queue dispatch for very small tasks to reduce per-task socket/message overhead.",
       "api": {
-        "dispatch_mode": "dispatch_mode = c('rpc_chunked','shm_queue')",
-        "queue": "shm_task_queue(config=...)"
+        "dispatch_mode": "shard_map(..., dispatch_mode = c('rpc_chunked','shm_queue'), dispatch_opts = list(...))",
+        "dispatch_opts": {
+          "block_size": "integer. Override contiguous shard sizing in shm_queue mode.",
+          "queue_backing": "one of 'mmap' or 'shm' (default: 'mmap')"
+        }
       },
       "acceptance_criteria": [
-        "In shm_queue mode, per-task overhead is substantially reduced for tiny tasks compared to rpc_chunked mode (measured in tasks/sec).",
-        "Correctness is preserved under worker restarts and retries (tasks are idempotent and re-leaseable).",
-        "Mode is opt-in and feature-gated by platform support."
+        "In shm_queue mode, per-task overhead is substantially reduced for tiny tasks compared to rpc_chunked mode (measured in tasks/sec via inst/bench/shm_queue_overhead_shard_map.R).",
+        "Correctness is preserved under worker restarts and retries (tasks are idempotent and re-claimable).",
+        "Mode is opt-in, documented as advanced, and safe on unsupported platforms (falls back to normal dispatch when shm/atomics are unavailable)."
       ]
     },
     {
       "id": "F-012",
       "name": "NUMA/affinity and mmap I/O hints (advanced)",
       "target_release": "v2.0",
-      "summary": "Optional performance knobs for large servers and mmap-backed datasets: worker pinning, first-touch output, access-ordering, and OS hints/prefetch.",
+      "summary": "Optional performance knobs for large servers and mmap-backed datasets: worker pinning and OS mmap access-pattern hints.",
       "api": {
-        "affinity": "affinity_config(pin_workers=TRUE, strategy='compact')",
-        "io_hints": "io_hints(access='sequential', prefetch=TRUE)"
+        "affinity": [
+          "affinity_supported()",
+          "set_affinity(cores)",
+          "pin_workers(pool = NULL, strategy = c('spread','compact'), cores = NULL)"
+        ],
+        "io_hints": [
+          "segment_advise(seg, advice = c('normal','sequential','random','willneed','dontneed'))",
+          "buffer_advise(buf, advice = ...)",
+          "shared_advise(x, advice = ...)"
+        ]
       },
       "acceptance_criteria": [
-        "Features are disabled by default and do not affect CRAN portability.",
-        "When enabled on supported platforms, measurable improvements are observed on large, bandwidth-bound workloads.",
-        "Diagnostics include whether knobs were enabled and basic counters (prefetch bytes, reorder decisions)."
+        "Features are opt-in and do not affect CRAN portability (best-effort no-ops on unsupported platforms).",
+        "On supported platforms, functions return TRUE/FALSE without crashing and are safe to call in workers.",
+        "Basic unit tests cover the no-crash + logical-return contract for affinity and madvise helpers."
       ]
     },
     {
