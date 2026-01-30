@@ -46,7 +46,7 @@
       "id": "US-V-001",
       "story": "I want to process Y in contiguous column blocks in parallel without allocating Y_chunk = Y[, idx].",
       "acceptance_criteria": [
-        "view_block(Y_shared, cols=range(a,b)) creates a small object (O(1) metadata) and does not allocate a slice-sized matrix",
+        "view_block(Y_shared, cols=idx_range(a,b)) creates a small object (O(1) metadata) and does not allocate a slice-sized matrix",
         "A view-enabled kernel can compute on that slice without materialization",
         "copy_report() shows view_materialized_bytes near zero for the hot path"
       ]
@@ -88,7 +88,7 @@
   },
   "api": {
     "range": {
-      "signature": "range(start, end)",
+      "signature": "idx_range(start, end)",
       "description": "Compact contiguous range descriptor (inclusive, 1-based)."
     },
     "view": {
@@ -147,7 +147,7 @@
       {
         "id": "B-V-001",
         "name": "View creation vs slicing",
-        "description": "Compare view_block(Y, cols=range(a,b)) creation cost vs Y[, a:b] allocation.",
+        "description": "Compare view_block(Y, cols=idx_range(a,b)) creation cost vs Y[, a:b] allocation.",
         "metrics": ["wall_time", "allocated_bytes", "view_object_size_bytes"]
       },
       {
@@ -180,7 +180,7 @@
       "id": "D-V-001",
       "name": "Block views API + implementation",
       "definition_of_done": [
-        "range(), view(), view_block(), materialize(), view_info() implemented",
+        "idx_range(), view(), view_block(), materialize(), view_info() implemented",
         "Supported for shared matrices/arrays of double/integer/logical/raw where applicable",
         "Serialization/unserialization works in PSOCK workers",
         "Diagnostics counters wired into report()"
@@ -231,4 +231,3 @@
     "What is the minimal set of view-enabled kernels to ship so views feel immediately valuable?"
   ]
 }
-

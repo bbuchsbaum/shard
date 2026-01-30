@@ -117,7 +117,7 @@
       "target_release": "v1.0",
       "summary": "Introduce explicit view objects that represent slices of shared matrices/arrays without allocating slice-sized copies.",
       "api": {
-        "range": "range(start, end)",
+        "range": "idx_range(start, end)",
         "view": "view(x, rows = NULL, cols = NULL, type = c('auto','block','gather'))",
         "view_block": "view_block(x, rows = NULL, cols = NULL)",
         "materialize": "materialize(v)",
@@ -126,8 +126,8 @@
       },
       "acceptance_criteria": [
         "Creating a block view over contiguous columns/rows is O(1) with respect to slice size (no iteration over elements).",
-        "view_block(shared_matrix, cols=range(a,b)) does not allocate a matrix of the slice size (validated by object.size(view) << object.size(slice) and diagnostics counters).",
-        "materialize(view_block(x, cols=range(a,b))) is identical to x[, a:b, drop=FALSE] for supported numeric types.",
+        "view_block(shared_matrix, cols=idx_range(a,b)) does not allocate a matrix of the slice size (validated by object.size(view) << object.size(slice) and diagnostics counters).",
+        "materialize(view_block(x, cols=idx_range(a,b))) is identical to x[, a:b, drop=FALSE] for supported numeric types.",
         "Views are serializable and can be reconstructed in PSOCK workers via reopenable shared handles.",
         "Diagnostics report view_create_count, view_materialize_count, and view_materialize_bytes for a run."
       ],
@@ -405,4 +405,3 @@
     "What are the default thresholds for auto-materialization in table_finalize(materialize='auto')?"
   ]
 }
-

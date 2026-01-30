@@ -306,7 +306,10 @@ copy_report <- function(result = NULL) {
     result_imports = 0L,
     result_bytes = 0,
     buffer_writes = 0L,
-    buffer_bytes = 0
+    buffer_bytes = 0,
+    view_created = 0L,
+    view_materialized = 0L,
+    view_materialized_bytes = 0
   )
 
   if (!is.null(result) && inherits(result, "shard_result")) {
@@ -330,6 +333,14 @@ copy_report <- function(result = NULL) {
       rpt$buffer_writes <- copy_stats$buffer_writes %||% 0L
       rpt$buffer_bytes <- copy_stats$buffer_bytes %||% 0
     }
+  }
+
+  # Global view diagnostics (run-level integration is future work).
+  vd <- tryCatch(view_diagnostics(), error = function(e) NULL)
+  if (is.list(vd)) {
+    rpt$view_created <- vd$created %||% 0L
+    rpt$view_materialized <- vd$materialized %||% 0L
+    rpt$view_materialized_bytes <- vd$materialized_bytes %||% 0
   }
 
   structure(rpt, class = "shard_report")
@@ -649,6 +660,13 @@ print_copy_report <- function(x) {
   cat("\nBuffers:\n")
   cat("  Writes:", x$buffer_writes, "\n")
   cat("  Bytes:", format_bytes(x$buffer_bytes), "\n")
+
+  if (!is.null(x$view_created) || !is.null(x$view_materialized)) {
+    cat("\nViews:\n")
+    cat("  Created:", x$view_created %||% 0L, "\n")
+    cat("  Materialized:", x$view_materialized %||% 0L, "\n")
+    cat("  Materialized bytes:", format_bytes(x$view_materialized_bytes %||% 0), "\n")
+  }
 }
 
 #' Print Task Report
