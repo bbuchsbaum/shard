@@ -383,3 +383,64 @@ view_xTy <- function(x, y_view, x_cols = NULL) {
 
   out
 }
+
+view_crossprod <- function(x_view, y_view) {
+  if (!inherits(x_view, "shard_view_block")) {
+    stop("x_view must be a shard_view_block", call. = FALSE)
+  }
+  if (!inherits(y_view, "shard_view_block")) {
+    stop("y_view must be a shard_view_block", call. = FALSE)
+  }
+
+  xb <- x_view$base
+  yb <- y_view$base
+  dX <- x_view$dim
+  dY <- y_view$dim
+  if (length(dX) != 2L || length(dY) != 2L) stop("views must be over matrices", call. = FALSE)
+  if (dX[1] != dY[1]) stop("x and y must have the same number of rows", call. = FALSE)
+
+  if (!identical(x_view$dtype, "double") || !identical(y_view$dtype, "double")) {
+    stop("view_crossprod currently supports double matrices only", call. = FALSE)
+  }
+
+  # Require compatible row ranges (or NULL meaning full). Keep behavior strict
+  # for now so the kernel can be reasoned about easily.
+  if (!is.null(x_view$rows) && !is.null(y_view$rows) &&
+      (!is_idx_range(x_view$rows) || !is_idx_range(y_view$rows) ||
+       x_view$rows$start != y_view$rows$start || x_view$rows$end != y_view$rows$end)) {
+    stop("x_view and y_view must have identical row ranges (or NULL)", call. = FALSE)
+  }
+
+  rs <- if (is.null(x_view$rows) && is.null(y_view$rows)) c(1L, dX[1]) else {
+    r <- if (!is.null(x_view$rows)) x_view$rows else y_view$rows
+    c(r$start, r$end)
+  }
+
+  xcs <- if (is.null(x_view$cols)) 1L else x_view$cols$start
+  xce <- if (is.null(x_view$cols)) dX[2] else x_view$cols$end
+  ycs <- if (is.null(y_view$cols)) 1L else y_view$cols$start
+  yce <- if (is.null(y_view$cols)) dY[2] else y_view$cols$end
+
+  out <- .Call(
+    "C_shard_mat_crossprod_block",
+    xb,
+    yb,
+    as.integer(rs[1]),
+    as.integer(rs[2]),
+    as.integer(xcs),
+    as.integer(xce),
+    as.integer(ycs),
+    as.integer(yce),
+    PACKAGE = "shard"
+  )
+
+  dnX <- dimnames(xb)
+  dnY <- dimnames(yb)
+  rn <- if (!is.null(dnX) && length(dnX) == 2L) dnX[[2]] else NULL
+  cn <- if (!is.null(dnY) && length(dnY) == 2L) dnY[[2]] else NULL
+  if (!is.null(rn)) rn <- rn[xcs:xce]
+  if (!is.null(cn)) cn <- cn[ycs:yce]
+  if (!is.null(rn) || !is.null(cn)) dimnames(out) <- list(rn, cn)
+
+  out
+}

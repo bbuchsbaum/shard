@@ -84,3 +84,28 @@ test_that("view_xTy uses BLAS path without materializing views", {
   expect_equal(vd$materialized, 0L)
   expect_equal(vd$materialized_bytes, 0)
 })
+
+test_that("view_crossprod consumes two views without materializing", {
+  shard:::view_reset_diagnostics()
+
+  X <- matrix(rnorm(1500), nrow = 100)
+  Y <- matrix(rnorm(2200), nrow = 100)
+  colnames(X) <- paste0("x", seq_len(ncol(X)))
+  colnames(Y) <- paste0("y", seq_len(ncol(Y)))
+
+  Xsh <- share(X, backing = "mmap")
+  Ysh <- share(Y, backing = "mmap")
+
+  vX <- view_block(Xsh, cols = idx_range(2, 9))
+  vY <- view_block(Ysh, cols = idx_range(5, 11))
+
+  out <- shard:::view_crossprod(vX, vY)
+
+  expect_equal(out, crossprod(X[, 2:9, drop = FALSE], Y[, 5:11, drop = FALSE]))
+  expect_equal(rownames(out), colnames(X)[2:9])
+  expect_equal(colnames(out), colnames(Y)[5:11])
+
+  vd <- view_diagnostics()
+  expect_equal(vd$materialized, 0L)
+  expect_equal(vd$materialized_bytes, 0)
+})
