@@ -137,3 +137,257 @@ stream_filter <- function(x, predicate, path = NULL, ...) {
   table_finalize(sink, materialize = "never")
 }
 
+#' Stream sum of a numeric column
+#'
+#' Computes the sum of `col` across all partitions without collecting the full
+#' dataset. When partitions are native-encoded, this avoids decoding string
+#' columns entirely.
+#'
+#' @param x A `shard_row_groups` or `shard_dataset` handle.
+#' @param col Column name to sum.
+#' @param na_rm Logical; drop NAs (default TRUE).
+#' @return A single numeric sum.
+#' @export
+stream_sum <- function(x, col, na_rm = TRUE) {
+  if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
+    stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
+  }
+  col <- as.character(col)
+  if (!nzchar(col)) stop("col must be a non-empty column name", call. = FALSE)
+  sch <- x$schema$columns %||% list()
+  ct <- sch[[col]] %||% NULL
+  if (is.null(ct)) stop("Unknown column '", col, "'", call. = FALSE)
+  if (ct$kind %in% c("string", "factor", "raw")) {
+    stop("stream_sum() requires a numeric column", call. = FALSE)
+  }
+
+  it <- iterate_row_groups(x, decode = FALSE)
+  acc <- 0
+  repeat {
+    chunk <- it()
+    if (is.null(chunk)) break
+    if (inherits(chunk, "shard_table_part_native")) {
+      v <- chunk$columns[[col]]
+      # Factor codes are integers; sum on codes is rarely meaningful and is
+      # likely user error.
+      if (inherits(v, "shard_string_blob")) {
+        stop("stream_sum() cannot sum a string column", call. = FALSE)
+      }
+      if (isTRUE(na_rm)) v <- v[!is.na(v)]
+      acc <- acc + sum(as.double(v))
+    } else {
+      v <- chunk[[col]]
+      if (isTRUE(na_rm)) v <- v[!is.na(v)]
+      acc <- acc + sum(as.double(v))
+    }
+  }
+  acc
+}
+
+#' Stream top-k rows by a numeric column
+#'
+#' Finds the top `k` rows by `col` without collecting the full dataset.
+#'
+#' For native-encoded partitions, this selects candidate rows using the numeric
+#' column without decoding strings, then decodes only the chosen rows for the
+#' returned result.
+#'
+#' @param x A `shard_row_groups` or `shard_dataset` handle.
+#' @param col Column name to rank by.
+#' @param k Number of rows to keep.
+#' @param decreasing Logical; TRUE for largest values (default TRUE).
+#' @param na_drop Logical; drop rows where `col` is NA (default TRUE).
+#' @return A data.frame (or tibble if installed) with at most `k` rows.
+#' @export
+stream_top_k <- function(x, col, k = 10L, decreasing = TRUE, na_drop = TRUE) {
+  if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
+    stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
+  }
+  col <- as.character(col)
+  k <- as.integer(k)
+  if (is.na(k) || k < 1L) stop("k must be >= 1", call. = FALSE)
+
+  schema <- x$schema
+  sch_cols <- schema$columns %||% list()
+  ct <- sch_cols[[col]] %||% NULL
+  if (is.null(ct)) stop("Unknown column '", col, "'", call. = FALSE)
+  if (!(ct$kind %in% c("int32", "float64"))) {
+    stop("stream_top_k() requires an int32() or float64() column", call. = FALSE)
+  }
+
+  it <- iterate_row_groups(x, decode = FALSE)
+  best <- NULL
+
+  keep_best <- function(df) {
+    if (is.null(best) || nrow(best) == 0) {
+      best <<- df
+    } else {
+      best <<- rbind(best, df)
+    }
+    # Keep only top-k in memory.
+    v <- best[[col]]
+    if (isTRUE(na_drop)) {
+      ok <- !is.na(v)
+      best <<- best[ok, , drop = FALSE]
+      v <- best[[col]]
+    }
+    ord <- order(v, decreasing = isTRUE(decreasing))
+    if (length(ord) > k) ord <- ord[seq_len(k)]
+    best <<- best[ord, , drop = FALSE]
+  }
+
+  repeat {
+    chunk <- it()
+    if (is.null(chunk)) break
+
+    if (inherits(chunk, "shard_table_part_native")) {
+      v <- chunk$columns[[col]]
+      if (inherits(v, "shard_string_blob")) stop("stream_top_k() requires a numeric column", call. = FALSE)
+      v <- as.double(v)
+      if (isTRUE(na_drop)) {
+        ok <- !is.na(v)
+        v2 <- v[ok]
+        if (length(v2) == 0) next
+        idx_all <- which(ok)
+      } else {
+        v2 <- v
+        idx_all <- seq_along(v)
+      }
+
+      ord <- order(v2, decreasing = isTRUE(decreasing))
+      if (length(ord) > k) ord <- ord[seq_len(k)]
+      rows <- idx_all[ord]
+      df <- .table_part_native_decode_rows(chunk, schema, rows)
+      keep_best(df)
+    } else {
+      v <- chunk[[col]]
+      v <- as.double(v)
+      if (isTRUE(na_drop)) {
+        ok <- !is.na(v)
+        if (!any(ok)) next
+        chunk2 <- chunk[ok, , drop = FALSE]
+      } else {
+        chunk2 <- chunk
+      }
+      ord <- order(as.double(chunk2[[col]]), decreasing = isTRUE(decreasing))
+      if (length(ord) > k) ord <- ord[seq_len(k)]
+      keep_best(chunk2[ord, , drop = FALSE])
+    }
+  }
+
+  if (is.null(best)) {
+    df <- data.frame()
+    if (pkg_available("tibble")) return(tibble::as_tibble(df))
+    return(df)
+  }
+
+  if (pkg_available("tibble")) return(tibble::as_tibble(best))
+  best
+}
+
+#' Stream group-wise sum
+#'
+#' Computes sum(value) by group across partitions without collecting. This is
+#' optimized for factor groups (factor_col()).
+#'
+#' @param x A `shard_row_groups` or `shard_dataset` handle.
+#' @param group Group column name (recommended: factor_col()).
+#' @param value Numeric column name to sum.
+#' @param na_rm Logical; drop rows where value is NA (default TRUE).
+#' @return A data.frame with columns `group` and `sum`.
+#' @export
+stream_group_sum <- function(x, group, value, na_rm = TRUE) {
+  if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
+    stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
+  }
+  group <- as.character(group)
+  value <- as.character(value)
+  schema <- x$schema
+  ct_g <- schema$columns[[group]] %||% NULL
+  ct_v <- schema$columns[[value]] %||% NULL
+  if (is.null(ct_g)) stop("Unknown group column '", group, "'", call. = FALSE)
+  if (is.null(ct_v)) stop("Unknown value column '", value, "'", call. = FALSE)
+
+  if (ct_g$kind != "factor") {
+    stop("stream_group_sum() currently requires a factor_col() group column", call. = FALSE)
+  }
+  if (!(ct_v$kind %in% c("int32", "float64"))) {
+    stop("stream_group_sum() requires an int32() or float64() value column", call. = FALSE)
+  }
+
+  lev <- ct_g$levels %||% character(0)
+  acc <- numeric(length(lev))
+
+  it <- iterate_row_groups(x, decode = FALSE)
+  repeat {
+    chunk <- it()
+    if (is.null(chunk)) break
+
+    if (inherits(chunk, "shard_table_part_native")) {
+      codes <- as.integer(chunk$columns[[group]])
+      vals <- as.double(chunk$columns[[value]])
+      ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
+      if (isTRUE(na_rm)) ok <- ok & !is.na(vals)
+      if (!any(ok)) next
+      rs <- rowsum(vals[ok], group = factor(codes[ok], levels = seq_len(length(lev))), reorder = FALSE)
+      acc <- acc + as.double(rs[, 1])
+    } else {
+      g <- chunk[[group]]
+      v <- as.double(chunk[[value]])
+      ok <- !is.na(g)
+      if (isTRUE(na_rm)) ok <- ok & !is.na(v)
+      if (!any(ok)) next
+      rs <- rowsum(v[ok], group = factor(g[ok], levels = lev), reorder = FALSE)
+      acc <- acc + as.double(rs[, 1])
+    }
+  }
+
+  data.frame(group = factor(lev, levels = lev), sum = acc, stringsAsFactors = FALSE)
+}
+
+#' Stream group-wise count
+#'
+#' Counts rows per group across partitions without collecting. Optimized for
+#' factor groups (factor_col()).
+#'
+#' @param x A `shard_row_groups` or `shard_dataset` handle.
+#' @param group Group column name (recommended: factor_col()).
+#' @return A data.frame with columns `group` and `n`.
+#' @export
+stream_group_count <- function(x, group) {
+  if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
+    stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
+  }
+  group <- as.character(group)
+  schema <- x$schema
+  ct_g <- schema$columns[[group]] %||% NULL
+  if (is.null(ct_g)) stop("Unknown group column '", group, "'", call. = FALSE)
+
+  if (ct_g$kind != "factor") {
+    stop("stream_group_count() currently requires a factor_col() group column", call. = FALSE)
+  }
+
+  lev <- ct_g$levels %||% character(0)
+  acc <- integer(length(lev))
+
+  it <- iterate_row_groups(x, decode = FALSE)
+  repeat {
+    chunk <- it()
+    if (is.null(chunk)) break
+
+    if (inherits(chunk, "shard_table_part_native")) {
+      codes <- as.integer(chunk$columns[[group]])
+      ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
+      if (!any(ok)) next
+      acc <- acc + tabulate(codes[ok], nbins = length(lev))
+    } else {
+      g <- chunk[[group]]
+      idx <- match(as.character(g), lev)
+      idx <- idx[!is.na(idx)]
+      if (length(idx) == 0) next
+      acc <- acc + tabulate(idx, nbins = length(lev))
+    }
+  }
+
+  data.frame(group = factor(lev, levels = lev), n = acc, stringsAsFactors = FALSE)
+}

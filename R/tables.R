@@ -614,6 +614,34 @@ table_sink <- function(schema,
   out
 }
 
+.table_part_native_decode_string_rows <- function(blob, rows) {
+  if (!inherits(blob, "shard_string_blob")) stop("blob must be a shard_string_blob", call. = FALSE)
+  rows <- as.integer(rows)
+  rows <- rows[!is.na(rows) & rows >= 1L & rows <= length(blob$is_na)]
+  if (length(rows) == 0) return(character(0))
+
+  offsets <- blob$offsets
+  bytes <- blob$bytes
+  is_na <- blob$is_na
+
+  out <- character(length(rows))
+  for (j in seq_along(rows)) {
+    i <- rows[[j]]
+    if (isTRUE(is_na[[i]])) {
+      out[[j]] <- NA_character_
+      next
+    }
+    s <- offsets[[i]]
+    e <- offsets[[i + 1L]]
+    if (e <= s) {
+      out[[j]] <- ""
+    } else {
+      out[[j]] <- rawToChar(bytes[(s + 1L):e])
+    }
+  }
+  out
+}
+
 .table_part_native_encode <- function(df, schema) {
   if (!is.data.frame(df)) stop("df must be a data.frame", call. = FALSE)
   if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
@@ -659,6 +687,35 @@ table_sink <- function(schema,
       out[[nm]] <- as.logical(v)
     } else {
       out[[nm]] <- v
+    }
+  }
+  as.data.frame(out, stringsAsFactors = FALSE)
+}
+
+.table_part_native_decode_rows <- function(part, schema, rows) {
+  if (!inherits(part, "shard_table_part_native")) stop("part must be shard_table_part_native", call. = FALSE)
+  if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
+  rows <- as.integer(rows)
+  rows <- rows[!is.na(rows) & rows >= 1L & rows <= (part$nrow %||% 0L)]
+
+  cols <- schema$columns
+  out <- list()
+  for (nm in names(cols)) {
+    ct <- cols[[nm]]
+    v <- part$columns[[nm]]
+    if (ct$kind == "string") {
+      out[[nm]] <- .table_part_native_decode_string_rows(v, rows)
+    } else if (ct$kind == "factor") {
+      lev <- ct$levels
+      codes <- as.integer(v)[rows]
+      chr <- rep(NA_character_, length(codes))
+      ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
+      chr[ok] <- lev[codes[ok]]
+      out[[nm]] <- factor(chr, levels = lev)
+    } else if (ct$kind == "bool") {
+      out[[nm]] <- as.logical(v)[rows]
+    } else {
+      out[[nm]] <- v[rows]
     }
   }
   as.data.frame(out, stringsAsFactors = FALSE)
@@ -781,9 +838,12 @@ table_finalize.shard_table_sink <- function(target, materialize = c("never", "au
 #' Iterate row groups
 #'
 #' @param x A `shard_row_groups` handle.
+#' @param decode Logical. If TRUE (default), native-encoded partitions are
+#'   decoded to data.frames. If FALSE, native partitions are returned as their
+#'   internal representation (advanced).
 #' @return An iterator function with no args that returns the next data.frame or NULL.
 #' @export
-iterate_row_groups <- function(x) {
+iterate_row_groups <- function(x, decode = TRUE) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
   }
@@ -795,7 +855,8 @@ iterate_row_groups <- function(x) {
     if (i > length(files)) return(NULL)
     obj <- readRDS(files[[i]])
     if (inherits(obj, "shard_table_part_native")) {
-      return(.table_part_native_decode(obj, schema))
+      if (isTRUE(decode)) return(.table_part_native_decode(obj, schema))
+      return(obj)
     }
     obj
   }

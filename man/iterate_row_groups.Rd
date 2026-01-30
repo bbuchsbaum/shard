@@ -4,10 +4,14 @@
 \alias{iterate_row_groups}
 \title{Iterate row groups}
 \usage{
-iterate_row_groups(x)
+iterate_row_groups(x, decode = TRUE)
 }
 \arguments{
 \item{x}{A \code{shard_row_groups} handle.}
+
+\item{decode}{Logical. If TRUE (default), native-encoded partitions are
+decoded to data.frames. If FALSE, native partitions are returned as their
+internal representation (advanced).}
 }
 \value{
 An iterator function with no args that returns the next data.frame or NULL.
