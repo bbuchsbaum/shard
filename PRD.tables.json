@@ -98,12 +98,17 @@
       "int32()",
       "float64()",
       "bool()",
-      "raw()",
-      "factor(levels=...)"
+      "raw_col()",
+      "string_col() (sinks only)",
+      "factor_col(levels=...)"
     ],
     "table_buffer": {
       "signature": "table_buffer(schema, nrow, backing = c('auto','mmap','shm'))",
       "description": "Allocate a fixed-row columnar buffer with one typed buffer per column."
+    },
+    "table_sink": {
+      "signature": "table_sink(schema, mode = c('row_groups','partitioned'), path = NULL, format = c('auto','rds','native'))",
+      "description": "Allocate a per-shard sink for variable-size outputs (row-groups) or huge outputs (partitioned dataset)."
     },
     "row_layout": {
       "signature": "row_layout(shards, rows_per_shard)",
@@ -119,8 +124,16 @@
     },
     "interop": [
       "as_tibble(handle)",
-      "iterate_row_groups(handle)",
+      "iterate_row_groups(handle, decode = TRUE)",
       "collect(dataset_handle)"
+    ],
+    "streaming": [
+      "stream_count(x)",
+      "stream_sum(x, col, na_rm = TRUE)",
+      "stream_top_k(x, col, k = 10, decreasing = TRUE, na_drop = TRUE)",
+      "stream_group_count(x, group)",
+      "stream_group_sum(x, group, value, na_rm = TRUE)",
+      "stream_filter(x, predicate, path = NULL, ...)"
     ]
   },
   "type_system": {
@@ -239,6 +252,16 @@
         "Semantics match bind_rows for small outputs; large outputs return a handle or materialize with warnings",
         "Benchmarks show reduced peak memory vs naive accumulation"
       ]
+    },
+    {
+      "id": "D-T-004",
+      "name": "streaming post-processing (v1.1)",
+      "definition_of_done": [
+        "iterate_row_groups(handle, decode=FALSE) allows advanced users to stream native partitions without decoding",
+        "stream_sum(), stream_top_k(), stream_group_sum(), and stream_group_count() implemented and documented",
+        "stream_top_k() decodes only selected rows for native-encoded string columns",
+        "Tests cover correctness for native partitions with factor + string + numeric columns"
+      ]
     }
   ],
   "risks_and_mitigations": [
@@ -260,7 +283,8 @@
     "No bind_rows-style master accumulation is required for fixed-row outputs; peak RSS is reduced vs list+bind_rows baselines.",
     "Row-groups and partitioned sinks (v1.1) support variable and huge outputs with bounded memory and lightweight handles.",
     "Default safety policies disallow list-cols and handle strings conservatively (sinks first).",
-    "Diagnostics quantify bytes written and aggregation avoidance."
+    "Diagnostics quantify bytes written and aggregation avoidance.",
+    "Streaming post-processing (stream_sum/top_k/group_*) operates over handles without collect() and avoids decoding native string columns unless needed for the returned rows."
   ],
   "open_questions": [
     "Do we allow int64 in core (and if so, what representation without heavy deps)?",
@@ -268,4 +292,3 @@
     "Should we provide a 'fast write' path that bypasses data.frame conversion (write columns directly)?"
   ]
 }
-
