@@ -487,3 +487,160 @@ test_that("share error message shows index for unnamed list elements", {
         "x\\[\\[3\\]\\]"
     )
 })
+
+# Tests for deep sharing of S4 objects
+
+# Define S4 classes for testing
+# Use "ANY" type for slots that will hold reconstructed shared data
+setClass("TestS4DeepMatrix",
+    slots = c(
+        data = "ANY",
+        name = "character"
+    )
+)
+
+setClass("TestS4DeepList",
+    slots = c(
+        items = "ANY",
+        label = "character"
+    )
+)
+
+setClass("TestS4DeepEnv",
+    slots = c(
+        data = "ANY",
+        env = "environment"
+    )
+)
+
+setClass("TestS4DeepNested",
+    slots = c(
+        inner = "ANY",
+        value = "numeric"
+    )
+)
+
+test_that("share with deep=TRUE processes S4 object slots", {
+    # Create a large matrix that will be shared
+    big_mat <- matrix(rnorm(1e7), nrow = 1000)  # ~80MB
+    obj <- new("TestS4DeepMatrix", data = big_mat, name = "test")
+
+    # Share with deep=TRUE
+    shared <- share(obj, deep = TRUE, min_bytes = 1e6)
+
+    # Should return a shard_deep_shared object
+    expect_s3_class(shared, "shard_deep_shared")
+
+    # Fetch should reconstruct the original
+    recovered <- fetch(shared)
+    expect_true(isS4(recovered))
+    expect_s4_class(recovered, "TestS4DeepMatrix")
+    expect_equal(slot(recovered, "data"), big_mat)
+    expect_equal(slot(recovered, "name"), "test")
+
+    close(shared)
+})
+
+test_that("share with deep=TRUE recursively shares S4 list slots", {
+    big_vec <- rnorm(1e7)  # ~80MB
+    obj <- new("TestS4DeepList",
+        items = list(big = big_vec, small = 1:10),
+        label = "test"
+    )
+
+    shared <- share(obj, deep = TRUE, min_bytes = 1e6)
+    expect_s3_class(shared, "shard_deep_shared")
+
+    # Summary should show shared nodes
+    expect_true(shared$summary$shared_count > 0)
+
+    # Fetch should reconstruct
+    recovered <- fetch(shared)
+    expect_s4_class(recovered, "TestS4DeepList")
+    expect_equal(slot(recovered, "items")$big, big_vec)
+    expect_equal(slot(recovered, "items")$small, 1:10)
+
+    close(shared)
+})
+
+test_that("share with deep=TRUE and mode='balanced' skips S4 environment slots", {
+    big_mat <- matrix(rnorm(1e6), nrow = 100)
+    env <- new.env()
+    env$foo <- "bar"
+    obj <- new("TestS4DeepEnv", data = big_mat, env = env)
+
+    # Should not error with mode='balanced' (default)
+    shared <- share(obj, deep = TRUE, min_bytes = 1e5, mode = "balanced")
+    expect_s3_class(shared, "shard_deep_shared")
+
+    # Fetch should preserve the environment
+    recovered <- fetch(shared)
+    expect_true(is.environment(slot(recovered, "env")))
+
+    close(shared)
+})
+
+test_that("share with deep=TRUE and mode='strict' errors on S4 environment slots", {
+    big_mat <- matrix(rnorm(1e6), nrow = 100)
+    env <- new.env()
+    obj <- new("TestS4DeepEnv", data = big_mat, env = env)
+
+    expect_error(
+        share(obj, deep = TRUE, min_bytes = 1e3, mode = "strict"),
+        "contains environment"
+    )
+})
+
+test_that("share with deep=TRUE uses @slot path notation for S4", {
+    setClass("TestS4WithFunc",
+        slots = c(
+            fn = "function"
+        )
+    )
+
+    obj <- new("TestS4WithFunc", fn = function(x) x)
+
+    # When validating S4 with function slot, should show @slot notation
+    expect_error(
+        share(obj),
+        "@fn"
+    )
+
+    removeClass("TestS4WithFunc")
+})
+
+test_that("share with deep=TRUE handles nested S4 objects", {
+    inner_mat <- matrix(rnorm(1e7), nrow = 1000)
+    inner <- new("TestS4DeepMatrix", data = inner_mat, name = "inner")
+    outer <- new("TestS4DeepNested", inner = inner, value = 42)
+
+    shared <- share(outer, deep = TRUE, min_bytes = 1e6)
+    expect_s3_class(shared, "shard_deep_shared")
+
+    recovered <- fetch(shared)
+    expect_s4_class(recovered, "TestS4DeepNested")
+    expect_s4_class(slot(recovered, "inner"), "TestS4DeepMatrix")
+    expect_equal(slot(slot(recovered, "inner"), "data"), inner_mat)
+    expect_equal(slot(recovered, "value"), 42)
+
+    close(shared)
+})
+
+test_that("share with deep=TRUE preserves S4 class after fetch", {
+    big_mat <- matrix(rnorm(1e7), nrow = 1000)
+    obj <- new("TestS4DeepMatrix", data = big_mat, name = "preserved")
+
+    shared <- share(obj, deep = TRUE, min_bytes = 1e6)
+    recovered <- fetch(shared)
+
+    expect_identical(class(recovered), class(obj))
+    expect_s4_class(recovered, "TestS4DeepMatrix")
+
+    close(shared)
+})
+
+# Clean up test classes
+removeClass("TestS4DeepMatrix")
+removeClass("TestS4DeepList")
+removeClass("TestS4DeepEnv")
+removeClass("TestS4DeepNested")

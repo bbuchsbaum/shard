@@ -254,6 +254,29 @@ share_deep_traverse <- function(x,
                                 mode = "balanced",
                                 types = c("double", "integer", "logical", "raw", "complex"),
                                 hook_result = NULL) {
+    # Handle environment objects based on mode
+    if (is.environment(x) && !identical(x, baseenv()) &&
+        !identical(x, globalenv()) && !identical(x, emptyenv())) {
+        if (mode == "strict") {
+            stop("Cannot share: contains environment.\n",
+                 "  Found at: ", path, "\n",
+                 "  Hint: Use mode='balanced' to skip environment slots.",
+                 call. = FALSE)
+        }
+        # In balanced mode, keep environments as-is
+        identity <- object_identity(x)
+        return(structure(
+            list(
+                type = "kept",
+                path = path,
+                node_id = env$next_id + 1,
+                identity = identity,
+                value = x
+            ),
+            class = "shard_deep_kept"
+        ))
+    }
+
     # Get object identity for memoization and cycle detection
     identity <- object_identity(x)
 
