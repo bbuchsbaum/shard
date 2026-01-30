@@ -38,6 +38,38 @@ test_that("foreach with .combine = rbind works", {
   expect_equal(result$y, (1:5)^2)
 })
 
+test_that("foreach with .combine = rbind can return a row-groups handle (no materialize)", {
+  skip_on_cran()
+
+  registerDoShard(workers = 2)
+  on.exit(stopDoShard())
+
+  result <- foreach(i = 1:5, .combine = rbind,
+                    .options.shard = list(table = list(materialize = "never"))) %dopar% {
+    data.frame(x = i, y = i^2)
+  }
+
+  expect_true(inherits(result, "shard_row_groups") || inherits(result, "shard_dataset"))
+  df <- shard::as_tibble(result)
+  expect_equal(nrow(df), 5)
+  expect_equal(df$x, 1:5)
+  expect_equal(df$y, (1:5)^2)
+})
+
+test_that(".options.shard can override chunk_size for a foreach call", {
+  skip_on_cran()
+
+  registerDoShard(workers = 2, chunk_size = 1L)
+  on.exit(stopDoShard())
+
+  result <- foreach(i = 1:10, .combine = c,
+                    .options.shard = list(chunk_size = 3L)) %dopar% {
+    i * 2
+  }
+
+  expect_equal(result, 1:10 * 2)
+})
+
 test_that("foreach with .export works", {
   skip_on_cran()
 

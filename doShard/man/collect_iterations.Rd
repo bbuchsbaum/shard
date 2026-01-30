@@ -4,7 +4,7 @@
 \alias{collect_iterations}
 \title{Collect Iterations from Iterators}
 \usage{
-collect_iterations(it_args)
+collect_iterations(it_args, envir)
 }
 \arguments{
 \item{it_args}{List of iterator arguments.}

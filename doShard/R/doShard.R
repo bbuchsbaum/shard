@@ -184,15 +184,23 @@ info_doShard <- function(data, item) {
 #' @return Combined results.
 #' @keywords internal
 doShard_backend <- function(obj, expr, envir, data) {
-  # Extract foreach options
-  verbose <- data$verbose
-  chunk_size <- data$chunk_size
+  # Per-call overrides via foreach(..., .options.shard = list(...))
+  call_opts <- obj$options$shard %||% list()
+  if (!is.list(call_opts)) call_opts <- list()
+
+  # Extract foreach options (allow per-call overrides)
+  verbose <- isTRUE(call_opts$verbose %||% data$verbose)
+  chunk_size <- as.integer(call_opts$chunk_size %||% data$chunk_size %||% 1L)
+  if (is.na(chunk_size) || chunk_size < 1L) chunk_size <- 1L
+  profile <- call_opts$profile %||% data$profile
+  mem_cap <- call_opts$mem_cap %||% data$mem_cap
+  recycle <- call_opts$recycle %||% data$recycle
 
   # Get the iterator arguments
   it_args <- obj$args
   accumulator <- obj$combineInfo$fun
   error_handling <- obj$errorHandling
-  packages <- unique(c(obj$packages, data$packages))
+  packages <- unique(c(obj$packages %||% character(0), data$packages %||% character(0)))
 
   # Note: packages are loaded via shard's pool mechanism when pool_create is
 
@@ -200,7 +208,7 @@ doShard_backend <- function(obj, expr, envir, data) {
   # foreach's .packages are handled by including them in the worker function.
 
   # Collect all iterations from iterators
-  iterations <- collect_iterations(it_args)
+  iterations <- collect_iterations(it_args, envir = envir)
   n_iter <- length(iterations)
 
   if (n_iter == 0) {
@@ -209,6 +217,19 @@ doShard_backend <- function(obj, expr, envir, data) {
 
   if (verbose) {
     message("doShard: Processing ", n_iter, " iterations")
+    if (isTRUE(call_opts$debug)) {
+      message("doShard(debug): expr = ", paste(deparse(expr), collapse = " "))
+      message("doShard(debug): iter_names = ", paste(names(it_args), collapse = ","))
+      if (length(iterations) > 0) {
+        msg <- tryCatch(paste(unlist(iterations[[1]]), collapse = ","), error = function(e) "<unprintable>")
+        message("doShard(debug): first iteration values = ", msg)
+      }
+      message("doShard(debug): has combine = ", !is.null(accumulator))
+      message("doShard(debug): multi.combine = ", isTRUE(obj$combineInfo$multi.combine %||% obj$combineInfo$multicombine))
+      if (!is.null(accumulator)) {
+        message("doShard(debug): accumulator typeof = ", typeof(accumulator), "; primitive = ", isTRUE(is.primitive(accumulator)))
+      }
+    }
   }
 
   # Get exported variables from foreach .export
@@ -235,6 +256,136 @@ doShard_backend <- function(obj, expr, envir, data) {
   # Capture iterator variable names
   iter_names <- names(it_args)
 
+  is_tabular_combine <- function(acc) {
+    if (is.null(acc) || !is.function(acc)) return(FALSE)
+    if (identical(acc, base::rbind)) return(TRUE)
+    if (requireNamespace("dplyr", quietly = TRUE)) {
+      br <- tryCatch(get("bind_rows", envir = asNamespace("dplyr")), error = function(e) NULL)
+      if (!is.null(br) && identical(acc, br)) return(TRUE)
+    }
+    FALSE
+  }
+
+  # Fast path for tabular combines: avoid accumulating a huge list on the master
+  # when the combine is rbind/bind_rows-like.
+  #
+  # Only enabled when .errorhandling != "pass" because mixing error objects into
+  # row-binding combines is ill-defined.
+  if (is_tabular_combine(accumulator) && !identical(error_handling, "pass")) {
+    table_opts <- call_opts$table %||% list()
+    if (!is.list(table_opts)) table_opts <- list()
+
+    mode <- table_opts$mode %||% "row_groups"
+    path <- table_opts$path %||% NULL
+    materialize <- as.character(table_opts$materialize %||% "auto")
+    max_bytes <- as.double(table_opts$max_bytes %||% (256 * 1024^2))
+
+    sink <- shard::table_sink(schema = NULL, mode = mode, path = path, format = "rds")
+
+    tabular_worker_fun <- function(shard, .iterations, .expr, .export_env, .iter_names, .packages, .sink, .error_handling) {
+      for (pkg in .packages) {
+        suppressPackageStartupMessages(
+          library(pkg, character.only = TRUE, quietly = TRUE)
+        )
+      }
+
+      rows <- list()
+      for (j in seq_along(shard$idx)) {
+        iter_idx <- shard$idx[j]
+        iter_data <- .iterations[[iter_idx]]
+
+        eval_env <- new.env(parent = .export_env)
+        # Prefer names from the iteration payload itself; this is more robust
+        # than relying on a separately-shipped .iter_names vector.
+        if (is.list(iter_data) && !is.null(names(iter_data)) && all(nzchar(names(iter_data)))) {
+          for (nm in names(iter_data)) {
+            eval_env[[nm]] <- iter_data[[nm]]
+          }
+        } else {
+          for (k in seq_along(.iter_names)) {
+            name <- .iter_names[k]
+            if (!is.null(name) && nchar(name) > 0) {
+              eval_env[[name]] <- iter_data[[k]]
+            }
+          }
+        }
+
+        val <- tryCatch(
+          eval(.expr, envir = eval_env),
+          error = function(e) {
+            structure(
+              list(message = conditionMessage(e), call = conditionCall(e)),
+              class = c("doShard_error", "condition")
+            )
+          }
+        )
+
+        if (inherits(val, "doShard_error")) {
+          if (identical(.error_handling, "stop")) {
+            return(list(ok = FALSE, error = val$message))
+          }
+          if (identical(.error_handling, "remove")) next
+          return(list(ok = FALSE, error = val$message))
+        }
+
+        if (is.data.frame(val)) {
+          df <- val
+        } else if (is.matrix(val)) {
+          df <- as.data.frame(val, stringsAsFactors = FALSE)
+        } else if (is.atomic(val)) {
+          nm <- names(val)
+          df <- as.data.frame(as.list(val), stringsAsFactors = FALSE)
+          if (!is.null(nm) && any(nzchar(nm))) names(df) <- nm
+        } else {
+          return(list(ok = FALSE, error = "foreach .combine=rbind requires each iteration to return a data.frame/matrix/atomic vector"))
+        }
+
+        rows[[length(rows) + 1L]] <- df
+      }
+
+      chunk <- if (length(rows) == 0) data.frame() else do.call(rbind, rows)
+      shard::table_write(.sink, shard$id, chunk)
+      list(ok = TRUE, nrow = nrow(chunk))
+    }
+
+    shard_desc <- shard::shards(n_iter, workers = data$workers)
+    result <- shard::shard_map(
+      shards = shard_desc,
+      fun = tabular_worker_fun,
+      borrow = list(
+        .iterations = iterations,
+        .expr = expr,
+        .export_env = export_env,
+        .iter_names = iter_names,
+        .packages = packages,
+        .sink = sink,
+        .error_handling = error_handling
+      ),
+      workers = data$workers,
+      chunk_size = chunk_size,
+      profile = profile,
+      mem_cap = mem_cap,
+      recycle = recycle,
+      diagnostics = FALSE
+    )
+
+    all <- unlist(result$results, recursive = FALSE)
+    bad <- Filter(function(x) is.list(x) && identical(x$ok, FALSE), all)
+    if (length(bad) > 0) {
+      stop("Error in foreach: ", bad[[1]]$error %||% "unknown error", call. = FALSE)
+    }
+
+    handle <- shard::table_finalize(sink, materialize = "never")
+    if (identical(materialize, "always") || identical(materialize, "auto")) {
+      files <- handle$files %||% character(0)
+      total <- sum(vapply(files, function(f) as.double(file.info(f)$size %||% 0), numeric(1)), na.rm = TRUE)
+      if (identical(materialize, "always") || isTRUE(total <= max_bytes)) {
+        return(shard::as_tibble(handle, max_bytes = max_bytes))
+      }
+    }
+    return(handle)
+  }
+
   # Create the worker function
   # This function will be executed for each shard (iteration batch)
   worker_fun <- function(shard, .iterations, .expr, .export_env, .iter_names, .packages) {
@@ -254,10 +405,16 @@ doShard_backend <- function(obj, expr, envir, data) {
       # Create evaluation environment with iterator values
       eval_env <- new.env(parent = .export_env)
 
-      for (k in seq_along(.iter_names)) {
-        name <- .iter_names[k]
-        if (!is.null(name) && nchar(name) > 0) {
-          eval_env[[name]] <- iter_data[[k]]
+      if (is.list(iter_data) && !is.null(names(iter_data)) && all(nzchar(names(iter_data)))) {
+        for (nm in names(iter_data)) {
+          eval_env[[nm]] <- iter_data[[nm]]
+        }
+      } else {
+        for (k in seq_along(.iter_names)) {
+          name <- .iter_names[k]
+          if (!is.null(name) && nchar(name) > 0) {
+            eval_env[[name]] <- iter_data[[k]]
+          }
         }
       }
 
@@ -273,7 +430,7 @@ doShard_backend <- function(obj, expr, envir, data) {
       )
     }
 
-    results
+    structure(results, class = "doShard_shard_results")
   }
 
   # Execute using shard_map
@@ -291,14 +448,32 @@ doShard_backend <- function(obj, expr, envir, data) {
     ),
     workers = data$workers,
     chunk_size = chunk_size,
-    profile = data$profile,
-    mem_cap = data$mem_cap,
-    recycle = data$recycle,
+    profile = profile,
+    mem_cap = mem_cap,
+    recycle = recycle,
     diagnostics = FALSE
   )
 
-  # Flatten results
-  all_results <- unlist(result$results, recursive = FALSE)
+  # Flatten results:
+  #   (maybe chunk) -> shard -> per-iteration results
+  raw_results <- result$results %||% list()
+  if (length(raw_results) == 0) {
+    all_results <- list()
+  } else {
+    # If shard_map chunk_size == 1, raw_results is a list of chunk outputs
+    # (each chunk output is a list of shard results).
+    if (is.list(raw_results[[1]]) && !inherits(raw_results[[1]], "doShard_shard_results") &&
+        length(raw_results[[1]]) > 0 && inherits(raw_results[[1]][[1]], "doShard_shard_results")) {
+      raw_results <- unlist(raw_results, recursive = FALSE, use.names = FALSE)
+    }
+
+    # raw_results is now a list of per-shard result lists.
+    all_results <- list()
+    for (sr in raw_results) {
+      if (inherits(sr, "doShard_shard_results")) sr <- unclass(sr)
+      all_results <- c(all_results, sr)
+    }
+  }
 
   # Handle errors based on error handling mode
   if (error_handling == "stop") {
@@ -313,7 +488,11 @@ doShard_backend <- function(obj, expr, envir, data) {
 
   # Apply combiner function
   if (!is.null(accumulator) && length(all_results) > 0) {
-    combine_results(all_results, accumulator, obj$combineInfo)
+    combined <- combine_results(all_results, accumulator, obj$combineInfo)
+    if (verbose && isTRUE(call_opts$debug)) {
+      message("doShard(debug): combined typeof = ", typeof(combined), "; class = ", paste(class(combined), collapse = ","))
+    }
+    combined
   } else {
     all_results
   }
@@ -326,7 +505,7 @@ doShard_backend <- function(obj, expr, envir, data) {
 #' @param it_args List of iterator arguments.
 #' @return List of iteration value lists.
 #' @keywords internal
-collect_iterations <- function(it_args) {
+collect_iterations <- function(it_args, envir) {
   if (length(it_args) == 0) {
     return(list())
   }
@@ -336,7 +515,12 @@ collect_iterations <- function(it_args) {
     if (inherits(x, "iter")) {
       x
     } else {
-      iterators::iter(x)
+      # foreach passes iterator specs as language objects; evaluate them in the
+      # foreach environment before turning them into iterators.
+      if (is.language(x) || is.symbol(x)) {
+        x <- eval(x, envir = envir)
+      }
+      if (inherits(x, "iter")) x else iterators::iter(x)
     }
   })
 
@@ -346,7 +530,9 @@ collect_iterations <- function(it_args) {
     values <- tryCatch({
       lapply(iters, iterators::nextElem)
     }, error = function(e) {
-      if (inherits(e, "StopIteration")) {
+      # iterators historically used a StopIteration condition class, but newer
+      # versions signal a simpleError with message "StopIteration".
+      if (inherits(e, "StopIteration") || identical(conditionMessage(e), "StopIteration")) {
         NULL
       } else {
         stop(e)
@@ -372,21 +558,28 @@ collect_iterations <- function(it_args) {
 #' @keywords internal
 combine_results <- function(results, accumulator, combine_info) {
   if (length(results) == 0) {
-    return(combine_info$init)
+    if (isTRUE(combine_info$has.init) && !is.null(combine_info$init)) {
+      return(combine_info$init)
+    }
+    return(NULL)
   }
 
-  # Handle .multicombine
-  if (isTRUE(combine_info$multicombine)) {
+  multi <- isTRUE(combine_info$multi.combine %||% combine_info$multicombine)
+  has_init <- isTRUE(combine_info$has.init %||% FALSE)
+  init <- if (has_init) combine_info$init else NULL
+
+  # Handle .multicombine / multi.combine
+  if (multi) {
     # Combine all at once if possible
-    if (is.null(combine_info$init)) {
+    if (is.null(init)) {
       do.call(accumulator, results)
     } else {
-      do.call(accumulator, c(list(combine_info$init), results))
+      do.call(accumulator, c(list(init), results))
     }
   } else {
     # Combine pairwise
-    acc <- if (is.null(combine_info$init)) results[[1]] else combine_info$init
-    start <- if (is.null(combine_info$init)) 2L else 1L
+    acc <- if (is.null(init)) results[[1]] else init
+    start <- if (is.null(init)) 2L else 1L
 
     if (start <= length(results)) {
       for (i in start:length(results)) {

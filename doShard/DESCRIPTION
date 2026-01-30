@@ -19,6 +19,7 @@ Imports:
     shard,
     iterators
 Suggests:
+    dplyr,
     testthat (>= 3.0.0)
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
