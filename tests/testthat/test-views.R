@@ -1,6 +1,7 @@
 # Tests for shard views (block views)
 
 test_that("block views over shared matrices materialize correctly", {
+  shard:::view_reset_diagnostics()
   X <- matrix(as.double(1:30), nrow = 5)
   Xsh <- share(X, backing = "mmap")
 
@@ -21,6 +22,7 @@ test_that("block views over shared matrices materialize correctly", {
 })
 
 test_that("views are serializable and remain usable after unserialize", {
+  shard:::view_reset_diagnostics()
   X <- matrix(as.double(1:60), nrow = 6)
   Xsh <- share(X, backing = "mmap")
   v <- view_block(Xsh, cols = idx_range(3, 7))
@@ -33,6 +35,7 @@ test_that("views are serializable and remain usable after unserialize", {
 })
 
 test_that("block views reject non-range selectors (gather not implemented)", {
+  shard:::view_reset_diagnostics()
   X <- matrix(as.double(1:20), nrow = 4)
   Xsh <- share(X, backing = "mmap")
 
@@ -41,3 +44,20 @@ test_that("block views reject non-range selectors (gather not implemented)", {
   expect_error(view(Xsh, cols = 1:3, type = "gather"))
 })
 
+test_that("view_col_sums runs without materializing views", {
+  shard:::view_reset_diagnostics()
+
+  X <- matrix(rnorm(1000), nrow = 50)
+  colnames(X) <- paste0("c", seq_len(ncol(X)))
+  Xsh <- share(X, backing = "mmap")
+
+  v <- view_block(Xsh, cols = idx_range(3, 12))
+  sums <- shard:::view_col_sums(v)
+
+  expect_equal(unname(sums), unname(colSums(X[, 3:12, drop = FALSE])))
+  expect_equal(names(sums), colnames(X)[3:12])
+
+  vd <- view_diagnostics()
+  expect_equal(vd$materialized, 0L)
+  expect_equal(vd$materialized_bytes, 0)
+})

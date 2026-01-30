@@ -292,3 +292,39 @@ view_diagnostics <- function() {
   )
 }
 
+view_reset_diagnostics <- function() {
+  .views_env$created <- 0L
+  .views_env$materialized <- 0L
+  .views_env$materialized_bytes <- 0
+  invisible(NULL)
+}
+
+view_col_sums <- function(v) {
+  if (!inherits(v, "shard_view_block")) {
+    stop("v must be a shard_view_block", call. = FALSE)
+  }
+  base <- v$base
+  d <- v$dim
+  if (length(d) != 2L) stop("View base must be a matrix", call. = FALSE)
+
+  rs <- if (is.null(v$rows)) c(1L, d[1]) else c(v$rows$start, v$rows$end)
+  cs <- if (is.null(v$cols)) c(1L, d[2]) else c(v$cols$start, v$cols$end)
+
+  out <- .Call(
+    "C_shard_mat_block_col_sums",
+    base,
+    as.integer(rs[1]),
+    as.integer(rs[2]),
+    as.integer(cs[1]),
+    as.integer(cs[2]),
+    PACKAGE = "shard"
+  )
+
+  dns <- dimnames(base)
+  if (!is.null(dns) && length(dns) == 2L && !is.null(dns[[2]])) {
+    nms <- dns[[2]][cs[1]:cs[2]]
+    if (!is.null(nms)) names(out) <- nms
+  }
+
+  out
+}

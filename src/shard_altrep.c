@@ -1017,3 +1017,77 @@ SEXP C_shard_altrep_materialize(SEXP x) {
     UNPROTECT(1);
     return result;
 }
+
+SEXP C_shard_mat_block_col_sums(SEXP x, SEXP row_start, SEXP row_end,
+                                SEXP col_start, SEXP col_end) {
+    if (!ALTREP(x)) {
+        error("x must be a shard ALTREP vector (shared matrix backing)");
+    }
+
+    shard_altrep_info_t *info = get_info(x);
+    if (!info) {
+        error("Invalid shard ALTREP vector");
+    }
+
+    SEXP dim = getAttrib(x, R_DimSymbol);
+    if (TYPEOF(dim) != INTSXP || XLENGTH(dim) != 2) {
+        error("x must have matrix dimensions");
+    }
+    int nrow = INTEGER(dim)[0];
+    int ncol = INTEGER(dim)[1];
+    if (nrow < 0 || ncol < 0) {
+        error("invalid matrix dimensions");
+    }
+
+    if (info->sexp_type != REALSXP) {
+        error("C_shard_mat_block_col_sums currently supports double matrices only");
+    }
+
+    int rs = asInteger(row_start);
+    int re = asInteger(row_end);
+    int cs = asInteger(col_start);
+    int ce = asInteger(col_end);
+
+    if (rs == NA_INTEGER || re == NA_INTEGER || cs == NA_INTEGER || ce == NA_INTEGER) {
+        error("row/col bounds must be non-NA integers");
+    }
+    if (rs < 1 || re < rs || re > nrow) {
+        error("row bounds out of range");
+    }
+    if (cs < 1 || ce < cs || ce > ncol) {
+        error("col bounds out of range");
+    }
+
+    double *data = (double *)get_data_ptr(x, info);
+    if (!data) {
+        error("failed to access matrix data");
+    }
+
+    int out_ncol = ce - cs + 1;
+    SEXP out = PROTECT(allocVector(REALSXP, out_ncol));
+    double *outp = REAL(out);
+
+    int r0 = rs - 1;
+    int r1 = re - 1;
+    int c0 = cs - 1;
+
+    for (int j = 0; j < out_ncol; j++) {
+        int col_idx = c0 + j;
+        R_xlen_t base = (R_xlen_t)col_idx * (R_xlen_t)nrow;
+
+        double acc = 0.0;
+        int any_na = 0;
+        for (int i = r0; i <= r1; i++) {
+            double v = data[base + (R_xlen_t)i];
+            if (ISNA(v) || ISNAN(v)) {
+                any_na = 1;
+                break;
+            }
+            acc += v;
+        }
+        outp[j] = any_na ? NA_REAL : acc;
+    }
+
+    UNPROTECT(1);
+    return out;
+}

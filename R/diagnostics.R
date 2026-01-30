@@ -335,12 +335,25 @@ copy_report <- function(result = NULL) {
     }
   }
 
-  # Global view diagnostics (run-level integration is future work).
-  vd <- tryCatch(view_diagnostics(), error = function(e) NULL)
-  if (is.list(vd)) {
-    rpt$view_created <- vd$created %||% 0L
-    rpt$view_materialized <- vd$materialized %||% 0L
-    rpt$view_materialized_bytes <- vd$materialized_bytes %||% 0
+  # Prefer run-level view stats when present (aggregated from workers).
+  if (!is.null(result) && inherits(result, "shard_result")) {
+    diag <- result$diagnostics
+    if (!is.null(diag) && !is.null(diag$view_stats)) {
+      vs <- diag$view_stats
+      rpt$view_created <- vs$created %||% 0L
+      rpt$view_materialized <- vs$materialized %||% 0L
+      rpt$view_materialized_bytes <- vs$materialized_bytes %||% 0
+    }
+  }
+
+  if (is.null(rpt$view_created) || is.null(rpt$view_materialized)) {
+    # Fallback to global view diagnostics when run-level aggregation isn't available.
+    vd <- tryCatch(view_diagnostics(), error = function(e) NULL)
+    if (is.list(vd)) {
+      rpt$view_created <- vd$created %||% 0L
+      rpt$view_materialized <- vd$materialized %||% 0L
+      rpt$view_materialized_bytes <- vd$materialized_bytes %||% 0
+    }
   }
 
   structure(rpt, class = "shard_report")

@@ -62,7 +62,8 @@ dispatch_chunks <- function(chunks, fun, ...,
   }
 
   dispatch_wrapper <- function(chunk) {
-    tryCatch(
+    vd0 <- tryCatch(view_diagnostics(), error = function(e) NULL)
+    res <- tryCatch(
       {
         f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
         a <- get(".shard_dispatch_args", envir = globalenv(), inherits = FALSE)
@@ -70,6 +71,17 @@ dispatch_chunks <- function(chunks, fun, ...,
       },
       error = function(e) list(ok = FALSE, error = conditionMessage(e))
     )
+    vd1 <- tryCatch(view_diagnostics(), error = function(e) NULL)
+
+    if (is.list(vd0) && is.list(vd1)) {
+      res$view_delta <- list(
+        created = (vd1$created %||% 0L) - (vd0$created %||% 0L),
+        materialized = (vd1$materialized %||% 0L) - (vd0$materialized %||% 0L),
+        materialized_bytes = (vd1$materialized_bytes %||% 0) - (vd0$materialized_bytes %||% 0)
+      )
+    }
+
+    res
   }
 
   # Async scheduling state
@@ -77,6 +89,7 @@ dispatch_chunks <- function(chunks, fun, ...,
   inflight <- vector("list", pool$n) # worker_id -> {chunk_id,start_time}
 
   chunks_processed <- 0L
+  view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0)
 
   # Helper: receive a single result (non-blocking with small timeout) from any worker.
   recv_one <- function(timeout_sec = 0.1) {
@@ -267,11 +280,19 @@ dispatch_chunks <- function(chunks, fun, ...,
       }
     }
 
+    if (is.list(payload) && is.list(payload$view_delta)) {
+      vd <- payload$view_delta
+      view_stats$created <- view_stats$created + (vd$created %||% 0L)
+      view_stats$materialized <- view_stats$materialized + (vd$materialized %||% 0L)
+      view_stats$materialized_bytes <- view_stats$materialized_bytes + (vd$materialized_bytes %||% 0)
+    }
+
     chunks_processed <- chunks_processed + 1L
   }
 
   diag$end_time <- Sys.time()
   diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
+  diag$view_stats <- view_stats
 
   structure(
     list(

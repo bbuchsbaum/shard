@@ -90,4 +90,8 @@ attribute_visible SEXP C_shard_altrep_reset_diagnostics(SEXP x);
  */
 attribute_visible SEXP C_shard_altrep_materialize(SEXP x);
 
+/* View-enabled matrix kernels (initial set). */
+attribute_visible SEXP C_shard_mat_block_col_sums(SEXP x, SEXP row_start, SEXP row_end,
+                                                  SEXP col_start, SEXP col_end);
+
 #endif /* SHARD_ALTREP_H */
