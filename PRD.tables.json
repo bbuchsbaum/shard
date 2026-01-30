@@ -1,0 +1,271 @@
+{
+  "metadata": {
+    "document_type": "PRD",
+    "version": "1.0.0",
+    "product_name": "shard",
+    "title": "Schema-Driven Columnar Table Outputs (Tibble-friendly)",
+    "created": "2026-01-30",
+    "status": "draft"
+  },
+  "elevator_pitch": "Tabular outputs are a common failure mode for R parallelism: returning a tibble per task and bind_rows() on the master often doubles memory and spikes peak RSS. shard adds schema-driven, typed, columnar table outputs so shards write results without returning large objects. v1.0 ships fixed-size table buffers for predictable row counts; v1.1 adds row-group and partitioned sinks for variable and huge outputs. This preserves shard's explicit-output contract and yields stable, bounded memory for tibble-like workflows.",
+  "problem_statement": {
+    "summary": "Aggregation and concatenation cause peak memory spikes",
+    "pain_points": [
+      "Returning a tibble/data.frame per shard and concatenating (bind_rows/rbind) causes extra copies and large peak memory",
+      "Master-side accumulation builds an O(num_shards) list of results, increasing overhead and GC pressure",
+      "Large results serialize heavily and can dominate runtime",
+      "Variable-size outputs are hard to preallocate safely without a structured contract"
+    ],
+    "shard_assumption": "If outputs are explicit, typed, and written directly to a columnar target (buffer/sink), we can avoid gather/concat spikes and keep memory bounded."
+  },
+  "goals": {
+    "functional": [
+      "Provide a schema system (column names, types, encodings) with strict validation",
+      "Provide fixed-size table buffers for disjoint, lock-free parallel writes (v1.0)",
+      "Provide row-group sinks for variable-sized outputs and partitioned sinks for huge outputs (v1.1)",
+      "Expose lightweight handles for finalized tables/datasets with safe materialization helpers",
+      "Integrate table outputs with shard_map and doShard combine strategies (v1.1)",
+      "Provide diagnostics: bytes written, rows per shard, and aggregation avoidance"
+    ],
+    "non_functional": [
+      "CRAN-friendly core: no hard dependency on Arrow/Parquet in v1.x core",
+      "Cross-platform behavior for buffer backing and row-group manifests",
+      "Small API surface with clear defaults and strict safety policies (no surprises)"
+    ]
+  },
+  "target_users": {
+    "primary": [
+      "Users producing per-shard tabular summaries (feature screening, simulation sweeps, metrics)",
+      "Workflows that currently bind_rows many shard results and hit peak-memory spikes",
+      "Users needing bounded memory even when outputs are large"
+    ]
+  },
+  "user_stories": [
+    {
+      "id": "US-T-001",
+      "story": "I know the final number of rows; I want the fastest and most memory-stable way to produce a tibble without bind_rows.",
+      "acceptance_criteria": [
+        "table_buffer(schema, nrow) allocates typed columns once",
+        "Each shard writes to a disjoint row range via table_write()",
+        "No per-shard tibble list is accumulated on the master"
+      ]
+    },
+    {
+      "id": "US-T-002",
+      "story": "Each shard produces a variable number of rows; I want bounded memory and a final handle I can iterate or collect.",
+      "acceptance_criteria": [
+        "table_sink(mode='row_groups') allows each shard to write a row-group independently",
+        "table_finalize() returns a lightweight handle with a manifest",
+        "iterate_row_groups() yields chunks without materializing the full dataset"
+      ]
+    },
+    {
+      "id": "US-T-003",
+      "story": "I use foreach with .combine=bind_rows; the backend should avoid peak memory spikes automatically when results are large.",
+      "acceptance_criteria": [
+        "doShard can detect tabular combines and route outputs to a sink instead of accumulating a list",
+        "Behavior matches bind_rows semantics for small results; for large results it returns a handle or materializes with warnings"
+      ]
+    }
+  ],
+  "scope": {
+    "v1_in_scope": [
+      "schema() with primitive numeric/logical/raw types and factor encoding",
+      "table_buffer(schema, nrow) backed by shard buffers",
+      "row_layout(shards, rows_per_shard) to compute disjoint row ranges",
+      "table_write(tbl, rows, data) with strict schema enforcement",
+      "table_finalize(tbl, materialize=...) and as_tibble(handle) helpers",
+      "Diagnostics for bytes written and master accumulation avoided"
+    ],
+    "v1_out_of_scope": [
+      "General list-columns as first-class outputs (default disallow)",
+      "String columns in fixed buffers (variable bytes); defer to v1.1 sinks or dictionary encoding",
+      "Hard dependency on Arrow/Parquet in core"
+    ],
+    "v1_1_in_scope": [
+      "table_sink(mode='row_groups') for variable outputs",
+      "table_sink(mode='partitioned') for disk-backed partitioned outputs",
+      "String support in sinks via stable encoding (offsets + bytes per group)",
+      "doShard automatic routing for bind_rows/rbind combines"
+    ]
+  },
+  "api": {
+    "schema": {
+      "signature": "schema(...)",
+      "description": "Define a table schema with named columns and types."
+    },
+    "types": [
+      "int32()",
+      "float64()",
+      "bool()",
+      "raw()",
+      "factor(levels=...)"
+    ],
+    "table_buffer": {
+      "signature": "table_buffer(schema, nrow, backing = c('auto','mmap','shm'))",
+      "description": "Allocate a fixed-row columnar buffer with one typed buffer per column."
+    },
+    "row_layout": {
+      "signature": "row_layout(shards, rows_per_shard)",
+      "description": "Compute disjoint row ranges per shard (prefix sum) for lock-free writes."
+    },
+    "table_write": {
+      "signature": "table_write(target, rows_or_shard_id, data)",
+      "description": "Write data into a table buffer row range (v1.0) or to a sink shard_id (v1.1)."
+    },
+    "table_finalize": {
+      "signature": "table_finalize(target, materialize = c('never','auto','always'))",
+      "description": "Finalize and return a handle, optionally materializing if small."
+    },
+    "interop": [
+      "as_tibble(handle)",
+      "iterate_row_groups(handle)",
+      "collect(dataset_handle)"
+    ]
+  },
+  "type_system": {
+    "v1_0_supported": [
+      {
+        "type": "int32",
+        "representation": "integer buffer with strict range checks",
+        "notes": ["No silent overflow"]
+      },
+      {
+        "type": "float64",
+        "representation": "double buffer",
+        "notes": []
+      },
+      {
+        "type": "bool",
+        "representation": "logical buffer",
+        "notes": []
+      },
+      {
+        "type": "raw",
+        "representation": "raw buffer",
+        "notes": []
+      },
+      {
+        "type": "factor",
+        "representation": "int32 codes + levels metadata stored once",
+        "notes": ["Invalid levels error", "NA handling is explicit and consistent"]
+      }
+    ],
+    "casting_rules": [
+      "Numeric to float64 allowed",
+      "Integer to int32 allowed only if within range",
+      "Character to factor allowed only if value is in levels",
+      "Unknown columns error; missing required columns error"
+    ],
+    "safety_policies": [
+      "List-columns disallowed by default; opt-in only with strict size/serializability cap (v1.1+)",
+      "Strings are supported in sinks (v1.1) before fixed buffers"
+    ]
+  },
+  "execution_model": {
+    "write_contracts": [
+      {
+        "name": "disjoint_rows",
+        "description": "Each shard writes to a unique row range; no locks required."
+      },
+      {
+        "name": "overlap_error",
+        "description": "Overlapping writes are detected and error (at least in debug mode)."
+      }
+    ],
+    "idempotence": [
+      "Writing the same shard to the same target range is deterministic (last write wins), enabling safe retries."
+    ]
+  },
+  "benchmark_plan": {
+    "benchmarks": [
+      {
+        "id": "B-T-001",
+        "name": "bind_rows vs table_buffer (fixed rows)",
+        "description": "Each shard produces k rows and m numeric columns; compare list-of-tibbles + bind_rows vs table_buffer writes.",
+        "metrics": ["wall_time", "peak_rss", "end_rss", "bytes_written", "master_accumulation_bytes"]
+      },
+      {
+        "id": "B-T-002",
+        "name": "row-groups sink stability (variable rows)",
+        "description": "Shards emit variable row counts; compare row-groups sink vs naive list accumulation.",
+        "metrics": ["wall_time", "peak_rss", "end_rss", "rows_per_shard", "manifest_size_bytes"]
+      },
+      {
+        "id": "B-T-003",
+        "name": "huge output (partitioned sink)",
+        "description": "Outputs exceed comfortable RAM; verify bounded memory and stable throughput when writing partitions.",
+        "metrics": ["peak_rss", "end_rss", "bytes_written", "partition_count", "write_throughput_rows_per_sec"]
+      }
+    ],
+    "success_metrics": [
+      "table_buffer reduces peak RSS vs bind_rows approach for fixed-row workloads.",
+      "row-groups and partitioned sinks keep memory bounded regardless of total output size.",
+      "Master does not accumulate O(num_shards) in-memory results for sink-based workflows."
+    ]
+  },
+  "cran_compatibility": {
+    "requirements": [
+      "Core fixed buffers must not require Arrow/Parquet; provide a native representation.",
+      "Sink modes can default to native blocks or RDS-per-shard fallback; plugins may add formats."
+    ]
+  },
+  "deliverables": [
+    {
+      "id": "D-T-001",
+      "name": "schema + fixed table buffers (v1.0)",
+      "definition_of_done": [
+        "schema() and core types implemented with strict validation",
+        "table_buffer(), row_layout(), table_write() implemented for fixed rows",
+        "table_finalize(materialize=...) and as_tibble() implemented with size warnings",
+        "Diagnostics integrated into report(): bytes_written, rows_written, master_accumulation_avoided"
+      ]
+    },
+    {
+      "id": "D-T-002",
+      "name": "row-groups and partitioned sinks (v1.1)",
+      "definition_of_done": [
+        "table_sink(mode='row_groups') implemented with per-shard storage and manifest handle",
+        "table_sink(mode='partitioned') implemented with dataset handle",
+        "iterate_row_groups() and collect() helpers implemented (native format; plugins optional)",
+        "String support implemented at least for sinks (offsets + bytes per group)"
+      ]
+    },
+    {
+      "id": "D-T-003",
+      "name": "doShard tabular combine routing (v1.1)",
+      "definition_of_done": [
+        "doShard detects bind_rows/rbind-like combines and routes to sinks for large outputs",
+        "Semantics match bind_rows for small outputs; large outputs return a handle or materialize with warnings",
+        "Benchmarks show reduced peak memory vs naive accumulation"
+      ]
+    }
+  ],
+  "risks_and_mitigations": [
+    {
+      "risk": "Users expect arbitrary tibble columns (strings, list-cols) to work in fixed buffers.",
+      "mitigation": "Start with numeric/logical/raw/factor in v1.0; add strings in sinks first; disallow list-cols by default with strict opt-in caps."
+    },
+    {
+      "risk": "Overlapping writes cause corruption if not detected.",
+      "mitigation": "Require row_layout() or explicit rows=; validate overlap at least in debug mode; default to overlap_error in v1.0."
+    },
+    {
+      "risk": "Materializing huge outputs defeats the purpose.",
+      "mitigation": "table_finalize(materialize='auto') uses conservative thresholds; as_tibble() warns loudly; provide iterate_row_groups/collect workflows."
+    }
+  ],
+  "acceptance_criteria_summary": [
+    "Fixed-size table_buffer enables lock-free disjoint row writes with strict schema validation.",
+    "No bind_rows-style master accumulation is required for fixed-row outputs; peak RSS is reduced vs list+bind_rows baselines.",
+    "Row-groups and partitioned sinks (v1.1) support variable and huge outputs with bounded memory and lightweight handles.",
+    "Default safety policies disallow list-cols and handle strings conservatively (sinks first).",
+    "Diagnostics quantify bytes written and aggregation avoidance."
+  ],
+  "open_questions": [
+    "Do we allow int64 in core (and if so, what representation without heavy deps)?",
+    "What is the default threshold policy for materialize='auto' and as_tibble() warnings?",
+    "Should we provide a 'fast write' path that bypasses data.frame conversion (write columns directly)?"
+  ]
+}
+

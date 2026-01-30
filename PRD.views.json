@@ -1,0 +1,234 @@
+{
+  "metadata": {
+    "document_type": "PRD",
+    "version": "1.0.0",
+    "product_name": "shard",
+    "title": "Zero-Copy Views (Block + Gather)",
+    "created": "2026-01-30",
+    "status": "draft"
+  },
+  "elevator_pitch": "Views make slicing a first-class, runtime-visible operation in shard. Instead of allocating Y[, idx] copies, shard exposes explicit view objects that reference shared backings plus slice metadata. Block views (v1.0) enable true zero-copy contiguous column/row slicing and BLAS fast paths; gather views (v1.1) support indexed selections with explicit, measurable packing when necessary. Views are the key optimization handle that turns 'shared inputs' into an end-to-end zero-copy pipeline.",
+  "problem_statement": {
+    "summary": "Hidden copies during slicing dominate parallel memory and time",
+    "pain_points": [
+      "Base R matrix/array subsetting typically allocates a new object (e.g., Y[, idx])",
+      "Even if Y is share()d, naive slicing can materialize large temporary matrices in workers",
+      "Parallel runs amplify slice allocations across workers, causing synchronized peak RSS spikes",
+      "Kernels and schedulers cannot optimize around access patterns when slicing is opaque",
+      "Users cannot easily prove where slice materialization happened"
+    ],
+    "shard_assumption": "If slicing is explicit (views), the runtime and kernels can avoid hidden copies, bound memory, and optimize access order."
+  },
+  "goals": {
+    "functional": [
+      "Provide explicit, serializable view objects over shared matrices/arrays",
+      "Support block/contiguous views with O(1) construction and no slice-sized allocation (v1.0)",
+      "Support gather/indexed views without forced dense copies (v1.1)",
+      "Expose kernel-friendly metadata (ptr/ld/dims/offset/index-map) so optimized kernels can operate without materialization",
+      "Provide explicit materialize() for controlled copying",
+      "Provide diagnostics for view creation, materialization, and packing bytes"
+    ],
+    "non_functional": [
+      "CRAN-compatible core; avoid platform-specific behavior by default",
+      "Cross-platform support: Linux/macOS/Windows for shared handle reopening",
+      "Small, composable API; keep view semantics explicit (avoid surprising implicit copies)"
+    ]
+  },
+  "target_users": {
+    "primary": [
+      "Slicing-heavy numeric workloads (per-column models, block correlations, resampling)",
+      "Users with large matrices/arrays who want parallel scaling without memory blowups",
+      "Kernel authors who want BLAS-friendly access without copying slices"
+    ]
+  },
+  "user_stories": [
+    {
+      "id": "US-V-001",
+      "story": "I want to process Y in contiguous column blocks in parallel without allocating Y_chunk = Y[, idx].",
+      "acceptance_criteria": [
+        "view_block(Y_shared, cols=range(a,b)) creates a small object (O(1) metadata) and does not allocate a slice-sized matrix",
+        "A view-enabled kernel can compute on that slice without materialization",
+        "copy_report() shows view_materialized_bytes near zero for the hot path"
+      ]
+    },
+    {
+      "id": "US-V-002",
+      "story": "I want to process non-contiguous feature sets (searchlights/ROIs) without copying a dense slice unless explicitly needed.",
+      "acceptance_criteria": [
+        "view_gather(Y_shared, cols=index_vec) returns an indexed view with an index map",
+        "Kernels either use a gather-aware path or explicitly pack into scratch with packed_bytes tracked",
+        "Materialization/packing events are visible in diagnostics"
+      ]
+    },
+    {
+      "id": "US-V-003",
+      "story": "I want to know exactly when slicing caused a copy and how many bytes were copied.",
+      "acceptance_criteria": [
+        "report() surfaces view_materialize_count, view_materialize_bytes, and packed_bytes",
+        "Top materialization hotspots can be listed with actionable recommendations"
+      ]
+    }
+  ],
+  "scope": {
+    "v1_in_scope": [
+      "Block views (contiguous row/col ranges) over share()d matrices/arrays",
+      "Explicit materialize(view) to produce standard R objects",
+      "Kernel-facing view_info() for fast path eligibility",
+      "Run-level diagnostics for views"
+    ],
+    "v1_out_of_scope": [
+      "Full drop-in compatibility where arbitrary base R functions operate on views without copying",
+      "General strided views guaranteed to be BLAS-fast without packing",
+      "Mutable views on shared inputs"
+    ],
+    "v1_1_in_scope": [
+      "Gather/indexed views with explicit packing policies and diagnostics",
+      "Heuristics for when to pack vs gather-aware compute based on size/access pattern"
+    ]
+  },
+  "api": {
+    "range": {
+      "signature": "range(start, end)",
+      "description": "Compact contiguous range descriptor (inclusive, 1-based)."
+    },
+    "view": {
+      "signature": "view(x, rows = NULL, cols = NULL, type = c('auto','block','gather'))",
+      "description": "Create a view over a shared matrix/array using either a block or gather representation.",
+      "notes": [
+        "x must be share()d, or view() errors unless an explicit opt-in auto-share option is enabled",
+        "type='auto' selects block if possible, else gather (when implemented)"
+      ]
+    },
+    "view_block": {
+      "signature": "view_block(x, rows = NULL, cols = NULL)",
+      "description": "Explicit constructor for block views; rejects non-contiguous integer vectors."
+    },
+    "view_gather": {
+      "signature": "view_gather(x, rows = NULL, cols = integer())",
+      "description": "Explicit constructor for gather views; carries an index map (v1.1)."
+    },
+    "materialize": {
+      "signature": "materialize(v)",
+      "description": "Explicitly materialize a view to a standard R object (copy)."
+    },
+    "view_info": {
+      "signature": "view_info(v)",
+      "description": "Return view metadata without forcing materialization."
+    },
+    "predicates": [
+      "is_view(x)",
+      "is_block_view(x)",
+      "is_gather_view(x)"
+    ]
+  },
+  "execution_model": {
+    "invariants": [
+      "Views are read-only by default when derived from share()d inputs; mutation attempts error under cow='deny'.",
+      "Views must be serializable; any low-level pointers are reconstructed in the worker by reopening shared handles.",
+      "Materialization/packing must be explicit at the kernel/runtime level and accounted for in diagnostics."
+    ],
+    "layouts": [
+      {
+        "name": "col_block_contiguous",
+        "description": "Contiguous column blocks in column-major matrices; eligible for BLAS fast path."
+      },
+      {
+        "name": "row_block_strided",
+        "description": "Row blocks are strided; BLAS typically requires packing into scratch."
+      },
+      {
+        "name": "col_gather",
+        "description": "Indexed column selection; gather-aware compute or explicit packing."
+      }
+    ]
+  },
+  "benchmark_plan": {
+    "benchmarks": [
+      {
+        "id": "B-V-001",
+        "name": "View creation vs slicing",
+        "description": "Compare view_block(Y, cols=range(a,b)) creation cost vs Y[, a:b] allocation.",
+        "metrics": ["wall_time", "allocated_bytes", "view_object_size_bytes"]
+      },
+      {
+        "id": "B-V-002",
+        "name": "End-to-end slice-heavy kernel",
+        "description": "Compare a baseline that slices in each task (Y_chunk <- Y[, idx]) vs a view-enabled kernel.",
+        "metrics": ["wall_time", "peak_rss", "end_rss", "view_materialize_bytes", "packed_bytes"]
+      },
+      {
+        "id": "B-V-003",
+        "name": "Long-run drift test (views)",
+        "description": "Many shards over long runtime; validate low per-task allocation and stable end RSS with recycling.",
+        "metrics": ["peak_rss", "end_rss", "recycle_events", "throughput_over_time"]
+      }
+    ],
+    "success_metrics": [
+      "Block-view hot paths show view_materialize_bytes == 0 in the view-enabled kernel.",
+      "Peak RSS is substantially lower than the slicing baseline on copy-heavy workloads.",
+      "End RSS remains stable across long runs (or returns after recycling)."
+    ]
+  },
+  "cran_compatibility": {
+    "requirements": [
+      "Core view types and serialization must be portable and not depend on OS-specific mmap advice by default.",
+      "Any advanced OS hints (prefetch/advice) must be opt-in and feature-gated (v2.0 preview)."
+    ]
+  },
+  "deliverables": [
+    {
+      "id": "D-V-001",
+      "name": "Block views API + implementation",
+      "definition_of_done": [
+        "range(), view(), view_block(), materialize(), view_info() implemented",
+        "Supported for shared matrices/arrays of double/integer/logical/raw where applicable",
+        "Serialization/unserialization works in PSOCK workers",
+        "Diagnostics counters wired into report()"
+      ]
+    },
+    {
+      "id": "D-V-002",
+      "name": "View-enabled flagship kernel path",
+      "definition_of_done": [
+        "At least one shipped kernel consumes block views without materialization in its hot path",
+        "Benchmarks demonstrate reduced peak RSS and near-zero view materialization bytes"
+      ]
+    },
+    {
+      "id": "D-V-003",
+      "name": "Gather views (v1.1)",
+      "definition_of_done": [
+        "view_gather() implemented with index map representation",
+        "Explicit packing policy implemented with packed_bytes diagnostics",
+        "At least one gather-capable kernel mode exists (gather-aware or pack-then-BLAS)"
+      ]
+    }
+  ],
+  "risks_and_mitigations": [
+    {
+      "risk": "Users expect views to behave like full matrices in arbitrary base R code.",
+      "mitigation": "Keep views explicit; avoid implicit as.matrix coercions; provide materialize() and shard-aware kernels; document the contract."
+    },
+    {
+      "risk": "Row-strided or gather patterns still require packing for BLAS; users may be surprised by copies.",
+      "mitigation": "Make packing explicit and measurable; provide diagnostics and recommendations; offer packing_policy controls."
+    },
+    {
+      "risk": "Complexity creep (too many view variants too early).",
+      "mitigation": "Ship block views first; gather views and advanced heuristics in v1.1."
+    }
+  ],
+  "acceptance_criteria_summary": [
+    "Block view construction is O(1) and does not allocate slice-sized matrices.",
+    "materialize(view_block(x)) matches base slicing results for supported types.",
+    "Views serialize/unserialize across PSOCK workers via reopenable shared handles.",
+    "Diagnostics report view materialization and packing bytes; view-enabled kernel shows near-zero materialization in hot path.",
+    "R CMD check remains clean on supported platforms for core view features."
+  ],
+  "open_questions": [
+    "Should view() support opt-in auto-sharing of non-shared matrices for UX?",
+    "Should shards() optionally return precomputed view descriptors to reduce per-task overhead?",
+    "What is the minimal set of view-enabled kernels to ship so views feel immediately valuable?"
+  ]
+}
+
