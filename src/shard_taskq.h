@@ -28,6 +28,7 @@ typedef enum {
 
 /* R-callable API (registered in init.c) */
 attribute_visible SEXP C_shard_taskq_init(SEXP seg_ptr, SEXP n_tasks);
+attribute_visible SEXP C_shard_taskq_supported(void);
 attribute_visible SEXP C_shard_taskq_claim(SEXP seg_ptr, SEXP worker_id);
 attribute_visible SEXP C_shard_taskq_mark_done(SEXP seg_ptr, SEXP task_id);
 attribute_visible SEXP C_shard_taskq_mark_error(SEXP seg_ptr, SEXP task_id, SEXP max_retries);
@@ -36,4 +37,3 @@ attribute_visible SEXP C_shard_taskq_stats(SEXP seg_ptr);
 attribute_visible SEXP C_shard_taskq_failures(SEXP seg_ptr);
 
 #endif /* SHARD_TASKQ_H */
-

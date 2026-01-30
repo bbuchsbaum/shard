@@ -31,6 +31,10 @@ taskq_create <- function(n_tasks,
   list(desc = desc, owner = seg)
 }
 
+taskq_supported <- function() {
+  isTRUE(.Call("C_shard_taskq_supported", PACKAGE = "shard"))
+}
+
 taskq_open <- function(desc, readonly = FALSE) {
   if (!is.list(desc) || is.null(desc$path) || is.null(desc$backing)) {
     stop("desc must be a task queue descriptor", call. = FALSE)

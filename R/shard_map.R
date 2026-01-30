@@ -206,6 +206,10 @@ shard_map <- function(shards,
 
   # shm_queue fast mode: scalar N only, chunk_size=1, fire-and-forget.
   if (identical(dispatch_mode, "shm_queue")) {
+    if (!taskq_supported()) {
+      warning("dispatch_mode='shm_queue' not supported on this platform; falling back to rpc_chunked", call. = FALSE)
+      dispatch_mode <- "rpc_chunked"
+    } else {
     if (!shards_is_scalar_n) {
       stop("dispatch_mode='shm_queue' currently requires shard_map(N, ...) with scalar N", call. = FALSE)
     }
@@ -268,6 +272,7 @@ shard_map <- function(shards,
       ),
       class = "shard_result"
     ))
+  }
   }
 
   # Create self-contained executor function for workers

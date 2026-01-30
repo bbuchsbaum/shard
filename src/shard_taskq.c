@@ -69,6 +69,14 @@ static size_t taskq_required_size(int n_tasks) {
     return sizeof(shard_taskq_header_t) + (size_t)(n_tasks - 1) * sizeof(shard_taskq_task_t);
 }
 
+SEXP C_shard_taskq_supported(void) {
+#if SHARD_HAVE_ATOMICS
+    return ScalarLogical(1);
+#else
+    return ScalarLogical(0);
+#endif
+}
+
 SEXP C_shard_taskq_init(SEXP seg_ptr, SEXP n_tasks_) {
     shard_segment_t *seg = seg_from_xptr(seg_ptr);
     int n_tasks = asInteger(n_tasks_);
@@ -260,4 +268,3 @@ SEXP C_shard_taskq_failures(SEXP seg_ptr) {
     return allocVector(INTSXP, 0);
 #endif
 }
-
