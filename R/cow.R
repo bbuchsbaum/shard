@@ -52,6 +52,7 @@ print.shard_shared_vector <- function(x, ...) {
 
 # Attribute mutations are also considered violations under cow='deny'.
 
+#' @method attr<- shard_shared_vector
 #' @export
 `attr<-.shard_shared_vector` <- function(x, which, value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
@@ -62,6 +63,7 @@ print.shard_shared_vector <- function(x, ...) {
     x
 }
 
+#' @method attributes<- shard_shared_vector
 #' @export
 `attributes<-.shard_shared_vector` <- function(x, value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()

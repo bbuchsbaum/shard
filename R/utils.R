@@ -5,10 +5,15 @@ NULL
 
 #' Null-coalescing Operator
 #'
+#' @name null_coalesce
+#' @aliases %||%
 #' @param x Value to check.
 #' @param y Default value if x is NULL.
 #' @return x if not NULL, otherwise y.
 #' @keywords internal
+NULL
+
+#' @rdname null_coalesce
 `%||%` <- function(x, y) {
 
   if (is.null(x)) y else x

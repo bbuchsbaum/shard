@@ -63,6 +63,7 @@ dispatch_chunks <- function(chunks, fun, ...,
 
   dispatch_wrapper <- function(chunk) {
     vd0 <- tryCatch(view_diagnostics(), error = function(e) NULL)
+    cd0 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
     res <- tryCatch(
       {
         f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
@@ -72,12 +73,20 @@ dispatch_chunks <- function(chunks, fun, ...,
       error = function(e) list(ok = FALSE, error = conditionMessage(e))
     )
     vd1 <- tryCatch(view_diagnostics(), error = function(e) NULL)
+    cd1 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
 
     if (is.list(vd0) && is.list(vd1)) {
       res$view_delta <- list(
         created = (vd1$created %||% 0L) - (vd0$created %||% 0L),
         materialized = (vd1$materialized %||% 0L) - (vd0$materialized %||% 0L),
         materialized_bytes = (vd1$materialized_bytes %||% 0) - (vd0$materialized_bytes %||% 0)
+      )
+    }
+
+    if (is.list(cd0) && is.list(cd1)) {
+      res$copy_delta <- list(
+        buffer_writes = (cd1$writes %||% 0L) - (cd0$writes %||% 0L),
+        buffer_bytes = (cd1$bytes %||% 0) - (cd0$bytes %||% 0)
       )
     }
 
@@ -90,6 +99,7 @@ dispatch_chunks <- function(chunks, fun, ...,
 
   chunks_processed <- 0L
   view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0)
+  copy_stats <- list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0)
 
   # Helper: receive a single result (non-blocking with small timeout) from any worker.
   recv_one <- function(timeout_sec = 0.1) {
@@ -287,12 +297,19 @@ dispatch_chunks <- function(chunks, fun, ...,
       view_stats$materialized_bytes <- view_stats$materialized_bytes + (vd$materialized_bytes %||% 0)
     }
 
+    if (is.list(payload) && is.list(payload$copy_delta)) {
+      cd <- payload$copy_delta
+      copy_stats$buffer_writes <- copy_stats$buffer_writes + (cd$buffer_writes %||% 0L)
+      copy_stats$buffer_bytes <- copy_stats$buffer_bytes + (cd$buffer_bytes %||% 0)
+    }
+
     chunks_processed <- chunks_processed + 1L
   }
 
   diag$end_time <- Sys.time()
   diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
   diag$view_stats <- view_stats
+  diag$copy_stats <- copy_stats
 
   structure(
     list(

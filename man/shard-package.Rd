@@ -64,25 +64,20 @@ deterministic memory behavior and efficient handling of large shared inputs.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/your-org/shard}
-  \item Report bugs at \url{https://github.com/your-org/shard/issues}
+  \item \url{https://github.com/bbuchsbaum/shard}
+  \item Report bugs at \url{https://github.com/bbuchsbaum/shard/issues}
 }
 
 
 Useful links:
 \itemize{
-  \item \url{https://github.com/your-org/shard}
-  \item Report bugs at \url{https://github.com/your-org/shard/issues}
+  \item \url{https://github.com/bbuchsbaum/shard}
+  \item Report bugs at \url{https://github.com/bbuchsbaum/shard/issues}
 }
 
 }
 \author{
-\strong{Maintainer}: First Last \email{you@example.org}
-
-Other contributors:
-\itemize{
-  \item First Last [contributor]
-}
+\strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com}
 
 }
 \keyword{internal}

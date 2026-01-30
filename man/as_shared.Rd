@@ -13,9 +13,8 @@ as_shared(x, readonly = TRUE, backing = "auto", cow = NULL)
 
 \item{backing}{Backing type for the segment: "auto", "mmap", or "shm"}
 
-\item{cow}{Copy-on-write policy for read-only shared vectors. One of
-"deny", "audit", or "allow". If NULL (default), the policy defaults to
-"deny" when \code{readonly = TRUE} and "allow" otherwise.}
+\item{cow}{Copy-on-write policy for the resulting shared vector. One of
+\code{"deny"}, \code{"audit"}, or \code{"allow"}. If NULL, defaults based on \code{readonly}.}
 }
 \value{
 An ALTREP vector backed by shared memory

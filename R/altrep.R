@@ -27,6 +27,9 @@ NULL
 #' @param offset Byte offset into segment (default: 0)
 #' @param length Number of elements. If NULL, calculated from segment size.
 #' @param readonly If TRUE, prevent write access via DATAPTR (default: TRUE)
+#' @param cow Copy-on-write policy for mutation attempts. One of
+#'   `"deny"`, `"audit"`, or `"allow"`. If NULL, defaults to `"deny"` when
+#'   `readonly=TRUE` and `"allow"` otherwise.
 #' @return An ALTREP vector backed by shared memory
 #' @export
 #' @examples
@@ -213,6 +216,8 @@ shared_reset_diagnostics <- function(x) {
 #' @param x An atomic vector (integer, double, logical, or raw)
 #' @param readonly If TRUE, prevent write access (default: TRUE)
 #' @param backing Backing type for the segment: "auto", "mmap", or "shm"
+#' @param cow Copy-on-write policy for the resulting shared vector. One of
+#'   `"deny"`, `"audit"`, or `"allow"`. If NULL, defaults based on `readonly`.
 #' @return An ALTREP vector backed by shared memory
 #' @export
 #' @examples

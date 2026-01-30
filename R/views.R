@@ -233,9 +233,14 @@ view_info <- function(v) {
   )
 }
 
+#' View Predicates
+#'
+#' @param x An object.
+#' @return Logical. TRUE if `x` is a shard view (or block view).
 #' @export
 is_view <- function(x) inherits(x, "shard_view")
 
+#' @rdname is_view
 #' @export
 is_block_view <- function(x) inherits(x, "shard_view_block")
 
@@ -443,4 +448,67 @@ view_crossprod <- function(x_view, y_view) {
   if (!is.null(rn) || !is.null(cn)) dimnames(out) <- list(rn, cn)
 
   out
+}
+
+tiles2d <- function(n_x, n_y, block_x, block_y) {
+  n_x <- as.integer(n_x)
+  n_y <- as.integer(n_y)
+  block_x <- as.integer(block_x)
+  block_y <- as.integer(block_y)
+
+  if (is.na(n_x) || n_x < 1L) stop("n_x must be a positive integer", call. = FALSE)
+  if (is.na(n_y) || n_y < 1L) stop("n_y must be a positive integer", call. = FALSE)
+  if (is.na(block_x) || block_x < 1L) stop("block_x must be a positive integer", call. = FALSE)
+  if (is.na(block_y) || block_y < 1L) stop("block_y must be a positive integer", call. = FALSE)
+
+  x_blocks <- ceiling(n_x / block_x)
+  y_blocks <- ceiling(n_y / block_y)
+  num_tiles <- x_blocks * y_blocks
+
+  shards <- vector("list", num_tiles)
+  id <- 1L
+  for (xb in seq_len(x_blocks)) {
+    x_start <- (xb - 1L) * block_x + 1L
+    x_end <- min(xb * block_x, n_x)
+    for (yb in seq_len(y_blocks)) {
+      y_start <- (yb - 1L) * block_y + 1L
+      y_end <- min(yb * block_y, n_y)
+
+      shards[[id]] <- list(
+        id = id,
+        x_start = x_start,
+        x_end = x_end,
+        y_start = y_start,
+        y_end = y_end,
+        x_len = x_end - x_start + 1L,
+        y_len = y_end - y_start + 1L,
+        len = (x_end - x_start + 1L) * (y_end - y_start + 1L)
+      )
+      id <- id + 1L
+    }
+  }
+
+  structure(
+    list(
+      n = num_tiles,
+      block_size = NA_integer_,
+      strategy = "tiles2d",
+      num_shards = length(shards),
+      shards = shards,
+      x_dim = n_x,
+      y_dim = n_y,
+      x_block = block_x,
+      y_block = block_y
+    ),
+    class = c("shard_tiles", "shard_descriptor")
+  )
+}
+
+#' @export
+print.shard_tiles <- function(x, ...) {
+  cat("shard tiles (2D)\n")
+  cat("  Tiles:", x$num_shards, "\n")
+  cat("  X dim:", x$x_dim, " block:", x$x_block, "\n")
+  cat("  Y dim:", x$y_dim, " block:", x$y_block, "\n")
+  invisible(x)
 }

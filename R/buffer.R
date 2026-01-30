@@ -45,6 +45,33 @@ NULL
     )
 }
 
+# Buffer write diagnostics (per-process). These counters are used to attribute
+# output-buffer writes to shard_map runs via per-chunk deltas in the dispatcher.
+.buffer_diag_env <- new.env(parent = emptyenv())
+.buffer_diag_env$writes <- 0L
+.buffer_diag_env$bytes <- 0
+
+#' Buffer Diagnostics
+#'
+#' Returns per-process counters for shard buffer writes. shard_map uses these
+#' internally to report write volume/operations in copy_report().
+#'
+#' @return A list with `writes` and `bytes`.
+#' @export
+buffer_diagnostics <- function() {
+    list(
+        writes = .buffer_diag_env$writes,
+        bytes = .buffer_diag_env$bytes
+    )
+}
+
+# Reset counters (internal; tests may use shard:::buffer_reset_diagnostics()).
+buffer_reset_diagnostics <- function() {
+    .buffer_diag_env$writes <- 0L
+    .buffer_diag_env$bytes <- 0
+    invisible(NULL)
+}
+
 #' Create a Shared Memory Buffer
 #'
 #' Creates a typed output buffer backed by shared memory that can be written
@@ -288,6 +315,10 @@ dim.shard_buffer <- function(x) {
     )
 
     segment_write(x$segment, typed_values, offset = offset)
+
+    # Update per-process diagnostics after the write completes.
+    .buffer_diag_env$writes <- .buffer_diag_env$writes + 1L
+    .buffer_diag_env$bytes <- .buffer_diag_env$bytes + (count * x$elem_size)
 }
 
 #' Extract Buffer Elements
@@ -414,22 +445,44 @@ dim.shard_buffer <- function(x) {
 
     # Multi-dimensional indexing
     if (length(x$dim) == 2) {
-        nrow <- x$dim[1]
-        ncol <- x$dim[2]
+      nrow <- x$dim[1]
+      ncol <- x$dim[2]
 
-        if (missing(i)) i <- seq_len(nrow)
-        if (missing(j)) j <- seq_len(ncol)
+      if (missing(i)) i <- seq_len(nrow)
+      if (missing(j)) j <- seq_len(ncol)
 
-        i <- as.integer(i)
-        j <- as.integer(j)
+      i <- as.integer(i)
+      j <- as.integer(j)
 
-        # Read all, modify, write back
-        all_data <- .buffer_read_range(x, 1L, x$n)
-        dim(all_data) <- x$dim
-        all_data[i, j] <- value
-        dim(all_data) <- NULL
-        .buffer_write_range(x, 1L, all_data)
+      # Fast path for contiguous block assignment to avoid read/modify/write
+      # of the entire buffer (critical for parallel disjoint writes).
+      is_contig <- function(idx) length(idx) <= 1L || all(diff(idx) == 1L)
+
+      if (length(i) > 0 && length(j) > 0 && is_contig(i) && is_contig(j) &&
+          is.matrix(value) && identical(dim(value), c(length(i), length(j)))) {
+        # If writing full rows for contiguous columns, write one contiguous span.
+        if (identical(i, seq_len(nrow))) {
+          start_lin <- (j[1] - 1L) * nrow + 1L
+          .buffer_write_range(x, start_lin, as.vector(value))
+          return(invisible(x))
+        }
+
+        # Otherwise write each column slice separately.
+        for (k in seq_along(j)) {
+          col <- j[k]
+          start_lin <- (col - 1L) * nrow + i[1]
+          .buffer_write_range(x, start_lin, value[, k])
+        }
         return(invisible(x))
+      }
+
+      # Fallback: read all, modify, write back (slow; avoid in hot paths).
+      all_data <- .buffer_read_range(x, 1L, x$n)
+      dim(all_data) <- x$dim
+      all_data[i, j] <- value
+      dim(all_data) <- NULL
+      .buffer_write_range(x, 1L, all_data)
+      return(invisible(x))
     }
 
     # General array case
