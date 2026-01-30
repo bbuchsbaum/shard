@@ -4,7 +4,7 @@
 \alias{worker_recycle}
 \title{Recycle a Worker}
 \usage{
-worker_recycle(worker, init_expr = NULL, packages = NULL)
+worker_recycle(worker, init_expr = NULL, packages = NULL, dev_path = NULL)
 }
 \arguments{
 \item{worker}{A \code{shard_worker} object.}

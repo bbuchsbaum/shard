@@ -351,10 +351,12 @@ validate_out <- function(out) {
   }
 
   bad <- vapply(out, function(x) {
-    !(inherits(x, "shard_buffer") || inherits(x, "shard_table_buffer"))
+    !(inherits(x, "shard_buffer") ||
+        inherits(x, "shard_table_buffer") ||
+        inherits(x, "shard_table_sink"))
   }, logical(1))
   if (any(bad)) {
-    stop("All output outputs must be shard_buffer or shard_table_buffer objects.",
+    stop("All outputs must be shard_buffer, shard_table_buffer, or shard_table_sink objects.",
          call. = FALSE)
   }
 
@@ -444,6 +446,16 @@ export_out_to_workers <- function(pool, out) {
         nrow = obj$nrow,
         backing = obj$backing,
         columns = cols
+      ))
+    }
+
+    if (inherits(obj, "shard_table_sink")) {
+      return(list(
+        kind = "table_sink",
+        schema = obj$schema,
+        mode = obj$mode,
+        path = obj$path,
+        format = obj$format
       ))
     }
 
@@ -567,6 +579,11 @@ make_chunk_executor <- function() {
             opened[[nm]] <- structure(
               list(schema = d$schema, nrow = as.integer(d$nrow), backing = d$backing, columns = cols),
               class = "shard_table_buffer"
+            )
+          } else if (identical(d$kind, "table_sink")) {
+            opened[[nm]] <- structure(
+              list(schema = d$schema, mode = d$mode, path = d$path, format = d$format),
+              class = "shard_table_sink"
             )
           } else {
             stop("Unsupported out descriptor kind: ", d$kind, call. = FALSE)

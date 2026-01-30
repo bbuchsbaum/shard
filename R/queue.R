@@ -25,6 +25,7 @@ queue_create <- function(chunks) {
   env$completed <- list()
   env$failed <- list()
   env$assignment <- list()  # chunk_id -> worker_id mapping
+  env$order <- vapply(chunks, function(x) as.character(x$id), character(1))
 
   structure(
     list(
@@ -192,7 +193,21 @@ queue_status <- function(queue) {
 #' @return List of results from completed chunks.
 #' @keywords internal
 queue_results <- function(queue) {
-  lapply(queue$env$completed, function(x) x$result)
+  env <- queue$env
+  completed <- env$completed
+  ids <- names(completed)
+  if (length(ids) == 0) return(list())
+
+  # Prefer numeric id ordering for predictable, lapply/sapply-like behavior.
+  num_ids <- suppressWarnings(as.integer(ids))
+  if (!anyNA(num_ids)) {
+    completed <- completed[order(num_ids)]
+  } else if (!is.null(env$order)) {
+    ord_ids <- intersect(env$order, ids)
+    completed <- completed[ord_ids]
+  }
+
+  lapply(completed, function(x) x$result)
 }
 
 #' Get Failed Chunks

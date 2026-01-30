@@ -6,6 +6,7 @@
 \alias{float64}
 \alias{bool}
 \alias{raw_col}
+\alias{string_col}
 \title{Column Types}
 \usage{
 int32()
@@ -15,6 +16,8 @@ float64()
 bool()
 
 raw_col()
+
+string_col()
 }
 \value{
 A \code{shard_coltype} object.

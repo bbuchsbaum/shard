@@ -2,24 +2,29 @@
 % Please edit documentation in R/tables.R
 \name{table_finalize}
 \alias{table_finalize}
-\title{Finalize a table buffer}
+\title{Finalize a table buffer or sink}
 \usage{
 table_finalize(
   target,
   materialize = c("never", "auto", "always"),
-  max_bytes = 256 * 1024^2
+  max_bytes = 256 * 1024^2,
+  ...
 )
 }
 \arguments{
-\item{target}{A \code{shard_table_buffer}.}
+\item{target}{A \code{shard_table_buffer} or \code{shard_table_sink}.}
 
 \item{materialize}{\code{"never"}, \code{"auto"}, or \code{"always"}.}
 
 \item{max_bytes}{For \code{"auto"}, materialize only if estimated bytes <= max_bytes.}
-}
-\value{
-A \code{shard_table_handle} or a materialized data.frame/tibble.
+
+\item{...}{Reserved for future extensions.}
 }
 \description{
-Finalize a table buffer
+For a \code{shard_table_buffer}, this returns a lightweight in-memory handle (or a
+materialized data.frame/tibble, depending on \code{materialize}).
+}
+\details{
+For a \code{shard_table_sink}, this returns a row-group handle referencing the
+written partitions (or materializes them if requested).
 }

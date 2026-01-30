@@ -117,15 +117,18 @@ dispatch_chunks <- function(chunks, fun, ...,
 
   # Helper: receive a single result (non-blocking with small timeout) from any worker.
   recv_one <- function(timeout_sec = 0.1) {
-    nodes <- lapply(pool$workers, function(w) if (is.null(w)) NULL else w$cluster[[1]])
-
     socklist <- list()
     idx_map <- integer(0)
-    for (i in seq_along(nodes)) {
-      n <- nodes[[i]]
-      if (!is.null(n) && !is.null(n$con)) {
-        socklist[[length(socklist) + 1L]] <- n$con
-        idx_map <- c(idx_map, i)
+    for (i in seq_along(pool$workers)) {
+      w <- pool$workers[[i]]
+      if (!is.null(w) && worker_is_alive(w)) {
+        n <- w$cluster[[1]]
+        if (!is.null(n) && !is.null(n$con)) {
+          if (isOpen(n$con)) {
+            socklist[[length(socklist) + 1L]] <- n$con
+            idx_map <- c(idx_map, i)
+          }
+        }
       }
     }
 
@@ -155,15 +158,20 @@ dispatch_chunks <- function(chunks, fun, ...,
     }
     worker_id <- idx_map[n_local]
 
-    msg <- unserialize(socklist[[n_local]])
-    list(worker_id = worker_id, tag = msg$tag, value = msg$value)
+    msg <- tryCatch(
+      unserialize(socklist[[n_local]]),
+      error = function(e) list(tag = NA_character_, value = list(ok = FALSE, error = conditionMessage(e)),
+                               .recv_error = TRUE)
+    )
+    list(worker_id = worker_id, tag = msg$tag, value = msg$value, recv_error = isTRUE(msg$.recv_error))
   }
 
   # Main dispatch loop: keep all workers busy and collect results as they finish.
   while (!queue_is_done(queue)) {
     # Health check at intervals (based on completions)
     if (chunks_processed > 0 && chunks_processed %% health_check_interval == 0) {
-      health <- pool_health_check(pool)
+      busy_ids <- which(!idle)
+      health <- pool_health_check(pool, busy_workers = busy_ids)
       diag$health_checks <- c(diag$health_checks, list(health))
 
       # Refresh pool reference after potential recycle/restart.
@@ -206,7 +214,8 @@ dispatch_chunks <- function(chunks, fun, ...,
         pool$workers[[worker_id]] <- worker_spawn(
           id = worker_id,
           init_expr = pool$init_expr,
-          packages = pool$packages
+          packages = pool$packages,
+          dev_path = pool$dev_path
         )
         pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
         pool$stats$total_deaths <- pool$stats$total_deaths + 1L
@@ -219,6 +228,31 @@ dispatch_chunks <- function(chunks, fun, ...,
         export_env$.shard_dispatch_args <- extra_args
         parallel::clusterExport(w$cluster, c(".shard_dispatch_fun", ".shard_dispatch_args"),
                                 envir = export_env)
+      }
+
+      # If this worker was flagged for recycle while busy, do it now (safe point).
+      if (isTRUE(w$needs_recycle)) {
+        min_age <- pool$min_recycle_interval %||% 0
+        age <- as.numeric(difftime(Sys.time(), w$spawned_at %||% Sys.time(), units = "secs"))
+        if (!is.na(age) && is.finite(min_age) && age < min_age) {
+          # Cooldown: avoid thrashing PSOCK creation/destruction under extremely
+          # tight rss_limit settings.
+          # We'll keep processing and recycle on a later safe point.
+          w$needs_recycle <- TRUE
+        } else {
+          pool$workers[[worker_id]] <- worker_recycle(w, pool$init_expr, pool$packages, dev_path = pool$dev_path)
+          pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
+          pool$workers[[worker_id]]$needs_recycle <- FALSE
+          pool$stats$total_recycles <- pool$stats$total_recycles + 1L
+          .pool_env$pool <- pool
+          w <- pool$workers[[worker_id]]
+
+          export_env <- new.env(parent = emptyenv())
+          export_env$.shard_dispatch_fun <- fun
+          export_env$.shard_dispatch_args <- extra_args
+          parallel::clusterExport(w$cluster, c(".shard_dispatch_fun", ".shard_dispatch_args"),
+                                  envir = export_env)
+        }
       }
 
       # Async send
@@ -253,7 +287,8 @@ dispatch_chunks <- function(chunks, fun, ...,
           pool$workers[[worker_id]] <- worker_spawn(
             id = worker_id,
             init_expr = pool$init_expr,
-            packages = pool$packages
+            packages = pool$packages,
+            dev_path = pool$dev_path
           )
           pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
           pool$stats$total_deaths <- pool$stats$total_deaths + 1L
@@ -285,6 +320,44 @@ dispatch_chunks <- function(chunks, fun, ...,
     worker_id <- rec$worker_id
     tag <- rec$tag
     payload <- rec$value
+
+    if (isTRUE(rec$recv_error)) {
+      # Treat a receive/unserialize failure as a worker death while running.
+      meta <- inflight[[worker_id]]
+      chunk_id <- meta$chunk_id %||% as.character(tag)
+      if (!is.null(chunk_id) && !is.na(chunk_id)) {
+        ch <- queue$env$in_flight[[as.character(chunk_id)]]
+        retry_count <- (ch$retry_count %||% 0L)
+        requeue <- retry_count < max_retries
+        queue_fail(queue, as.character(chunk_id), error = payload$error %||% "recv error", requeue = requeue)
+        if (!requeue) {
+          warning(sprintf("Chunk %s permanently failed after %d retries: %s",
+                          as.character(chunk_id), retry_count, payload$error %||% "recv error"))
+        }
+      }
+
+      worker_kill(pool$workers[[worker_id]])
+      pool$workers[[worker_id]] <- worker_spawn(
+        id = worker_id,
+        init_expr = pool$init_expr,
+        packages = pool$packages,
+        dev_path = pool$dev_path
+      )
+      pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
+      pool$stats$total_deaths <- pool$stats$total_deaths + 1L
+      .pool_env$pool <- pool
+
+      export_env <- new.env(parent = emptyenv())
+      export_env$.shard_dispatch_fun <- fun
+      export_env$.shard_dispatch_args <- extra_args
+      parallel::clusterExport(pool$workers[[worker_id]]$cluster,
+                              c(".shard_dispatch_fun", ".shard_dispatch_args"),
+                              envir = export_env)
+
+      idle[worker_id] <- TRUE
+      inflight[worker_id] <- list(NULL)
+      next
+    }
 
     idle[worker_id] <- TRUE
     inflight[worker_id] <- list(NULL)

@@ -8,8 +8,15 @@
 #
 # Expected runtime: 30-60 seconds per test due to high shard counts
 
+skip_if_not_stress <- function() {
+  if (!identical(tolower(Sys.getenv("SHARD_RUN_STRESS", "false")), "true")) {
+    skip("Set SHARD_RUN_STRESS=true to run stress tests")
+  }
+}
+
 test_that("stress: 1000+ shards with aggressive mem_cap triggers recycling", {
   skip_on_cran()
+  skip_if_not_stress()
   # Expected runtime: ~30 seconds
 
   # Use very low mem_cap to force recycling
@@ -53,6 +60,7 @@ test_that("stress: 1000+ shards with aggressive mem_cap triggers recycling", {
 
 test_that("stress: worker crashes mid-task are recovered", {
   skip_on_cran()
+  skip_if_not_stress()
   # Expected runtime: ~20 seconds
 
   pool <- pool_create(n = 2)
@@ -85,6 +93,7 @@ test_that("stress: worker crashes mid-task are recovered", {
 
 test_that("stress: deliberate worker kill is recovered", {
   skip_on_cran()
+  skip_if_not_stress()
   # Expected runtime: ~15 seconds
 
   pool <- pool_create(n = 2)
@@ -122,6 +131,7 @@ test_that("stress: deliberate worker kill is recovered", {
 
 test_that("stress: verify no chunks lost during recycling", {
   skip_on_cran()
+  skip_if_not_stress()
   # Expected runtime: ~30 seconds
 
   pool <- pool_create(
@@ -176,6 +186,7 @@ test_that("stress: verify no chunks lost during recycling", {
 
 test_that("stress: RSS stays bounded under load", {
   skip_on_cran()
+  skip_if_not_stress()
   # Expected runtime: ~45 seconds
 
   rss_limit_bytes <- 100 * 1024^2  # 100MB limit
@@ -224,6 +235,7 @@ test_that("stress: RSS stays bounded under load", {
 
 test_that("stress: high shard count completes correctly", {
   skip_on_cran()
+  skip_if_not_stress()
   # Expected runtime: ~30 seconds
 
   # Run without aggressive recycling to test correctness under load

@@ -4,7 +4,7 @@
 \alias{worker_spawn}
 \title{Spawn a Worker Process}
 \usage{
-worker_spawn(id, init_expr = NULL, packages = NULL)
+worker_spawn(id, init_expr = NULL, packages = NULL, dev_path = NULL)
 }
 \arguments{
 \item{id}{Integer. Worker identifier.}

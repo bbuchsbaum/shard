@@ -9,6 +9,7 @@ pool_create(
   rss_limit = "2GB",
   rss_drift_threshold = 0.5,
   heartbeat_interval = 5,
+  min_recycle_interval = 1,
   init_expr = NULL,
   packages = NULL
 )
@@ -23,6 +24,10 @@ Can be bytes (numeric) or human-readable (e.g., "2GB"). Default is "2GB".}
 that triggers recycling (default 0.5 = 50\% growth).}
 
 \item{heartbeat_interval}{Numeric. Seconds between health checks (default 5).}
+
+\item{min_recycle_interval}{Numeric. Minimum time in seconds between recycling
+the same worker (default 1.0). This prevents thrashing PSOCK worker creation
+under extremely tight RSS limits.}
 
 \item{init_expr}{Expression to evaluate in each worker on startup.}
 

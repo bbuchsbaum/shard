@@ -6,6 +6,7 @@ NULL
 # Module-level pool state (package environment)
 .pool_env <- new.env(parent = emptyenv())
 .pool_env$pool <- NULL
+.pool_env$dev_path <- NULL
 
 #' Create a Worker Pool
 #'
@@ -18,6 +19,9 @@ NULL
 #' @param rss_drift_threshold Numeric. Fraction of RSS increase from baseline
 #'   that triggers recycling (default 0.5 = 50% growth).
 #' @param heartbeat_interval Numeric. Seconds between health checks (default 5).
+#' @param min_recycle_interval Numeric. Minimum time in seconds between recycling
+#'   the same worker (default 1.0). This prevents thrashing PSOCK worker creation
+#'   under extremely tight RSS limits.
 #' @param init_expr Expression to evaluate in each worker on startup.
 #' @param packages Character vector. Packages to load in workers.
 #'
@@ -29,6 +33,7 @@ pool_create <- function(n = parallel::detectCores() - 1L,
                         rss_limit = "2GB",
                         rss_drift_threshold = 0.5,
                         heartbeat_interval = 5,
+                        min_recycle_interval = 1.0,
                         init_expr = NULL,
                         packages = NULL) {
   # Validate inputs
@@ -45,6 +50,14 @@ pool_create <- function(n = parallel::detectCores() - 1L,
   }
 
   # Create pool structure
+  dev_path <- tryCatch(getNamespaceInfo("shard", "path"), error = function(e) NULL)
+  if (!is.null(dev_path) && isTRUE(dir.exists(file.path(dev_path, ".git")))) {
+    .pool_env$dev_path <- dev_path
+  } else {
+    .pool_env$dev_path <- NULL
+    dev_path <- NULL
+  }
+
   pool <- structure(
     list(
       workers = vector("list", n),
@@ -52,6 +65,8 @@ pool_create <- function(n = parallel::detectCores() - 1L,
       rss_limit_bytes = rss_limit_bytes,
       rss_drift_threshold = rss_drift_threshold,
       heartbeat_interval = heartbeat_interval,
+      min_recycle_interval = as.double(min_recycle_interval),
+      dev_path = dev_path,
       init_expr = init_expr,
       packages = packages,
       created_at = Sys.time(),
@@ -69,7 +84,8 @@ pool_create <- function(n = parallel::detectCores() - 1L,
     pool$workers[[i]] <- worker_spawn(
       id = i,
       init_expr = init_expr,
-      packages = packages
+      packages = packages,
+      dev_path = dev_path
     )
   }
 
@@ -129,7 +145,7 @@ pool_stop <- function(pool = NULL, timeout = 5) {
   # Kill all workers
   for (w in pool$workers) {
     if (!is.null(w)) {
-      worker_kill(w)
+      tryCatch(worker_kill(w), error = function(e) NULL)
     }
   }
 
@@ -154,9 +170,12 @@ pool_stop <- function(pool = NULL, timeout = 5) {
 #' Monitors all workers, recycling those with excessive RSS drift or that have died.
 #'
 #' @param pool A `shard_pool` object. If NULL, uses the current pool.
+#' @param busy_workers Optional integer vector of worker ids that are currently
+#'   running tasks (used internally by the dispatcher to avoid recycling a worker
+#'   while a result is in flight).
 #' @return A list with health status per worker and actions taken.
 #' @export
-pool_health_check <- function(pool = NULL) {
+pool_health_check <- function(pool = NULL, busy_workers = NULL) {
   if (is.null(pool)) {
     pool <- .pool_env$pool
   }
@@ -166,6 +185,12 @@ pool_health_check <- function(pool = NULL) {
   }
 
   actions <- vector("list", pool$n)
+  busy <- rep(FALSE, pool$n)
+  if (!is.null(busy_workers)) {
+    busy_workers <- as.integer(busy_workers)
+    busy_workers <- busy_workers[busy_workers >= 1L & busy_workers <= pool$n]
+    busy[busy_workers] <- TRUE
+  }
 
   for (i in seq_len(pool$n)) {
     w <- pool$workers[[i]]
@@ -178,8 +203,10 @@ pool_health_check <- function(pool = NULL) {
       pool$workers[[i]] <- worker_spawn(
         id = i,
         init_expr = pool$init_expr,
-        packages = pool$packages
+        packages = pool$packages,
+        dev_path = pool$dev_path
       )
+      pool$workers[[i]]$needs_recycle <- FALSE
       pool$workers[[i]]$rss_baseline <- worker_rss(pool$workers[[i]])
       pool$stats$total_deaths <- pool$stats$total_deaths + 1L
     } else {
@@ -192,14 +219,28 @@ pool_health_check <- function(pool = NULL) {
       exceeds_drift <- drift > pool$rss_drift_threshold
 
       if (exceeds_limit || exceeds_drift) {
-        action$action <- "recycle"
         action$reason <- if (exceeds_limit) "rss_limit" else "rss_drift"
         action$rss_before <- current_rss
 
-        pool$workers[[i]] <- worker_recycle(w, pool$init_expr, pool$packages)
-        pool$workers[[i]]$rss_baseline <- worker_rss(pool$workers[[i]])
-        pool$stats$total_recycles <- pool$stats$total_recycles + 1L
+        min_age <- pool$min_recycle_interval %||% 0
+        age <- as.numeric(difftime(Sys.time(), w$spawned_at %||% Sys.time(), units = "secs"))
+
+        if (isTRUE(busy[i]) || (!is.na(age) && is.finite(min_age) && age < min_age)) {
+          # Avoid recycling a worker while it has an in-flight task. Recycling
+          # closes the PSOCK connection and can race with recv/unserialize.
+          w$needs_recycle <- TRUE
+          pool$workers[[i]] <- w
+          action$action <- "defer_recycle"
+        } else {
+          action$action <- "recycle"
+          pool$workers[[i]] <- worker_recycle(w, pool$init_expr, pool$packages, dev_path = pool$dev_path)
+          pool$workers[[i]]$needs_recycle <- FALSE
+          pool$workers[[i]]$rss_baseline <- worker_rss(pool$workers[[i]])
+          pool$stats$total_recycles <- pool$stats$total_recycles + 1L
+        }
       } else {
+        w$needs_recycle <- isTRUE(w$needs_recycle)
+        pool$workers[[i]] <- w
         action$rss_current <- current_rss
         action$rss_drift <- drift
       }

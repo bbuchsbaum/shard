@@ -2,20 +2,24 @@
 % Please edit documentation in R/tables.R
 \name{table_write}
 \alias{table_write}
-\title{Write into a table buffer}
+\title{Write tabular results into a table buffer or sink}
 \usage{
-table_write(target, rows, data)
+table_write(target, rows_or_shard_id, data, ...)
 }
 \arguments{
-\item{target}{A \code{shard_table_buffer}.}
+\item{target}{A \code{shard_table_buffer} or \code{shard_table_sink}.}
 
-\item{rows}{Row selector (idx_range or integer vector).}
+\item{rows_or_shard_id}{For buffers: row selector (idx_range or integer vector).
+For sinks: shard id (integer).}
 
 \item{data}{A data.frame or named list matching the schema columns.}
-}
-\value{
-NULL (invisibly).
+
+\item{...}{Reserved for future extensions.}
 }
 \description{
-Write into a table buffer
+\code{table_write()} is the common write path for shard table outputs:
+\itemize{
+\item For fixed-size outputs, write into a \code{shard_table_buffer} using a row selector.
+\item For variable-size outputs, write into a \code{shard_table_sink} using a shard id.
+}
 }

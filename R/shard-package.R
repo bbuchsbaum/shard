@@ -45,6 +45,7 @@ NULL
 .onLoad <- function(libname, pkgname) {
   # Initialize pool environment
   .pool_env$pool <- NULL
+  .pool_env$dev_path <- NULL
 }
 
 # On package unload, stop any running pool

@@ -13,7 +13,7 @@ NULL
 #'
 #' @return A `shard_worker` object.
 #' @keywords internal
-worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
+worker_spawn <- function(id, init_expr = NULL, packages = NULL, dev_path = NULL) {
   # Use makeCluster to spawn a single worker
   # This creates a socket connection to an R process
   # Use --vanilla to avoid user/site profiles that may pre-load packages and
@@ -31,7 +31,7 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
   # This is critical for ALTREP class registration and for loading this
   # in-development package when tests install to a temp lib.
   master_libpaths <- .libPaths()
-  parallel::clusterCall(cl, function(paths) {
+  parallel::clusterCall(cl, function(paths, dev_path) {
     .libPaths(paths)
 
     # If shard was loaded via user/site profiles (or other bootstrapping),
@@ -43,9 +43,14 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
       try(unloadNamespace("shard"), silent = TRUE)
     }
 
-    suppressPackageStartupMessages(library(shard))
+    if (!is.null(dev_path) && nzchar(dev_path) && requireNamespace("pkgload", quietly = TRUE)) {
+      # In dev/test runs, ensure workers run the same in-tree code as the master.
+      pkgload::load_all(dev_path, quiet = TRUE)
+    } else {
+      suppressPackageStartupMessages(library(shard))
+    }
     TRUE
-  }, master_libpaths)
+  }, master_libpaths, dev_path)
 
   # Load packages if specified
   if (length(packages) > 0) {
@@ -73,6 +78,7 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
       spawned_at = Sys.time(),
       rss_baseline = NA_real_,
       recycle_count = 0L,
+      needs_recycle = FALSE,
       status = "ok"
     ),
     class = "shard_worker"
@@ -132,20 +138,41 @@ worker_kill <- function(worker) {
     return(invisible(NULL))
   }
 
-  tryCatch({
-    parallel::stopCluster(worker$cluster)
-  }, error = function(e) {
-    # If cluster stop fails, try to kill the process directly
-    if (!is.na(worker$pid)) {
-      tryCatch({
-        tools::pskill(worker$pid, signal = 15L)  # SIGTERM
-        Sys.sleep(0.1)
-        if (pid_is_alive(worker$pid)) {
-          tools::pskill(worker$pid, signal = 9L)  # SIGKILL
-        }
-      }, error = function(e2) NULL)
+  close_sock <- function(w) {
+    if (is.null(w$cluster) || length(w$cluster) < 1L) return(invisible(NULL))
+    n <- w$cluster[[1]]
+    if (!is.null(n) && !is.null(n$con)) {
+      try(close(n$con), silent = TRUE)
     }
-  })
+    invisible(NULL)
+  }
+
+  wait_dead <- function(pid, timeout = 2) {
+    if (is.na(pid) || !isTRUE(pid_is_alive(pid))) return(invisible(NULL))
+    deadline <- Sys.time() + timeout
+    while (Sys.time() < deadline) {
+      if (!isTRUE(pid_is_alive(pid))) break
+      Sys.sleep(0.05)
+    }
+    invisible(NULL)
+  }
+
+  pid <- worker$pid %||% NA_integer_
+
+  # Best-effort shutdown via parallel, but always fall back to PID kill and
+  # always close the socket connection.
+  tryCatch(parallel::stopCluster(worker$cluster), error = function(e) NULL)
+
+  if (!is.na(pid) && isTRUE(pid_is_alive(pid))) {
+    tryCatch(tools::pskill(pid, signal = 15L), error = function(e) NULL)
+    wait_dead(pid, timeout = 1)
+    if (isTRUE(pid_is_alive(pid))) {
+      tryCatch(tools::pskill(pid, signal = 9L), error = function(e) NULL)
+      wait_dead(pid, timeout = 1)
+    }
+  }
+
+  close_sock(worker)
 
   invisible(NULL)
 }
@@ -160,7 +187,7 @@ worker_kill <- function(worker) {
 #' @param packages Character vector. Packages to load.
 #' @return A new `shard_worker` object.
 #' @keywords internal
-worker_recycle <- function(worker, init_expr = NULL, packages = NULL) {
+worker_recycle <- function(worker, init_expr = NULL, packages = NULL, dev_path = NULL) {
   id <- worker$id
   old_recycle_count <- worker$recycle_count %||% 0L
 
@@ -169,7 +196,7 @@ worker_recycle <- function(worker, init_expr = NULL, packages = NULL) {
   worker_kill(worker)
 
   # Spawn a fresh one
-  new_worker <- worker_spawn(id, init_expr, packages)
+  new_worker <- worker_spawn(id, init_expr, packages, dev_path = dev_path)
   new_worker$recycle_count <- old_recycle_count + 1L
 
   new_worker

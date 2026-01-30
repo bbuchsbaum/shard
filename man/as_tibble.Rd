@@ -2,19 +2,17 @@
 % Please edit documentation in R/tables.R
 \name{as_tibble}
 \alias{as_tibble}
-\title{Materialize a table handle}
+\title{Materialize a shard table handle as a data.frame/tibble}
 \usage{
-as_tibble(x, max_bytes = 256 * 1024^2)
+as_tibble(x, max_bytes = 256 * 1024^2, ...)
 }
 \arguments{
-\item{x}{A \code{shard_table_handle} or \code{shard_table_buffer}.}
+\item{x}{A shard table object.}
 
 \item{max_bytes}{Warn if estimated payload exceeds this threshold.}
-}
-\value{
-A data.frame (or tibble).
+
+\item{...}{Reserved for future extensions.}
 }
 \description{
-Converts a \code{shard_table_handle} to an in-memory data.frame (or tibble if the
-tibble package is installed).
+Materialize a shard table handle as a data.frame/tibble
 }

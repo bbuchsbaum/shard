@@ -4,10 +4,14 @@
 \alias{pool_health_check}
 \title{Check Pool Health}
 \usage{
-pool_health_check(pool = NULL)
+pool_health_check(pool = NULL, busy_workers = NULL)
 }
 \arguments{
 \item{pool}{A \code{shard_pool} object. If NULL, uses the current pool.}
+
+\item{busy_workers}{Optional integer vector of worker ids that are currently
+running tasks (used internally by the dispatcher to avoid recycling a worker
+while a result is in flight).}
 }
 \value{
 A list with health status per worker and actions taken.

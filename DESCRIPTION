@@ -25,6 +25,7 @@ Suggests:
     doParallel,
     future.apply,
     iterators,
+    pkgload,
     testthat (>= 3.0.0),
     ps,
     jsonlite,

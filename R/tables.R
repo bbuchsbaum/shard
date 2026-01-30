@@ -61,6 +61,10 @@ bool <- function() .coltype("bool")
 #' @export
 raw_col <- function() .coltype("raw")
 
+#' @rdname coltypes
+#' @export
+string_col <- function() .coltype("string")
+
 #' Categorical column type
 #'
 #' Stores factors as int32 codes plus shared levels metadata.
@@ -82,6 +86,7 @@ factor_col <- function(levels) {
     "bool" = 1,   # logical payload size estimate for table bytes (not storage)
     "raw" = 1,
     "factor" = 4,
+    "string" = NA_real_,
     NA_real_
   )
 }
@@ -93,6 +98,7 @@ factor_col <- function(levels) {
     "bool" = "logical",
     "raw" = "raw",
     "factor" = "integer",
+    "string" = stop("string columns are not supported in fixed table_buffer() (use table_sink())", call. = FALSE),
     stop("Unsupported column type: ", ct$kind, call. = FALSE)
   )
 }
@@ -202,6 +208,7 @@ row_layout <- function(shards, rows_per_shard) {
     "float64" = as.double(x),
     "bool" = as.logical(x),
     "raw" = as.raw(x),
+    "string" = as.character(x),
     "factor" = {
       lev <- ct$levels
       if (is.factor(x)) {
@@ -236,14 +243,23 @@ row_layout <- function(shards, rows_per_shard) {
   as.integer(rows)
 }
 
-#' Write into a table buffer
+#' Write tabular results into a table buffer or sink
 #'
-#' @param target A `shard_table_buffer`.
-#' @param rows Row selector (idx_range or integer vector).
+#' `table_write()` is the common write path for shard table outputs:
+#' - For fixed-size outputs, write into a `shard_table_buffer` using a row selector.
+#' - For variable-size outputs, write into a `shard_table_sink` using a shard id.
+#'
+#' @param target A `shard_table_buffer` or `shard_table_sink`.
+#' @param rows_or_shard_id For buffers: row selector (idx_range or integer vector).
+#'   For sinks: shard id (integer).
 #' @param data A data.frame or named list matching the schema columns.
-#' @return NULL (invisibly).
+#' @param ... Reserved for future extensions.
 #' @export
-table_write <- function(target, rows, data) {
+table_write <- function(target, rows_or_shard_id, data, ...) {
+  UseMethod("table_write")
+}
+
+.table_write_buffer_impl <- function(target, rows, data) {
   if (!inherits(target, "shard_table_buffer")) stop("target must be a shard_table_buffer", call. = FALSE)
   if (missing(rows)) stop("rows is required", call. = FALSE)
 
@@ -291,16 +307,45 @@ table_write <- function(target, rows, data) {
   invisible(NULL)
 }
 
+#' Write into a table buffer
+#'
+#' @param target A `shard_table_buffer`.
+#' @param rows_or_shard_id Row selector (idx_range or integer vector).
+#' @param data A data.frame or named list matching the schema columns.
+#' @param ... Reserved for future extensions.
+#' @return NULL (invisibly).
+#' @export
+table_write.shard_table_buffer <- function(target, rows_or_shard_id, data, ...) {
+  .table_write_buffer_impl(target, rows = rows_or_shard_id, data = data)
+}
+
+#' Finalize a table buffer or sink
+#'
+#' For a `shard_table_buffer`, this returns a lightweight in-memory handle (or a
+#' materialized data.frame/tibble, depending on `materialize`).
+#'
+#' For a `shard_table_sink`, this returns a row-group handle referencing the
+#' written partitions (or materializes them if requested).
+#'
+#' @param target A `shard_table_buffer` or `shard_table_sink`.
+#' @param materialize `"never"`, `"auto"`, or `"always"`.
+#' @param max_bytes For `"auto"`, materialize only if estimated bytes <= max_bytes.
+#' @param ... Reserved for future extensions.
+#' @export
+table_finalize <- function(target, materialize = c("never", "auto", "always"), max_bytes = 256 * 1024^2, ...) {
+  UseMethod("table_finalize")
+}
+
 #' Finalize a table buffer
 #'
 #' @param target A `shard_table_buffer`.
 #' @param materialize `"never"`, `"auto"`, or `"always"`.
 #' @param max_bytes For `"auto"`, materialize only if estimated bytes <= max_bytes.
+#' @param ... Reserved for future extensions.
 #' @return A `shard_table_handle` or a materialized data.frame/tibble.
 #' @export
-table_finalize <- function(target, materialize = c("never", "auto", "always"), max_bytes = 256 * 1024^2) {
+table_finalize.shard_table_buffer <- function(target, materialize = c("never", "auto", "always"), max_bytes = 256 * 1024^2, ...) {
   materialize <- match.arg(materialize)
-  if (!inherits(target, "shard_table_buffer")) stop("target must be a shard_table_buffer", call. = FALSE)
 
   handle <- structure(
     list(schema = target$schema, nrow = target$nrow, columns = target$columns),
@@ -323,22 +368,34 @@ table_finalize <- function(target, materialize = c("never", "auto", "always"), m
   as_tibble(handle, max_bytes = max_bytes)
 }
 
-#' Materialize a table handle
+#' Materialize a shard table handle as a data.frame/tibble
+#'
+#' @param x A shard table object.
+#' @param max_bytes Warn if estimated payload exceeds this threshold.
+#' @param ... Reserved for future extensions.
+#' @export
+as_tibble <- function(x, max_bytes = 256 * 1024^2, ...) {
+  UseMethod("as_tibble")
+}
+
+#' Materialize a fixed table handle or buffer
 #'
 #' Converts a `shard_table_handle` to an in-memory data.frame (or tibble if the
 #' tibble package is installed).
 #'
 #' @param x A `shard_table_handle` or `shard_table_buffer`.
 #' @param max_bytes Warn if estimated payload exceeds this threshold.
+#' @param ... Reserved for future extensions.
 #' @return A data.frame (or tibble).
 #' @export
-as_tibble <- function(x, max_bytes = 256 * 1024^2) {
-  if (inherits(x, "shard_table_buffer")) {
-    x <- structure(list(schema = x$schema, nrow = x$nrow, columns = x$columns),
-                   class = "shard_table_handle")
-  }
-  if (!inherits(x, "shard_table_handle")) stop("x must be a table handle", call. = FALSE)
+as_tibble.shard_table_buffer <- function(x, max_bytes = 256 * 1024^2, ...) {
+  as_tibble(structure(list(schema = x$schema, nrow = x$nrow, columns = x$columns),
+                      class = "shard_table_handle"),
+            max_bytes = max_bytes)
+}
 
+#' @export
+as_tibble.shard_table_handle <- function(x, max_bytes = 256 * 1024^2, ...) {
   sch <- x$schema$columns
   n <- x$nrow
 
@@ -348,7 +405,7 @@ as_tibble <- function(x, max_bytes = 256 * 1024^2) {
     if (is.finite(b)) est <- est + as.double(n) * as.double(b)
   }
   if (is.finite(est) && est > max_bytes) {
-    warning("Materializing a large table (", format_bytes(est), "): consider writing to disk in v1.1 sinks.",
+    warning("Materializing a large table (", format_bytes(est), "): consider writing to disk in table_sink().",
             call. = FALSE)
   }
 
@@ -374,5 +431,194 @@ as_tibble <- function(x, max_bytes = 256 * 1024^2) {
   if (pkg_available("tibble")) {
     return(tibble::as_tibble(df))
   }
+  df
+}
+
+#' Create a table sink for row-group or partitioned outputs
+#'
+#' A table sink supports variable-sized outputs without returning large
+#' data.frames to the master. Each shard writes a separate row-group file.
+#'
+#' v1.1 implementation notes:
+#' - Storage format is per-shard RDS (portable, CRAN-friendly).
+#' - This guarantees bounded master memory during execution; final collection
+#'   may still be large if you materialize.
+#'
+#' @param schema A `shard_schema`.
+#' @param mode `"row_groups"` (temp, managed) or `"partitioned"` (persistent path).
+#' @param path Directory to write row-group files. If NULL, a temp dir is created.
+#' @return A `shard_table_sink`.
+#' @export
+table_sink <- function(schema,
+                       mode = c("row_groups", "partitioned"),
+                       path = NULL) {
+  mode <- match.arg(mode)
+  if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
+
+  if (is.null(path)) {
+    path <- file.path(tempdir(), paste0("shard_table_sink_", unique_id()))
+  }
+  if (!dir.exists(path)) dir.create(path, recursive = TRUE, showWarnings = FALSE)
+
+  structure(
+    list(schema = schema, mode = mode, path = path, format = "rds"),
+    class = "shard_table_sink"
+  )
+}
+
+.sink_part_path <- function(sink, shard_id) {
+  file.path(sink$path, sprintf("part-%06d.rds", as.integer(shard_id)))
+}
+
+.sink_atomic_write_rds <- function(obj, path) {
+  tmp <- paste0(path, ".tmp_", Sys.getpid(), "_", sample.int(1e9, 1))
+  saveRDS(obj, tmp)
+  ok <- file.rename(tmp, path)
+  if (!isTRUE(ok)) {
+    unlink(tmp)
+    stop("Failed to finalize row-group write", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+#' Write a shard's row-group output
+#'
+#' @param target A `shard_table_sink`.
+#' @param rows_or_shard_id Integer shard id used to name the row-group file.
+#' @param data A data.frame matching the sink schema.
+#' @param ... Reserved for future extensions.
+#' @return NULL (invisibly).
+#' @export
+table_write.shard_table_sink <- function(target, rows_or_shard_id, data, ...) {
+  sink <- target
+
+  shard_id <- rows_or_shard_id
+  if (missing(shard_id)) stop("shard_id is required for table_sink writes", call. = FALSE)
+  if (!dir.exists(sink$path)) dir.create(sink$path, recursive = TRUE, showWarnings = FALSE)
+  if (is.data.frame(data)) {
+    data <- as.list(data)
+    data <- as.data.frame(data, stringsAsFactors = FALSE)
+  }
+  if (!is.data.frame(data)) stop("data must be a data.frame", call. = FALSE)
+
+  sch <- sink$schema$columns
+  if (!setequal(names(data), names(sch))) {
+    missing_cols <- setdiff(names(sch), names(data))
+    extra_cols <- setdiff(names(data), names(sch))
+    msg <- "table_write(sink, ...) data columns must match schema"
+    if (length(missing_cols)) msg <- paste0(msg, "; missing: ", paste(missing_cols, collapse = ", "))
+    if (length(extra_cols)) msg <- paste0(msg, "; extra: ", paste(extra_cols, collapse = ", "))
+    stop(msg, call. = FALSE)
+  }
+
+  # Cast + validate each column.
+  out <- data
+  for (nm in names(sch)) {
+    ct <- sch[[nm]]
+    col <- out[[nm]]
+    if (ct$kind == "factor") {
+      lev <- ct$levels
+      if (is.factor(col)) {
+        chr <- as.character(col)
+      } else if (is.character(col)) {
+        chr <- col
+      } else if (is.integer(col) || is.numeric(col)) {
+        codes <- as.integer(col)
+        chr <- rep(NA_character_, length(codes))
+        ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
+        chr[ok] <- lev[codes[ok]]
+        if (any(!ok & !is.na(codes))) {
+          stop("Invalid factor code in column '", nm, "'", call. = FALSE)
+        }
+      } else {
+        stop("Unsupported factor column input type", call. = FALSE)
+      }
+      bad <- !is.na(chr) & !(chr %in% lev)
+      if (any(bad)) stop("factor levels mismatch in write", call. = FALSE)
+      out[[nm]] <- factor(chr, levels = lev)
+    } else {
+      out[[nm]] <- .table_cast(ct, col)
+    }
+  }
+
+  p <- .sink_part_path(sink, shard_id)
+  .sink_atomic_write_rds(out, p)
+
+  n <- nrow(out)
+  sz <- tryCatch(file.info(p)$size, error = function(e) NA_real_)
+
+  .table_diag_env$writes <- .table_diag_env$writes + 1L
+  .table_diag_env$rows <- .table_diag_env$rows + as.integer(n)
+  if (is.finite(sz)) .table_diag_env$bytes <- .table_diag_env$bytes + as.double(sz)
+
+  invisible(NULL)
+}
+
+#' Finalize a sink
+#'
+#' @param target A `shard_table_sink`.
+#' @param materialize `"never"`, `"auto"`, or `"always"`.
+#' @param max_bytes For `"auto"`, materialize only if estimated bytes <= max_bytes.
+#' @param ... Reserved for future extensions.
+#' @return A `shard_row_groups` handle (or a materialized data.frame/tibble).
+#' @export
+table_finalize.shard_table_sink <- function(target, materialize = c("never", "auto", "always"), max_bytes = 256 * 1024^2, ...) {
+  materialize <- match.arg(materialize)
+
+  files <- list.files(target$path, pattern = "^part-[0-9]+\\.rds$", full.names = TRUE)
+  files <- sort(files)
+
+  handle <- structure(
+    list(schema = target$schema, path = target$path, files = files, format = target$format),
+    class = "shard_row_groups"
+  )
+
+  # Determine whether to materialize by file sizes (if available).
+  total <- sum(vapply(files, function(f) as.double(file.info(f)$size %||% 0), numeric(1)), na.rm = TRUE)
+  do_mat <- switch(materialize,
+    "never" = FALSE,
+    "always" = TRUE,
+    "auto" = isTRUE(total <= max_bytes)
+  )
+
+  if (!do_mat) return(handle)
+  as_tibble(handle, max_bytes = max_bytes)
+}
+
+#' Iterate row groups
+#'
+#' @param x A `shard_row_groups` handle.
+#' @return An iterator function with no args that returns the next data.frame or NULL.
+#' @export
+iterate_row_groups <- function(x) {
+  if (!inherits(x, "shard_row_groups")) stop("x must be a shard_row_groups handle", call. = FALSE)
+  files <- x$files
+  i <- 0L
+  function() {
+    i <<- i + 1L
+    if (i > length(files)) return(NULL)
+    readRDS(files[[i]])
+  }
+}
+
+# Extend as_tibble() to accept row-group handles.
+#' @export
+as_tibble.shard_row_groups <- function(x, max_bytes = 256 * 1024^2, ...) {
+  # max_bytes is accepted for API consistency; row-groups are size-variable and
+  # are typically materialized explicitly by users.
+  it <- iterate_row_groups(x)
+  chunks <- list()
+  repeat {
+    d <- it()
+    if (is.null(d)) break
+    chunks[[length(chunks) + 1L]] <- d
+  }
+  if (length(chunks) == 0) {
+    df <- data.frame()
+    if (pkg_available("tibble")) return(tibble::as_tibble(df))
+    return(df)
+  }
+  df <- do.call(rbind, chunks)
+  if (pkg_available("tibble")) return(tibble::as_tibble(df))
   df
 }
