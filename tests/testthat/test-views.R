@@ -61,3 +61,26 @@ test_that("view_col_sums runs without materializing views", {
   expect_equal(vd$materialized, 0L)
   expect_equal(vd$materialized_bytes, 0)
 })
+
+test_that("view_xTy uses BLAS path without materializing views", {
+  shard:::view_reset_diagnostics()
+
+  X <- matrix(rnorm(2000), nrow = 100)
+  Y <- matrix(rnorm(3000), nrow = 100)
+  colnames(X) <- paste0("x", seq_len(ncol(X)))
+  colnames(Y) <- paste0("y", seq_len(ncol(Y)))
+
+  Xsh <- share(X, backing = "mmap")
+  Ysh <- share(Y, backing = "mmap")
+
+  vY <- view_block(Ysh, cols = idx_range(4, 11))
+  out <- shard:::view_xTy(Xsh, vY)
+
+  expect_equal(out, crossprod(X, Y[, 4:11, drop = FALSE]))
+  expect_equal(rownames(out), colnames(X))
+  expect_equal(colnames(out), colnames(Y)[4:11])
+
+  vd <- view_diagnostics()
+  expect_equal(vd$materialized, 0L)
+  expect_equal(vd$materialized_bytes, 0)
+})

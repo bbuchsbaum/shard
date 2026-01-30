@@ -26,6 +26,8 @@
 #include "shard_shm.h"
 #include <stdlib.h>
 #include <string.h>
+#include <R_ext/BLAS.h>
+#include <R_ext/RS.h>
 
 /* Info struct stored in ALTREP data1 */
 typedef struct shard_altrep_info {
@@ -1087,6 +1089,107 @@ SEXP C_shard_mat_block_col_sums(SEXP x, SEXP row_start, SEXP row_end,
         }
         outp[j] = any_na ? NA_REAL : acc;
     }
+
+    UNPROTECT(1);
+    return out;
+}
+
+static double *mat_double_ptr(SEXP x, shard_altrep_info_t **info_out, int *nrow_out, int *ncol_out) {
+    if (info_out) *info_out = NULL;
+
+    SEXP dim = getAttrib(x, R_DimSymbol);
+    if (TYPEOF(dim) != INTSXP || XLENGTH(dim) != 2) {
+        error("x must have matrix dimensions");
+    }
+    int nrow = INTEGER(dim)[0];
+    int ncol = INTEGER(dim)[1];
+    if (nrow < 0 || ncol < 0) {
+        error("invalid matrix dimensions");
+    }
+
+    if (ALTREP(x)) {
+        shard_altrep_info_t *info = get_info(x);
+        if (!info) {
+            error("invalid shard ALTREP backing");
+        }
+        if (info->sexp_type != REALSXP) {
+            error("expected double matrix backing");
+        }
+        double *p = (double *)get_data_ptr(x, info);
+        if (!p) {
+            error("failed to access matrix data");
+        }
+        if (info_out) *info_out = info;
+        if (nrow_out) *nrow_out = nrow;
+        if (ncol_out) *ncol_out = ncol;
+        return p;
+    }
+
+    if (TYPEOF(x) != REALSXP) {
+        error("expected a double matrix");
+    }
+    if (nrow_out) *nrow_out = nrow;
+    if (ncol_out) *ncol_out = ncol;
+    return REAL(x);
+}
+
+SEXP C_shard_mat_crossprod_block(SEXP x, SEXP y,
+                                 SEXP row_start, SEXP row_end,
+                                 SEXP x_col_start, SEXP x_col_end,
+                                 SEXP y_col_start, SEXP y_col_end) {
+    int x_nrow = 0, x_ncol = 0, y_nrow = 0, y_ncol = 0;
+    shard_altrep_info_t *xinfo = NULL, *yinfo = NULL;
+
+    double *xp = mat_double_ptr(x, &xinfo, &x_nrow, &x_ncol);
+    double *yp = mat_double_ptr(y, &yinfo, &y_nrow, &y_ncol);
+
+    int rs = asInteger(row_start);
+    int re = asInteger(row_end);
+    int xcs = asInteger(x_col_start);
+    int xce = asInteger(x_col_end);
+    int ycs = asInteger(y_col_start);
+    int yce = asInteger(y_col_end);
+
+    if (rs == NA_INTEGER || re == NA_INTEGER || xcs == NA_INTEGER || xce == NA_INTEGER ||
+        ycs == NA_INTEGER || yce == NA_INTEGER) {
+        error("bounds must be non-NA integers");
+    }
+
+    if (rs < 1 || re < rs) error("row bounds out of range");
+    if (rs > x_nrow || re > x_nrow) error("row bounds exceed x nrow");
+    if (rs > y_nrow || re > y_nrow) error("row bounds exceed y nrow");
+
+    if (xcs < 1 || xce < xcs || xce > x_ncol) error("x col bounds out of range");
+    if (ycs < 1 || yce < ycs || yce > y_ncol) error("y col bounds out of range");
+
+    int nr = re - rs + 1;        /* rows participating in product */
+    int kx = xce - xcs + 1;      /* x columns */
+    int ky = yce - ycs + 1;      /* y columns */
+
+    /* BLAS expects column-major with leading dimension = full nrow */
+    int lda = x_nrow;
+    int ldb = y_nrow;
+
+    /* Offset pointers to the requested (row_start, col_start) */
+    double *A = xp + (R_xlen_t)(xcs - 1) * (R_xlen_t)x_nrow + (R_xlen_t)(rs - 1);
+    double *B = yp + (R_xlen_t)(ycs - 1) * (R_xlen_t)y_nrow + (R_xlen_t)(rs - 1);
+
+    /* Result: t(A) %*% B => (kx x ky) */
+    SEXP out = PROTECT(allocMatrix(REALSXP, kx, ky));
+    double *C = REAL(out);
+
+    const char transa = 'T';
+    const char transb = 'N';
+    const double alpha = 1.0;
+    const double beta = 0.0;
+    int m = kx;
+    int n = ky;
+    int k = nr;
+    int ldc = kx;
+
+    F77_CALL(dgemm)(&transa, &transb, &m, &n, &k,
+                    &alpha, A, &lda, B, &ldb,
+                    &beta, C, &ldc FCONE FCONE);
 
     UNPROTECT(1);
     return out;

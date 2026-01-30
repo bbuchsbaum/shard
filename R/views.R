@@ -328,3 +328,58 @@ view_col_sums <- function(v) {
 
   out
 }
+
+view_xTy <- function(x, y_view, x_cols = NULL) {
+  if (!inherits(y_view, "shard_view_block")) {
+    stop("y_view must be a shard_view_block", call. = FALSE)
+  }
+  if (!is.matrix(x) && !(is_shared_vector(x) && !is.null(dim(x)) && length(dim(x)) == 2L)) {
+    stop("x must be a matrix or a shared matrix backing", call. = FALSE)
+  }
+
+  y_base <- y_view$base
+  dY <- y_view$dim
+  dX <- dim(x)
+  if (length(dY) != 2L || length(dX) != 2L) stop("x and y must be matrices", call. = FALSE)
+  if (dX[1] != dY[1]) stop("x and y must have the same number of rows", call. = FALSE)
+
+  rs <- if (is.null(y_view$rows)) c(1L, dY[1]) else c(y_view$rows$start, y_view$rows$end)
+  if (is.null(y_view$cols)) stop("y_view must specify cols for block views", call. = FALSE)
+  ycs <- y_view$cols$start
+  yce <- y_view$cols$end
+
+  if (is.null(x_cols)) {
+    xcs <- 1L
+    xce <- dX[2]
+  } else {
+    if (!is_idx_range(x_cols)) stop("x_cols must be NULL or idx_range()", call. = FALSE)
+    xcs <- x_cols$start
+    xce <- x_cols$end
+    if (xce > dX[2]) stop("x_cols end exceeds ncol(x)", call. = FALSE)
+  }
+
+  out <- .Call(
+    "C_shard_mat_crossprod_block",
+    x,
+    y_base,
+    as.integer(rs[1]),
+    as.integer(rs[2]),
+    as.integer(xcs),
+    as.integer(xce),
+    as.integer(ycs),
+    as.integer(yce),
+    PACKAGE = "shard"
+  )
+
+  dnX <- dimnames(x)
+  dnY <- dimnames(y_base)
+  if (!is.null(dnX) || !is.null(dnY)) {
+    rn <- if (!is.null(dnX) && length(dnX) == 2L) dnX[[2]] else NULL
+    cn <- if (!is.null(dnY) && length(dnY) == 2L) dnY[[2]] else NULL
+    if (!is.null(rn)) rn <- rn[xcs:xce]
+    if (!is.null(cn)) cn <- cn[ycs:yce]
+    dimnames(out) <- list(rn, cn)
+  }
+
+  out
+}

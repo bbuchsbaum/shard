@@ -170,6 +170,7 @@ shard_map <- function(shards,
     diag$shards_processed <- shards$num_shards
     diag$chunks_dispatched <- length(chunks)
     diag$pool_stats <- dispatch_result$pool_stats
+    diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
   }
 
   # Flatten results if chunk_size > 1

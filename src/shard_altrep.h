@@ -94,4 +94,9 @@ attribute_visible SEXP C_shard_altrep_materialize(SEXP x);
 attribute_visible SEXP C_shard_mat_block_col_sums(SEXP x, SEXP row_start, SEXP row_end,
                                                   SEXP col_start, SEXP col_end);
 
+attribute_visible SEXP C_shard_mat_crossprod_block(SEXP x, SEXP y,
+                                                   SEXP row_start, SEXP row_end,
+                                                   SEXP x_col_start, SEXP x_col_end,
+                                                   SEXP y_col_start, SEXP y_col_end);
+
 #endif /* SHARD_ALTREP_H */
