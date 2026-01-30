@@ -423,12 +423,18 @@ copy_report <- function(result = NULL) {
 
     # Count results
     if (!is.null(result$results)) {
-      rpt$result_imports <- length(result$results)
-      # Estimate result size
-      rpt$result_bytes <- tryCatch(
-        as.numeric(utils::object.size(result$results)),
-        error = function(e) 0
-      )
+      if (inherits(result$results, "shard_results_placeholder")) {
+        # shm_queue results are not gathered; avoid reporting placeholder size.
+        rpt$result_imports <- 0L
+        rpt$result_bytes <- 0
+      } else {
+        rpt$result_imports <- length(result$results)
+        # Estimate result size
+        rpt$result_bytes <- tryCatch(
+          as.numeric(utils::object.size(result$results)),
+          error = function(e) 0
+        )
+      }
     }
 
     # Extract copy diagnostics if available

@@ -1,5 +1,6 @@
 test_that("shard_map(N) can run in shm_queue mode for out-buffer workflows", {
   skip_on_cran()
+  if (!shard:::taskq_supported()) skip("shm_queue not supported (no atomics)")
 
   pool_stop()
   on.exit(pool_stop(), add = TRUE)
@@ -24,7 +25,9 @@ test_that("shard_map(N) can run in shm_queue mode for out-buffer workflows", {
   expect_equal(res$diagnostics$dispatch_mode %||% NULL, "shm_queue")
 
   # Results are not gathered in shm_queue mode; expect NULL placeholders.
-  expect_true(all(vapply(results(res), is.null, logical(1))))
+  rr <- results(res)
+  expect_true(inherits(rr, "shard_results_placeholder"))
+  expect_true(all(vapply(rr, is.null, logical(1))))
 
   expect_equal(as.integer(out[]), 1:n)
 })

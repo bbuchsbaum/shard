@@ -282,7 +282,9 @@ dispatch_shards_shm_queue_ <- function(n,
   }
 
   list(
-    results = vector("list", n_tasks), # fire-and-forget; keep length stable
+    # Fire-and-forget: do not allocate a giant placeholder list for large runs.
+    # Use a lightweight results placeholder that behaves like a list of NULLs.
+    results = structure(list(n = as.integer(n_tasks)), class = "shard_results_placeholder"),
     failures = failures,
     queue_status = list(
       total = n_tasks,

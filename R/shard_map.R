@@ -1168,6 +1168,11 @@ results <- function(x, flatten = TRUE) {
 
   res <- x$results
 
+  if (inherits(res, "shard_results_placeholder")) {
+    # Avoid unlist() on a placeholder (would allocate enormous objects).
+    return(res)
+  }
+
   if (flatten && length(res) > 0) {
     # Try to simplify
     tryCatch(
