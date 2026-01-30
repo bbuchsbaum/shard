@@ -470,6 +470,68 @@ table_sink <- function(schema,
   file.path(sink$path, sprintf("part-%06d.rds", as.integer(shard_id)))
 }
 
+.sink_manifest_rds_path <- function(sink) {
+  file.path(sink$path, "manifest.rds")
+}
+
+.sink_manifest_json_path <- function(sink) {
+  file.path(sink$path, "manifest.json")
+}
+
+.sink_atomic_save_rds <- function(obj, path) {
+  tmp <- paste0(path, ".tmp_", Sys.getpid(), "_", sample.int(1e9, 1))
+  saveRDS(obj, tmp)
+  ok <- file.rename(tmp, path)
+  if (!isTRUE(ok)) {
+    unlink(tmp)
+    stop("Failed to finalize write", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+.schema_to_plain_list <- function(schema) {
+  if (!inherits(schema, "shard_schema")) {
+    stop("schema must be a shard_schema", call. = FALSE)
+  }
+  cols <- lapply(schema$columns, function(ct) {
+    # shard_coltype objects are simple lists; strip class for JSON stability.
+    out <- as.list(ct)
+    class(out) <- NULL
+    out
+  })
+  list(
+    version = schema$version %||% 1L,
+    schema_hash = schema$schema_hash %||% NULL,
+    columns = cols
+  )
+}
+
+.sink_write_manifest <- function(sink, handle) {
+  man_rds <- list(
+    version = 1L,
+    created = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+    mode = sink$mode,
+    format = sink$format,
+    schema = sink$schema,
+    files = basename(handle$files %||% character(0))
+  )
+
+  .sink_atomic_save_rds(man_rds, .sink_manifest_rds_path(sink))
+
+  # Optional JSON manifest (Suggests: jsonlite). Keep it behind requireNamespace
+  # so shard core stays CRAN-friendly.
+  if (requireNamespace("jsonlite", quietly = TRUE)) {
+    man_json <- man_rds
+    man_json$schema <- .schema_to_plain_list(sink$schema)
+    tmp <- paste0(.sink_manifest_json_path(sink), ".tmp_", Sys.getpid(), "_", sample.int(1e9, 1))
+    jsonlite::write_json(man_json, tmp, auto_unbox = TRUE, pretty = TRUE)
+    ok <- file.rename(tmp, .sink_manifest_json_path(sink))
+    if (!isTRUE(ok)) unlink(tmp)
+  }
+
+  invisible(NULL)
+}
+
 .sink_atomic_write_rds <- function(obj, path) {
   tmp <- paste0(path, ".tmp_", Sys.getpid(), "_", sample.int(1e9, 1))
   saveRDS(obj, tmp)
@@ -568,10 +630,15 @@ table_finalize.shard_table_sink <- function(target, materialize = c("never", "au
   files <- list.files(target$path, pattern = "^part-[0-9]+\\.rds$", full.names = TRUE)
   files <- sort(files)
 
+  cls <- if (identical(target$mode, "partitioned")) "shard_dataset" else "shard_row_groups"
   handle <- structure(
-    list(schema = target$schema, path = target$path, files = files, format = target$format),
-    class = "shard_row_groups"
+    list(schema = target$schema, path = target$path, files = files, format = target$format, mode = target$mode),
+    class = cls
   )
+
+  # Always emit a manifest so users can inspect/ship outputs without reading
+  # partitions, and so future backends can build on this directory layout.
+  .sink_write_manifest(target, handle)
 
   # Determine whether to materialize by file sizes (if available).
   total <- sum(vapply(files, function(f) as.double(file.info(f)$size %||% 0), numeric(1)), na.rm = TRUE)
@@ -591,7 +658,9 @@ table_finalize.shard_table_sink <- function(target, materialize = c("never", "au
 #' @return An iterator function with no args that returns the next data.frame or NULL.
 #' @export
 iterate_row_groups <- function(x) {
-  if (!inherits(x, "shard_row_groups")) stop("x must be a shard_row_groups handle", call. = FALSE)
+  if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
+    stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
+  }
   files <- x$files
   i <- 0L
   function() {
@@ -621,4 +690,37 @@ as_tibble.shard_row_groups <- function(x, max_bytes = 256 * 1024^2, ...) {
   df <- do.call(rbind, chunks)
   if (pkg_available("tibble")) return(tibble::as_tibble(df))
   df
+}
+
+#' @export
+as_tibble.shard_dataset <- function(x, max_bytes = 256 * 1024^2, ...) {
+  # A shard_dataset is currently a directory of per-shard RDS partitions plus a
+  # manifest. Materialization is identical to row-groups for now.
+  as_tibble(structure(unclass(x), class = "shard_row_groups"), max_bytes = max_bytes)
+}
+
+#' Collect a shard table into memory
+#'
+#' `collect()` is a convenience alias for `as_tibble()` for shard table outputs.
+#'
+#' @param x A shard table handle.
+#' @param ... Passed to `as_tibble()`.
+#' @export
+collect <- function(x, ...) {
+  UseMethod("collect")
+}
+
+#' @export
+collect.shard_row_groups <- function(x, ...) {
+  as_tibble(x, ...)
+}
+
+#' @export
+collect.shard_dataset <- function(x, ...) {
+  as_tibble(x, ...)
+}
+
+#' @export
+collect.shard_table_handle <- function(x, ...) {
+  as_tibble(x, ...)
 }
