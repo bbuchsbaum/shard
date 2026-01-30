@@ -27,7 +27,8 @@ Suggests:
     iterators,
     testthat (>= 3.0.0),
     ps,
-    jsonlite
+    jsonlite,
+    tibble
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 NeedsCompilation: yes

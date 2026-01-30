@@ -307,6 +307,9 @@ copy_report <- function(result = NULL) {
     result_bytes = 0,
     buffer_writes = 0L,
     buffer_bytes = 0,
+    table_writes = 0L,
+    table_rows = 0L,
+    table_bytes = 0,
     view_created = 0L,
     view_materialized = 0L,
     view_materialized_bytes = 0,
@@ -334,6 +337,13 @@ copy_report <- function(result = NULL) {
       rpt$borrow_bytes <- copy_stats$borrow_bytes %||% 0
       rpt$buffer_writes <- copy_stats$buffer_writes %||% 0L
       rpt$buffer_bytes <- copy_stats$buffer_bytes %||% 0
+    }
+
+    if (!is.null(diag) && !is.null(diag$table_stats)) {
+      ts <- diag$table_stats
+      rpt$table_writes <- ts$writes %||% 0L
+      rpt$table_rows <- ts$rows %||% 0L
+      rpt$table_bytes <- ts$bytes %||% 0
     }
   }
 
@@ -679,6 +689,13 @@ print_copy_report <- function(x) {
   cat("\nBuffers:\n")
   cat("  Writes:", x$buffer_writes, "\n")
   cat("  Bytes:", format_bytes(x$buffer_bytes), "\n")
+
+  if (!is.null(x$table_writes) || !is.null(x$table_rows)) {
+    cat("\nTables:\n")
+    cat("  Writes:", x$table_writes %||% 0L, "\n")
+    cat("  Rows:", x$table_rows %||% 0L, "\n")
+    cat("  Bytes:", format_bytes(x$table_bytes %||% 0), "\n")
+  }
 
   if (!is.null(x$view_created) || !is.null(x$view_materialized)) {
     cat("\nViews:\n")

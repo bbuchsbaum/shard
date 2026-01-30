@@ -64,6 +64,7 @@ dispatch_chunks <- function(chunks, fun, ...,
   dispatch_wrapper <- function(chunk) {
     vd0 <- tryCatch(view_diagnostics(), error = function(e) NULL)
     cd0 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
+    td0 <- tryCatch(table_diagnostics(), error = function(e) NULL)
     res <- tryCatch(
       {
         f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
@@ -74,6 +75,7 @@ dispatch_chunks <- function(chunks, fun, ...,
     )
     vd1 <- tryCatch(view_diagnostics(), error = function(e) NULL)
     cd1 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
+    td1 <- tryCatch(table_diagnostics(), error = function(e) NULL)
 
     if (is.list(vd0) && is.list(vd1)) {
       res$view_delta <- list(
@@ -92,6 +94,14 @@ dispatch_chunks <- function(chunks, fun, ...,
       )
     }
 
+    if (is.list(td0) && is.list(td1)) {
+      res$table_delta <- list(
+        table_writes = (td1$writes %||% 0L) - (td0$writes %||% 0L),
+        table_rows = (td1$rows %||% 0L) - (td0$rows %||% 0L),
+        table_bytes = (td1$bytes %||% 0) - (td0$bytes %||% 0)
+      )
+    }
+
     res
   }
 
@@ -103,6 +113,7 @@ dispatch_chunks <- function(chunks, fun, ...,
   view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0,
                      packed = 0L, packed_bytes = 0)
   copy_stats <- list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0)
+  table_stats <- list(writes = 0L, rows = 0L, bytes = 0)
 
   # Helper: receive a single result (non-blocking with small timeout) from any worker.
   recv_one <- function(timeout_sec = 0.1) {
@@ -308,6 +319,13 @@ dispatch_chunks <- function(chunks, fun, ...,
       copy_stats$buffer_bytes <- copy_stats$buffer_bytes + (cd$buffer_bytes %||% 0)
     }
 
+    if (is.list(payload) && is.list(payload$table_delta)) {
+      td <- payload$table_delta
+      table_stats$writes <- table_stats$writes + (td$table_writes %||% 0L)
+      table_stats$rows <- table_stats$rows + (td$table_rows %||% 0L)
+      table_stats$bytes <- table_stats$bytes + (td$table_bytes %||% 0)
+    }
+
     chunks_processed <- chunks_processed + 1L
   }
 
@@ -315,6 +333,7 @@ dispatch_chunks <- function(chunks, fun, ...,
   diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
   diag$view_stats <- view_stats
   diag$copy_stats <- copy_stats
+  diag$table_stats <- table_stats
 
   structure(
     list(

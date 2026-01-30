@@ -172,6 +172,7 @@ shard_map <- function(shards,
     diag$pool_stats <- dispatch_result$pool_stats
     diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
     diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
+    diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
   }
 
   # Flatten results if chunk_size > 1
@@ -349,9 +350,11 @@ validate_out <- function(out) {
     stop("All output buffers must be named", call. = FALSE)
   }
 
-  bad <- vapply(out, function(x) !inherits(x, "shard_buffer"), logical(1))
+  bad <- vapply(out, function(x) {
+    !(inherits(x, "shard_buffer") || inherits(x, "shard_table_buffer"))
+  }, logical(1))
   if (any(bad)) {
-    stop("All output buffers must be shard_buffer objects (from buffer()).",
+    stop("All output outputs must be shard_buffer or shard_table_buffer objects.",
          call. = FALSE)
   }
 
@@ -418,15 +421,36 @@ export_out_to_workers <- function(pool, out) {
 
   # Export reopenable descriptors rather than shard_buffer objects. The raw
   # segment externalptr does not survive PSOCK serialization.
-  out_desc <- lapply(out, function(buf) {
-    info <- buffer_info(buf)
-    list(
-      path = info$path,
-      backing = info$backing,
-      type = info$type,
-      dim = info$dim
-    )
-  })
+  describe_one <- function(obj) {
+    if (inherits(obj, "shard_buffer")) {
+      info <- buffer_info(obj)
+      return(list(
+        kind = "buffer",
+        path = info$path,
+        backing = info$backing,
+        type = info$type,
+        dim = info$dim
+      ))
+    }
+
+    if (inherits(obj, "shard_table_buffer")) {
+      cols <- lapply(obj$columns, function(buf) {
+        info <- buffer_info(buf)
+        list(path = info$path, backing = info$backing, type = info$type, dim = info$dim)
+      })
+      return(list(
+        kind = "table_buffer",
+        schema = obj$schema,
+        nrow = obj$nrow,
+        backing = obj$backing,
+        columns = cols
+      ))
+    }
+
+    stop("Unsupported out object type", call. = FALSE)
+  }
+
+  out_desc <- lapply(out, describe_one)
 
   export_env <- new.env(parent = emptyenv())
   export_env$.shard_out <- out_desc
@@ -520,13 +544,33 @@ make_chunk_executor <- function() {
       for (nm in names(out_desc)) {
         if (!exists(nm, envir = opened, inherits = FALSE)) {
           d <- out_desc[[nm]]
-          opened[[nm]] <- buffer_open(
-            path = d$path,
-            type = d$type,
-            dim = d$dim,
-            backing = d$backing,
-            readonly = FALSE
-          )
+          if (is.null(d$kind) || identical(d$kind, "buffer")) {
+            opened[[nm]] <- buffer_open(
+              path = d$path,
+              type = d$type,
+              dim = d$dim,
+              backing = d$backing,
+              readonly = FALSE
+            )
+          } else if (identical(d$kind, "table_buffer")) {
+            cols <- list()
+            for (cn in names(d$columns)) {
+              cd <- d$columns[[cn]]
+              cols[[cn]] <- buffer_open(
+                path = cd$path,
+                type = cd$type,
+                dim = cd$dim,
+                backing = cd$backing,
+                readonly = FALSE
+              )
+            }
+            opened[[nm]] <- structure(
+              list(schema = d$schema, nrow = as.integer(d$nrow), backing = d$backing, columns = cols),
+              class = "shard_table_buffer"
+            )
+          } else {
+            stop("Unsupported out descriptor kind: ", d$kind, call. = FALSE)
+          }
         }
         out[[nm]] <- opened[[nm]]
       }
