@@ -160,12 +160,49 @@ recommendations <- function(result) {
       ))
     }
     bb <- as.double(cr$buffer_bytes %||% 0)
-    if (bb == 0 && (mb > 0 || pb > 0)) {
+    tb <- as.double(cr$table_bytes %||% 0)
+    if (bb == 0 && tb == 0 && (mb > 0 || pb > 0)) {
       recs <- c(recs, "Consider writing large outputs into explicit buffers (buffer()/table_buffer()/table_sink()) to avoid master-side gather/concat.")
     }
   }
 
   d <- result$diagnostics %||% list()
+
+  # Dispatch overhead guidance (tiny tasks).
+  if (is.list(d)) {
+    dm <- as.character(d$dispatch_mode %||% "rpc_chunked")
+    shards_done <- as.double(d$shards_processed %||% NA_real_)
+    chunks_done <- as.double(d$chunks_dispatched %||% NA_real_)
+    dur <- as.double(d$duration %||% NA_real_)
+
+    # Heuristic: 1 shard per chunk + very small per-shard time means RPC overhead
+    # likely dominates.
+    if (identical(dm, "rpc_chunked") &&
+        is.finite(shards_done) && is.finite(chunks_done) && is.finite(dur) &&
+        shards_done > 0 && chunks_done > 0 &&
+        chunks_done == shards_done) {
+      mean_shard_time <- dur / shards_done
+      if (is.finite(mean_shard_time) && mean_shard_time > 0 && mean_shard_time < 0.02) {
+        recs <- c(recs, sprintf(
+          "Per-shard work looks tiny (%.3f ms/shard). Consider increasing chunk_size, or use profile='speed' / dispatch_mode='shm_queue' for out-buffer workflows to reduce dispatch overhead.",
+          mean_shard_time * 1000
+        ))
+      }
+    }
+
+    # shm_queue mode returns a placeholder list of length n_tasks; for extremely
+    # large n_tasks, recommend increasing block_size to reduce bookkeeping.
+    if (identical(dm, "shm_queue") && is.list(d$shm_queue)) {
+      nt <- as.double(d$shm_queue$n_tasks %||% NA_real_)
+      if (is.finite(nt) && nt > 1e6) {
+        recs <- c(recs, sprintf(
+          "shm_queue is tracking %.0f tasks. If bookkeeping dominates, increase dispatch_opts$block_size to reduce n_tasks (you can keep work-per-task small without going all the way to 1).",
+          nt
+        ))
+      }
+    }
+  }
+
   if (is.list(d$scratch_stats)) {
     hw <- as.double(d$scratch_stats$high_water %||% 0)
     if (hw > 0) {
