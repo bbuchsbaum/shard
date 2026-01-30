@@ -91,7 +91,10 @@ pool or creates one with \code{detectCores() - 1}.}
 Higher values reduce RPC overhead but may hurt load balancing.}
 
 \item{profile}{Execution profile: \code{"default"}, \code{"memory"} (aggressive recycling),
-or \code{"speed"} (minimal overhead).}
+or \code{"speed"} (minimal overhead). With \code{profile="speed"}, shard_map will
+automatically enable \code{dispatch_mode="shm_queue"} when possible for
+\code{shard_map(N, ...)} out-buffer workflows (scalar \code{N}, \code{chunk_size=1}),
+unless \code{dispatch_mode} is explicitly specified.}
 
 \item{mem_cap}{Memory cap per worker (e.g., "2GB"). Workers exceeding this
 are recycled.}

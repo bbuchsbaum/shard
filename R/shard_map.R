@@ -51,7 +51,10 @@ NULL
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
 #'   Higher values reduce RPC overhead but may hurt load balancing.
 #' @param profile Execution profile: `"default"`, `"memory"` (aggressive recycling),
-#'   or `"speed"` (minimal overhead).
+#'   or `"speed"` (minimal overhead). With `profile="speed"`, shard_map will
+#'   automatically enable `dispatch_mode="shm_queue"` when possible for
+#'   `shard_map(N, ...)` out-buffer workflows (scalar `N`, `chunk_size=1`),
+#'   unless `dispatch_mode` is explicitly specified.
 #' @param mem_cap Memory cap per worker (e.g., "2GB"). Workers exceeding this
 #'   are recycled.
 #' @param recycle Logical or numeric. If TRUE, recycle workers on RSS drift.
@@ -116,7 +119,8 @@ shard_map <- function(shards,
                       health_check_interval = 10L) {
   profile <- match.arg(profile)
   cow <- match.arg(cow)
-  dispatch_mode <- match.arg(dispatch_mode)
+  dispatch_mode_user_provided <- !missing(dispatch_mode)
+  dispatch_mode <- if (dispatch_mode_user_provided) match.arg(dispatch_mode) else "rpc_chunked"
   if (is.null(dispatch_opts)) dispatch_opts <- list()
   if (!is.list(dispatch_opts)) stop("dispatch_opts must be NULL or a list", call. = FALSE)
 
@@ -188,6 +192,19 @@ shard_map <- function(shards,
 
   # Validate output buffers
   out <- validate_out(out)
+
+  # Low-ceremony fast path: profile="speed" will automatically use shm_queue
+  # for scalar-N, chunk_size=1 out-buffer workflows unless dispatch_mode was
+  # explicitly set by the user.
+  if (!dispatch_mode_user_provided &&
+      identical(profile, "speed") &&
+      shards_is_scalar_n &&
+      as.integer(chunk_size) == 1L &&
+      length(out) > 0 &&
+      taskq_supported()) {
+    dispatch_mode <- "shm_queue"
+    if (diagnostics) diag$dispatch_mode <- dispatch_mode
+  }
 
   # Set seed in workers if specified
   if (!is.null(seed)) {
