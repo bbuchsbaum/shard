@@ -11,7 +11,8 @@ share(
   name = NULL,
   deep = FALSE,
   min_bytes = 64 * 1024 * 1024,
-  cycle = c("error", "skip")
+  cycle = c("error", "skip"),
+  mode = c("balanced", "strict")
 )
 }
 \arguments{
@@ -42,6 +43,9 @@ Default is 64MB (64 * 1024 * 1024).}
 
 \item{cycle}{How to handle cyclic references when deep=TRUE. Either "error"
 (default) to stop with an error, or "skip" to skip cyclic references.}
+
+\item{mode}{Sharing mode when deep=TRUE. Either "balanced" (default) to
+continue on hook errors and non-shareable types, or "strict" to error.}
 }
 \value{
 A \code{shard_shared} object (when deep=FALSE) or

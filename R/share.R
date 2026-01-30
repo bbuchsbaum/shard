@@ -119,7 +119,128 @@ is_shareable_atomic <- function(x) {
     FALSE
 }
 
-# Internal: traverse object for deep sharing with memoization
+#' Deep Sharing Hook for Custom Classes
+#'
+#' S3 generic that allows classes to customize deep sharing behavior.
+#' Override this for your class to control which slots/elements are traversed,
+#' force sharing of small objects, or transform objects before traversal.
+#'
+#' @param x The object being traversed during deep sharing.
+#' @param ctx A context list containing:
+#'   \describe{
+#'     \item{path}{Current node path string (e.g., "<root>$data@cache")}
+#'     \item{class}{class(x) - the object's class vector}
+#'     \item{mode}{'strict' or 'balanced' - sharing mode}
+#'     \item{min_bytes}{Minimum size threshold for sharing}
+#'     \item{types}{Character vector of enabled types for sharing}
+#'     \item{deep}{Logical, always TRUE when hook is called}
+#'   }
+#'
+#' @return A list with optional fields:
+#'   \describe{
+#'     \item{skip_slots}{Character vector of S4 slot names to not traverse}
+#'     \item{skip_paths}{Character vector of paths to not traverse}
+#'     \item{force_share_paths}{Character vector of paths to force share (ignore min_bytes)}
+#'     \item{rewrite}{Function(x) -> x to transform object before traversal}
+#'   }
+#'   Return an empty list for default behavior (no customization).
+#'
+#' @export
+#' @examples
+#' \dontrun{
+#' # Define a hook for a class with a cache slot to skip
+#' shard_share_hook.MyModelClass <- function(x, ctx) {
+#'     list(
+#'         skip_slots = "cache",  # Don't traverse the cache slot
+#'         force_share_paths = paste0(ctx$path, "@coefficients")  # Always share coefficients
+#'     )
+#' }
+#'
+#' # Define a hook that rewrites objects before sharing
+#' shard_share_hook.LazyData <- function(x, ctx) {
+#'     list(
+#'         rewrite = function(obj) {
+#'             # Materialize lazy data before sharing
+#'             obj$data <- as.matrix(obj$data)
+#'             obj
+#'         }
+#'     )
+#' }
+#' }
+shard_share_hook <- function(x, ctx) {
+    UseMethod("shard_share_hook")
+}
+
+#' @export
+#' @rdname shard_share_hook
+shard_share_hook.default <- function(x, ctx) {
+    # Default: no customization, traverse normally
+    list()
+}
+
+# Internal: build context object for hooks
+build_hook_context <- function(x, path, mode, min_bytes, types, deep) {
+    list(
+        path = path,
+        class = class(x),
+        mode = mode,
+        min_bytes = min_bytes,
+        types = types,
+        deep = deep
+    )
+}
+
+# Internal: call hook safely with error handling based on mode
+call_hook_safe <- function(x, ctx, mode) {
+    result <- tryCatch(
+        shard_share_hook(x, ctx),
+        error = function(e) {
+            if (mode == "strict") {
+                stop("Hook error in strict mode.\n",
+                     "  Path: ", ctx$path, "\n",
+                     "  Class: ", paste(ctx$class, collapse = ", "), "\n",
+                     "  Error: ", conditionMessage(e),
+                     call. = FALSE)
+            }
+            # In balanced mode, return special marker indicating hook failure
+            structure(
+                list(hook_error = conditionMessage(e)),
+                class = "shard_hook_error"
+            )
+        }
+    )
+
+    # Validate hook return value
+    if (!is.list(result)) {
+        if (mode == "strict") {
+            stop("Hook must return a list.\n",
+                 "  Path: ", ctx$path, "\n",
+                 "  Class: ", paste(ctx$class, collapse = ", "), "\n",
+                 "  Got: ", typeof(result),
+                 call. = FALSE)
+        }
+        return(structure(
+            list(hook_error = "Hook did not return a list"),
+            class = "shard_hook_error"
+        ))
+    }
+
+    result
+}
+
+# Internal: check if path should be skipped based on hook result
+should_skip_path <- function(current_path, hook_result) {
+    if (is.null(hook_result$skip_paths)) return(FALSE)
+    current_path %in% hook_result$skip_paths
+}
+
+# Internal: check if path should be force-shared based on hook result
+should_force_share_path <- function(current_path, hook_result) {
+    if (is.null(hook_result$force_share_paths)) return(FALSE)
+    current_path %in% hook_result$force_share_paths
+}
+
+# Internal: traverse object for deep sharing with memoization and hooks
 # Returns a structure with shared segments and alias information
 share_deep_traverse <- function(x,
                                 env,
@@ -129,7 +250,10 @@ share_deep_traverse <- function(x,
                                 backing = "auto",
                                 readonly = TRUE,
                                 max_depth = Inf,
-                                cycle_policy = "error") {
+                                cycle_policy = "error",
+                                mode = "balanced",
+                                types = c("double", "integer", "logical", "raw", "complex"),
+                                hook_result = NULL) {
     # Get object identity for memoization and cycle detection
     identity <- object_identity(x)
 
@@ -171,15 +295,77 @@ share_deep_traverse <- function(x,
     }
 
     # Mark as in-progress for cycle detection
+    original_identity <- identity  # Save for cleanup
     assign(identity, TRUE, envir = env$in_progress)
-    on.exit(rm(list = identity, envir = env$in_progress), add = TRUE)
+    on.exit({
+        if (exists(original_identity, envir = env$in_progress, inherits = FALSE)) {
+            rm(list = original_identity, envir = env$in_progress)
+        }
+    }, add = TRUE)
 
     # Assign a node ID for tracking
     env$next_id <- env$next_id + 1
     node_id <- env$next_id
 
+    # Call hook for this object
+    # Build context and call hook
+    ctx <- build_hook_context(x, path, mode, min_bytes, types, TRUE)
+    current_hook_result <- call_hook_safe(x, ctx, mode)
+
+    # Check for hook error
+    if (inherits(current_hook_result, "shard_hook_error")) {
+        # In balanced mode, continue with default behavior but track error
+        env$hook_errors <- c(env$hook_errors, list(list(
+            path = path,
+            error = current_hook_result$hook_error
+        )))
+        current_hook_result <- list()  # Use empty hook result
+    }
+
+    # Store hook result in environment for child access
+    if (length(current_hook_result) > 0) {
+        env$active_hooks[[path]] <- current_hook_result
+    }
+
+    # Apply rewrite function if provided
+    if (!is.null(current_hook_result$rewrite) && is.function(current_hook_result$rewrite)) {
+        x <- tryCatch(
+            current_hook_result$rewrite(x),
+            error = function(e) {
+                if (mode == "strict") {
+                    stop("Rewrite function error in strict mode.\n",
+                         "  Path: ", path, "\n",
+                         "  Error: ", conditionMessage(e),
+                         call. = FALSE)
+                }
+                env$hook_errors <- c(env$hook_errors, list(list(
+                    path = path,
+                    error = paste("rewrite error:", conditionMessage(e))
+                )))
+                x  # Return original on error in balanced mode
+            }
+        )
+        # Re-get identity after rewrite (object may have changed)
+        identity <- object_identity(x)
+    }
+
+    # Check force_share from parent hooks as well
+    force_share <- should_force_share_path(path, current_hook_result)
+    if (!force_share) {
+        # Check parent hook results for force_share_paths
+        for (hook_path in names(env$active_hooks)) {
+            if (should_force_share_path(path, env$active_hooks[[hook_path]])) {
+                force_share <- TRUE
+                break
+            }
+        }
+    }
+
     # Determine what to do with this object
-    if (is_shareable_atomic(x) && object.size(x) >= min_bytes) {
+    should_share <- is_shareable_atomic(x) &&
+        (force_share || object.size(x) >= min_bytes)
+
+    if (should_share) {
         # Share this atomic object
         shared <- share(x, backing = backing, readonly = readonly)
 
@@ -199,9 +385,71 @@ share_deep_traverse <- function(x,
                 path = path,
                 node_id = node_id,
                 identity = identity,
-                shared = shared
+                shared = shared,
+                forced = force_share
             ),
             class = "shard_deep_node"
+        ))
+    } else if (isS4(x) && depth < max_depth) {
+        # Process S4 object slots
+        all_slot_names <- methods::slotNames(x)
+
+        # Get skipped slots from hook
+        skipped_slots <- current_hook_result$skip_slots
+
+        children <- vector("list", length(all_slot_names))
+        names(children) <- all_slot_names
+
+        for (sn in all_slot_names) {
+            child_path <- paste0(path, "@", sn)
+            slot_val <- methods::slot(x, sn)
+
+            # Check if this slot should be skipped (either by skip_slots or skip_paths)
+            slot_skipped <- sn %in% skipped_slots ||
+                            should_skip_path(child_path, current_hook_result)
+
+            if (slot_skipped) {
+                # Keep the slot value as-is (don't traverse)
+                children[[sn]] <- structure(
+                    list(
+                        type = "kept",
+                        path = child_path,
+                        node_id = env$next_id + 1,
+                        identity = object_identity(slot_val),
+                        value = slot_val,
+                        skipped_by_hook = TRUE
+                    ),
+                    class = "shard_deep_kept"
+                )
+                env$next_id <- env$next_id + 1
+            } else {
+                children[[sn]] <- share_deep_traverse(
+                    slot_val, env, child_path, depth + 1,
+                    min_bytes, backing, readonly, max_depth, cycle_policy,
+                    mode, types, current_hook_result
+                )
+            }
+        }
+
+        # Record in seen table
+        assign(identity, list(
+            path = path,
+            node_id = node_id,
+            shared = NULL
+        ), envir = env$seen)
+
+        return(structure(
+            list(
+                type = "container",
+                container_type = "S4",
+                path = path,
+                node_id = node_id,
+                identity = identity,
+                children = children,
+                original_class = class(x),
+                skipped_slots = skipped_slots
+            ),
+            class = "shard_deep_container"
         ))
     } else if (is.list(x) && !is.data.frame(x) && depth < max_depth) {
         # Recursively process list elements
@@ -215,10 +463,28 @@ share_deep_traverse <- function(x,
             } else {
                 paste0(path, "[[", i, "]]")
             }
-            children[[i]] <- share_deep_traverse(
-                x[[i]], env, child_path, depth + 1,
-                min_bytes, backing, readonly, max_depth, cycle_policy
-            )
+
+            # Check if this path should be skipped
+            if (should_skip_path(child_path, current_hook_result)) {
+                children[[i]] <- structure(
+                    list(
+                        type = "kept",
+                        path = child_path,
+                        node_id = env$next_id + 1,
+                        identity = object_identity(x[[i]]),
+                        value = x[[i]],
+                        skipped_by_hook = TRUE
+                    ),
+                    class = "shard_deep_kept"
+                )
+                env$next_id <- env$next_id + 1
+            } else {
+                children[[i]] <- share_deep_traverse(
+                    x[[i]], env, child_path, depth + 1,
+                    min_bytes, backing, readonly, max_depth, cycle_policy,
+                    mode, types, current_hook_result
+                )
+            }
         }
 
         # Record in seen table
@@ -248,10 +514,28 @@ share_deep_traverse <- function(x,
 
         for (i in seq_along(x)) {
             child_path <- paste0(path, "$", names(x)[i])
-            children[[i]] <- share_deep_traverse(
-                x[[i]], env, child_path, depth + 1,
-                min_bytes, backing, readonly, max_depth, cycle_policy
-            )
+
+            # Check if this path should be skipped
+            if (should_skip_path(child_path, current_hook_result)) {
+                children[[i]] <- structure(
+                    list(
+                        type = "kept",
+                        path = child_path,
+                        node_id = env$next_id + 1,
+                        identity = object_identity(x[[i]]),
+                        value = x[[i]],
+                        skipped_by_hook = TRUE
+                    ),
+                    class = "shard_deep_kept"
+                )
+                env$next_id <- env$next_id + 1
+            } else {
+                children[[i]] <- share_deep_traverse(
+                    x[[i]], env, child_path, depth + 1,
+                    min_bytes, backing, readonly, max_depth, cycle_policy,
+                    mode, types, current_hook_result
+                )
+            }
         }
 
         # Record in seen table
@@ -331,6 +615,14 @@ fetch_deep_reconstruct <- function(node) {
                 names = node$original_names,
                 row.names = node$original_row_names
             )
+        } else if (node$container_type == "S4") {
+            # Reconstruct S4 object
+            # Create new instance of the class
+            result <- methods::new(node$original_class)
+            # Set each slot
+            for (sn in names(children)) {
+                methods::slot(result, sn) <- children[[sn]]
+            }
         } else {
             # Reconstruct list
             result <- children
@@ -375,6 +667,8 @@ fetch_deep_reconstruct <- function(node) {
 #'   Default is 64MB (64 * 1024 * 1024).
 #' @param cycle How to handle cyclic references when deep=TRUE. Either "error"
 #'   (default) to stop with an error, or "skip" to skip cyclic references.
+#' @param mode Sharing mode when deep=TRUE. Either "balanced" (default) to
+#'   continue on hook errors and non-shareable types, or "strict" to error.
 #'
 #' @return A \code{shard_shared} object (when deep=FALSE) or
 #'   \code{shard_deep_shared} object (when deep=TRUE) containing:
@@ -423,12 +717,17 @@ share <- function(x,
                   name = NULL,
                   deep = FALSE,
                   min_bytes = 64 * 1024 * 1024,
-                  cycle = c("error", "skip")) {
+                  cycle = c("error", "skip"),
+                  mode = c("balanced", "strict")) {
     backing <- match.arg(backing)
     cycle <- match.arg(cycle)
+    mode <- match.arg(mode)
 
     # Validate input is serializable
     validate_serializable(x)
+
+    # Shareable types
+    shareable_types <- c("double", "integer", "logical", "raw", "complex")
 
     # Deep sharing: traverse structure and share components individually
     if (deep) {
@@ -438,11 +737,14 @@ share <- function(x,
         env$in_progress <- new.env(parent = emptyenv()) # identity -> TRUE (cycle detection)
         env$segments <- list()                          # All created segments for cleanup
         env$next_id <- 0                               # Node ID counter
+        env$hook_errors <- list()                      # Track hook errors in balanced mode
+        env$active_hooks <- list()                     # Active hook results by path
 
         # Traverse and share
         structure_tree <- share_deep_traverse(
             x, env, "<root>", 0,
-            min_bytes, backing, readonly, Inf, cycle
+            min_bytes, backing, readonly, Inf, cycle,
+            mode, shareable_types, NULL
         )
 
         # Count shared vs aliased
@@ -476,16 +778,20 @@ share <- function(x,
                 segments = env$segments,
                 backing = backing,
                 readonly = readonly,
+                mode = mode,
                 summary = list(
                     shared_count = shared_count,
                     alias_count = alias_count,
                     cycle_count = cycle_count,
                     kept_count = kept_count,
-                    total_shared_bytes = total_shared_bytes
+                    total_shared_bytes = total_shared_bytes,
+                    hook_error_count = length(env$hook_errors),
+                    hook_errors = env$hook_errors
                 ),
                 class_info = list(
                     type = if (is.data.frame(x)) "data.frame"
                            else if (is.list(x)) "list"
+                           else if (isS4(x)) "S4"
                            else "other",
                     deep = TRUE
                 )
