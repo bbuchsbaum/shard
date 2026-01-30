@@ -31,6 +31,7 @@ typedef struct {
     atomic_int n_tasks;
     atomic_int done_count;
     atomic_int failed_count;
+    atomic_int retry_total;
     /* tasks follow */
     shard_taskq_task_t tasks[1];
 } shard_taskq_header_t;
@@ -45,6 +46,7 @@ typedef struct {
     int n_tasks;
     int done_count;
     int failed_count;
+    int retry_total;
     shard_taskq_task_t tasks[1];
 } shard_taskq_header_t;
 #endif
@@ -98,6 +100,7 @@ SEXP C_shard_taskq_init(SEXP seg_ptr, SEXP n_tasks_) {
     atomic_store(&hdr->n_tasks, n_tasks);
     atomic_store(&hdr->done_count, 0);
     atomic_store(&hdr->failed_count, 0);
+    atomic_store(&hdr->retry_total, 0);
     for (int i = 0; i < n_tasks; i++) {
         atomic_store(&hdr->tasks[i].state, SHARD_TASKQ_PENDING);
         atomic_store(&hdr->tasks[i].retry_count, 0);
@@ -107,6 +110,7 @@ SEXP C_shard_taskq_init(SEXP seg_ptr, SEXP n_tasks_) {
     hdr->n_tasks = n_tasks;
     hdr->done_count = 0;
     hdr->failed_count = 0;
+    hdr->retry_total = 0;
     for (int i = 0; i < n_tasks; i++) {
         hdr->tasks[i].state = SHARD_TASKQ_PENDING;
         hdr->tasks[i].retry_count = 0;
@@ -182,6 +186,8 @@ SEXP C_shard_taskq_mark_error(SEXP seg_ptr, SEXP task_id_, SEXP max_retries_) {
         return ScalarLogical(0);
     } else {
         atomic_store(&hdr->tasks[idx].state, SHARD_TASKQ_PENDING);
+        /* Count scheduled retries (not total error events). */
+        atomic_fetch_add(&hdr->retry_total, 1);
         return ScalarLogical(1);
     }
 #else
@@ -221,23 +227,32 @@ SEXP C_shard_taskq_stats(SEXP seg_ptr) {
     int n = atomic_load(&hdr->n_tasks);
     int done = atomic_load(&hdr->done_count);
     int failed = atomic_load(&hdr->failed_count);
+    int retries = atomic_load(&hdr->retry_total);
 
-    SEXP out = PROTECT(allocVector(VECSXP, 3));
-    SEXP names = PROTECT(allocVector(STRSXP, 3));
+    SEXP out = PROTECT(allocVector(VECSXP, 4));
+    SEXP names = PROTECT(allocVector(STRSXP, 4));
     SET_STRING_ELT(names, 0, mkChar("n_tasks"));
     SET_STRING_ELT(names, 1, mkChar("done"));
     SET_STRING_ELT(names, 2, mkChar("failed"));
+    SET_STRING_ELT(names, 3, mkChar("retries"));
     SET_VECTOR_ELT(out, 0, ScalarInteger(n));
     SET_VECTOR_ELT(out, 1, ScalarInteger(done));
     SET_VECTOR_ELT(out, 2, ScalarInteger(failed));
+    SET_VECTOR_ELT(out, 3, ScalarInteger(retries));
     setAttrib(out, R_NamesSymbol, names);
     UNPROTECT(2);
     return out;
 #else
-    SEXP out = PROTECT(allocVector(VECSXP, 1));
-    SEXP names = PROTECT(allocVector(STRSXP, 1));
+    SEXP out = PROTECT(allocVector(VECSXP, 4));
+    SEXP names = PROTECT(allocVector(STRSXP, 4));
     SET_STRING_ELT(names, 0, mkChar("n_tasks"));
+    SET_STRING_ELT(names, 1, mkChar("done"));
+    SET_STRING_ELT(names, 2, mkChar("failed"));
+    SET_STRING_ELT(names, 3, mkChar("retries"));
     SET_VECTOR_ELT(out, 0, ScalarInteger(0));
+    SET_VECTOR_ELT(out, 1, ScalarInteger(0));
+    SET_VECTOR_ELT(out, 2, ScalarInteger(0));
+    SET_VECTOR_ELT(out, 3, ScalarInteger(0));
     setAttrib(out, R_NamesSymbol, names);
     UNPROTECT(2);
     return out;
@@ -255,16 +270,36 @@ SEXP C_shard_taskq_failures(SEXP seg_ptr) {
     for (int i = 0; i < n; i++) {
         if (atomic_load(&hdr->tasks[i].state) == SHARD_TASKQ_FAILED) nf++;
     }
-    SEXP out = PROTECT(allocVector(INTSXP, nf));
+    SEXP ids = PROTECT(allocVector(INTSXP, nf));
+    SEXP rcs = PROTECT(allocVector(INTSXP, nf));
     int j = 0;
     for (int i = 0; i < n; i++) {
         if (atomic_load(&hdr->tasks[i].state) == SHARD_TASKQ_FAILED) {
-            INTEGER(out)[j++] = i + 1;
+            INTEGER(ids)[j] = i + 1;
+            INTEGER(rcs)[j] = atomic_load(&hdr->tasks[i].retry_count);
+            j++;
         }
     }
-    UNPROTECT(1);
+    SEXP out = PROTECT(allocVector(VECSXP, 2));
+    SEXP names = PROTECT(allocVector(STRSXP, 2));
+    SET_STRING_ELT(names, 0, mkChar("task_id"));
+    SET_STRING_ELT(names, 1, mkChar("retry_count"));
+    SET_VECTOR_ELT(out, 0, ids);
+    SET_VECTOR_ELT(out, 1, rcs);
+    setAttrib(out, R_NamesSymbol, names);
+    UNPROTECT(4);
     return out;
 #else
-    return allocVector(INTSXP, 0);
+    SEXP ids = PROTECT(allocVector(INTSXP, 0));
+    SEXP rcs = PROTECT(allocVector(INTSXP, 0));
+    SEXP out = PROTECT(allocVector(VECSXP, 2));
+    SEXP names = PROTECT(allocVector(STRSXP, 2));
+    SET_STRING_ELT(names, 0, mkChar("task_id"));
+    SET_STRING_ELT(names, 1, mkChar("retry_count"));
+    SET_VECTOR_ELT(out, 0, ids);
+    SET_VECTOR_ELT(out, 1, rcs);
+    setAttrib(out, R_NamesSymbol, names);
+    UNPROTECT(4);
+    return out;
 #endif
 }

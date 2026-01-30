@@ -46,6 +46,10 @@ NULL
 #'     - `block_size`: integer. If provided, overrides the default heuristic for
 #'       contiguous shard block sizing.
 #'     - `queue_backing`: one of `"mmap"` or `"shm"` (default `"mmap"`).
+#'     - `error_log`: logical. If TRUE, workers write a bounded per-worker error
+#'       log to disk to aid debugging failed tasks (default FALSE).
+#'     - `error_log_max_lines`: integer. Maximum lines per worker in the error
+#'       log (default 100).
 #' @param workers Integer. Number of worker processes. If NULL, uses existing
 #'   pool or creates one with `detectCores() - 1`.
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
@@ -257,7 +261,9 @@ shard_map <- function(shards,
       pool = pool,
       max_retries = max_retries,
       timeout = timeout,
-      queue_backing = dispatch_opts$queue_backing %||% "mmap"
+      queue_backing = dispatch_opts$queue_backing %||% "mmap",
+      error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
+      error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L
     )
 
     results <- dispatch_result$results
@@ -273,6 +279,7 @@ shard_map <- function(shards,
       diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
       diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
       diag$scratch_stats <- dispatch_result$diagnostics$scratch_stats %||% NULL
+      diag$error_logs <- dispatch_result$diagnostics$error_logs %||% list()
       diag$shm_queue <- dispatch_result$diagnostics$taskq %||% NULL
     }
 

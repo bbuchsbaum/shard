@@ -81,6 +81,10 @@ Currently:
 \item \code{block_size}: integer. If provided, overrides the default heuristic for
 contiguous shard block sizing.
 \item \code{queue_backing}: one of \code{"mmap"} or \code{"shm"} (default \code{"mmap"}).
+\item \code{error_log}: logical. If TRUE, workers write a bounded per-worker error
+log to disk to aid debugging failed tasks (default FALSE).
+\item \code{error_log_max_lines}: integer. Maximum lines per worker in the error
+log (default 100).
 }
 }}
 
