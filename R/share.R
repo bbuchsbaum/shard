@@ -384,6 +384,66 @@ share_deep_traverse <- function(x,
         }
     }
 
+    # Check for registered adapter before default traversal
+    adapter <- shard_get_adapter(x)
+    if (!is.null(adapter) && depth < max_depth) {
+        # Use adapter to get children
+        adapter_children <- adapter$children(x)
+
+        if (!is.list(adapter_children)) {
+            stop("Adapter children() must return a list for class '",
+                 adapter$class, "'.", call. = FALSE)
+        }
+
+        # Process each child from the adapter
+        nms <- names(adapter_children)
+        children <- vector("list", length(adapter_children))
+        names(children) <- nms
+
+        path_prefix <- if (!is.null(adapter$path_prefix)) {
+            adapter$path_prefix
+        } else {
+            paste0("@", adapter$class)
+        }
+
+        for (i in seq_along(adapter_children)) {
+            child_path <- if (!is.null(nms) && nzchar(nms[i])) {
+                paste0(path, path_prefix, "$", nms[i])
+            } else {
+                paste0(path, path_prefix, "[[", i, "]]")
+            }
+            children[[i]] <- share_deep_traverse(
+                adapter_children[[i]], env, child_path, depth + 1,
+                min_bytes, backing, readonly, max_depth, cycle_policy,
+                mode, types, current_hook_result
+            )
+        }
+
+        # Record in seen table
+        assign(identity, list(
+            path = path,
+            node_id = node_id,
+            shared = NULL
+        ), envir = env$seen)
+
+        return(structure(
+            list(
+                type = "container",
+                container_type = "adapter",
+                adapter_class = adapter$class,
+                path = path,
+                node_id = node_id,
+                identity = identity,
+                children = children,
+                original_value = x,
+                adapter = adapter,
+                original_class = class(x),
+                original_names = nms
+            ),
+            class = "shard_deep_container"
+        ))
+    }
+
     # Determine what to do with this object
     should_share <- is_shareable_atomic(x) &&
         (force_share || object.size(x) >= min_bytes)
@@ -583,27 +643,67 @@ share_deep_traverse <- function(x,
             ),
             class = "shard_deep_container"
         ))
-    } else {
-        # Keep as-is (small atomic, unshareable type, or max depth reached)
-        # Record in seen table (including value for alias reconstruction)
-        assign(identity, list(
-            path = path,
-            node_id = node_id,
-            shared = NULL,
-            value = x
-        ), envir = env$seen)
+    } else if (isS4(x) && depth < max_depth) {
+        # S4 object: generic slot traversal (no adapter registered)
+        slot_names <- methods::slotNames(x)
 
-        return(structure(
-            list(
-                type = "kept",
+        if (length(slot_names) > 0) {
+            children <- vector("list", length(slot_names))
+            names(children) <- slot_names
+
+            for (i in seq_along(slot_names)) {
+                sn <- slot_names[i]
+                child_path <- paste0(path, "@", sn)
+                children[[i]] <- share_deep_traverse(
+                    methods::slot(x, sn), env, child_path, depth + 1,
+                    min_bytes, backing, readonly, max_depth, cycle_policy
+                )
+            }
+
+            # Record in seen table
+            assign(identity, list(
                 path = path,
                 node_id = node_id,
-                identity = identity,
-                value = x
-            ),
-            class = "shard_deep_kept"
-        ))
+                shared = NULL
+            ), envir = env$seen)
+
+            return(structure(
+                list(
+                    type = "container",
+                    container_type = "s4",
+                    path = path,
+                    node_id = node_id,
+                    identity = identity,
+                    children = children,
+                    original_value = x,
+                    original_class = class(x),
+                    original_names = slot_names
+                ),
+                class = "shard_deep_container"
+            ))
+        }
+        # S4 with no slots falls through to kept
     }
+
+    # Keep as-is (small atomic, unshareable type, max depth reached, or S4 with no slots)
+    # Record in seen table (including value for alias reconstruction)
+    assign(identity, list(
+        path = path,
+        node_id = node_id,
+        shared = NULL,
+        value = x
+    ), envir = env$seen)
+
+    return(structure(
+        list(
+            type = "kept",
+            path = path,
+            node_id = node_id,
+            identity = identity,
+            value = x
+        ),
+        class = "shard_deep_kept"
+    ))
 }
 
 # Internal: reconstruct object from deep shared structure
@@ -630,7 +730,16 @@ fetch_deep_reconstruct <- function(node) {
         # Container - reconstruct recursively
         children <- lapply(node$children, fetch_deep_reconstruct)
 
-        if (node$container_type == "data.frame") {
+        if (node$container_type == "adapter") {
+            # Use adapter's replace function to reconstruct
+            result <- node$adapter$replace(node$original_value, children)
+        } else if (node$container_type == "s4") {
+            # Reconstruct S4 object by setting slots
+            result <- node$original_value  # Start with a copy
+            for (sn in names(children)) {
+                methods::slot(result, sn) <- children[[sn]]
+            }
+        } else if (node$container_type == "data.frame") {
             # Reconstruct data.frame
             result <- structure(
                 children,
