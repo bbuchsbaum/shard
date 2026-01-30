@@ -221,6 +221,39 @@ create_contiguous_shards <- function(n, block_size) {
   shards
 }
 
+create_contiguous_shards_window_ <- function(start, end, block_size, start_id = 1L) {
+  start <- as.integer(start)
+  end <- as.integer(end)
+  block_size <- as.integer(block_size)
+  start_id <- as.integer(start_id)
+
+  if (is.na(start) || is.na(end) || start < 1L || end < start) {
+    stop("Invalid shard window (start/end)", call. = FALSE)
+  }
+  if (is.na(block_size) || block_size < 1L) stop("block_size must be >= 1", call. = FALSE)
+  if (is.na(start_id) || start_id < 1L) stop("start_id must be >= 1", call. = FALSE)
+
+  n <- end - start + 1L
+  num_shards <- ceiling(n / block_size)
+  shards <- vector("list", num_shards)
+
+  cur <- start
+  id <- start_id
+  for (i in seq_len(num_shards)) {
+    e <- min(cur + block_size - 1L, end)
+    shards[[i]] <- list(
+      id = id,
+      start = cur,
+      end = e,
+      idx = cur:e,
+      len = e - cur + 1L
+    )
+    cur <- e + 1L
+    id <- id + 1L
+  }
+  shards
+}
+
 #' Create Strided Shards
 #'
 #' Creates shards with interleaved indices.

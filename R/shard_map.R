@@ -23,6 +23,17 @@ NULL
 #' @param scheduler_policy Optional list of scheduling hints (advanced). Currently:
 #'   - `max_huge_concurrency`: cap concurrent chunks whose kernel footprint is
 #'     classified as `"huge"` (see [register_kernel()]).
+#' @param autotune Optional. Online autotuning for scalar-N sharding (advanced).
+#'   When `shards` is an integer `N`, shard_map can adjust shard block sizes over
+#'   time based on observed wall time and worker RSS.
+#'
+#'   Accepted values:
+#'   - `NULL` (default): enable online autotuning for `shard_map(N, ...)`, off for
+#'     precomputed shard descriptors.
+#'   - `TRUE` / `"online"`: force online autotuning (only applies when `shards` is
+#'     an integer `N`).
+#'   - `FALSE` / `"none"`: disable autotuning.
+#'   - a list: `list(mode="online", max_rounds=..., probe_shards_per_worker=..., min_shard_time=...)`
 #' @param workers Integer. Number of worker processes. If NULL, uses existing
 #'   pool or creates one with `detectCores() - 1`.
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
@@ -75,6 +86,7 @@ shard_map <- function(shards,
                       out = list(),
                       kernel = NULL,
                       scheduler_policy = NULL,
+                      autotune = NULL,
                       workers = NULL,
                       chunk_size = 1L,
                       profile = c("default", "memory", "speed"),
@@ -110,20 +122,17 @@ shard_map <- function(shards,
       health_checks = list(),
       shard_times = list(),
       worker_usage = list(),
-      kernel = kernel %||% NULL
+      kernel = kernel %||% NULL,
+      autotune = NULL
     )
   } else {
     NULL
   }
 
-  # Convert integer to shard_descriptor if needed
-  if (is.numeric(shards) && length(shards) == 1) {
-    shards <- shards(as.integer(shards), workers = workers)
-  }
-
-  if (!inherits(shards, "shard_descriptor")) {
-    stop("shards must be a shard_descriptor or integer", call. = FALSE)
-  }
+  # If the user passed an integer N, we can optionally do online autotuning
+  # while generating shards in phases (no up-front huge shard list required).
+  shards_is_scalar_n <- is.numeric(shards) && length(shards) == 1
+  n_items <- if (shards_is_scalar_n) as.integer(shards) else NA_integer_
 
   # Determine worker count
   if (is.null(workers)) {
@@ -137,6 +146,15 @@ shard_map <- function(shards,
   mem_cap <- profile_settings$mem_cap
   rss_drift_threshold <- profile_settings$rss_drift_threshold
   health_check_interval <- profile_settings$health_check_interval
+
+  # Convert integer to shard_descriptor if needed (after worker/profile resolution).
+  if (shards_is_scalar_n) {
+    if (is.na(n_items) || n_items < 1L) stop("shards must be >= 1", call. = FALSE)
+  } else {
+    if (!inherits(shards, "shard_descriptor")) {
+      stop("shards must be a shard_descriptor or integer", call. = FALSE)
+    }
+  }
 
   # Ensure pool exists with correct worker count
  pool <- ensure_pool(
@@ -155,7 +173,9 @@ shard_map <- function(shards,
 
   # Set seed in workers if specified
   if (!is.null(seed)) {
-    set_worker_seeds(pool, seed, shards$num_shards)
+    # When shards are auto-generated online, we don't know num_shards yet.
+    # Use total items as a stable substream spacing.
+    set_worker_seeds(pool, seed, if (shards_is_scalar_n) n_items else shards$num_shards)
   }
 
   # Export borrowed inputs to workers (once, not per shard)
@@ -166,43 +186,90 @@ shard_map <- function(shards,
     export_out_to_workers(pool, out)
   }
 
-  # Create chunk batches if chunk_size > 1
-  chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out, kernel_meta = kernel_meta)
-
   # Create self-contained executor function for workers
   chunk_executor <- make_chunk_executor()
 
-  # Dispatch chunks to workers with supervision
-  dispatch_result <- dispatch_chunks(
-    chunks = chunks,
-    fun = chunk_executor,
-    pool = pool,
-    health_check_interval = health_check_interval,
-    max_retries = max_retries,
-    timeout = timeout,
-    scheduler_policy = scheduler_policy
-  )
-
-  # Collect diagnostics
-  if (diagnostics) {
-    diag$end_time <- Sys.time()
-    diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
-    diag$health_checks <- dispatch_result$diagnostics$health_checks
-    diag$shards_processed <- shards$num_shards
-    diag$chunks_dispatched <- length(chunks)
-    diag$pool_stats <- dispatch_result$pool_stats
-    diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
-    diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
-    diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
-    diag$scratch_stats <- dispatch_result$diagnostics$scratch_stats %||% NULL
-    diag$scheduler <- dispatch_result$diagnostics$scheduler %||% NULL
-  }
-
-  # Flatten results if chunk_size > 1
-  results <- if (chunk_size > 1L) {
-    unlist(dispatch_result$results, recursive = FALSE)
+  # Optional: online shard sizing autotune for scalar-N sharding. This is opt-in
+  # by default for shard_map(N, ...) (low ceremony), and off for precomputed
+  # shard descriptors.
+  autotune_mode <- NULL
+  autotune_cfg <- NULL
+  if (is.list(autotune)) {
+    autotune_mode <- as.character(autotune$mode %||% "online")
+    autotune_cfg <- autotune
+  } else if (!is.null(autotune)) {
+    autotune_mode <- if (isTRUE(autotune)) "online" else as.character(autotune)
+  } else if (shards_is_scalar_n) {
+    autotune_mode <- "online"
   } else {
-    dispatch_result$results
+    autotune_mode <- "none"
+  }
+  if (!nzchar(autotune_mode)) autotune_mode <- "none"
+
+  if (shards_is_scalar_n && identical(autotune_mode, "online")) {
+    tuned <- shard_map_online_(
+      n = n_items,
+      fun = fun,
+      borrow = borrow,
+      out = out,
+      kernel_meta = kernel_meta,
+      chunk_executor = chunk_executor,
+      pool = pool,
+      workers = workers,
+      mem_cap = mem_cap,
+      chunk_size = chunk_size,
+      autotune_cfg = autotune_cfg,
+      profile = profile,
+      diagnostics = diagnostics,
+      diag = diag,
+      health_check_interval = health_check_interval,
+      max_retries = max_retries,
+      timeout = timeout,
+      scheduler_policy = scheduler_policy
+    )
+    shards <- tuned$shards
+    dispatch_result <- tuned$dispatch_result
+    if (diagnostics) diag <- tuned$diag
+    results <- tuned$results
+  } else {
+    # Create chunk batches if chunk_size > 1
+    if (shards_is_scalar_n) {
+      shards <- shards(n_items, workers = workers)
+    }
+    chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out, kernel_meta = kernel_meta)
+
+    # Dispatch chunks to workers with supervision
+    dispatch_result <- dispatch_chunks(
+      chunks = chunks,
+      fun = chunk_executor,
+      pool = pool,
+      health_check_interval = health_check_interval,
+      max_retries = max_retries,
+      timeout = timeout,
+      scheduler_policy = scheduler_policy
+    )
+
+    # Flatten results if chunk_size > 1
+    results <- if (chunk_size > 1L) {
+      unlist(dispatch_result$results, recursive = FALSE)
+    } else {
+      dispatch_result$results
+    }
+
+    # Collect diagnostics
+    if (diagnostics) {
+      diag$end_time <- Sys.time()
+      diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
+      diag$health_checks <- dispatch_result$diagnostics$health_checks
+      diag$shards_processed <- shards$num_shards
+      diag$chunks_dispatched <- length(chunks)
+      diag$pool_stats <- dispatch_result$pool_stats
+      diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
+      diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
+      diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
+      diag$scratch_stats <- dispatch_result$diagnostics$scratch_stats %||% NULL
+      diag$scheduler <- dispatch_result$diagnostics$scheduler %||% NULL
+    }
   }
 
   # Build result object
@@ -218,6 +285,269 @@ shard_map <- function(shards,
       profile = profile
     ),
     class = "shard_result"
+  )
+}
+
+# Online shard sizing for scalar-N shard_map.
+#
+# This runs a few small phases to pick a reasonable block_size using observed
+# wall time and worker RSS, then processes the remainder with the chosen size.
+shard_map_online_ <- function(n,
+                              fun,
+                              borrow,
+                              out,
+                              kernel_meta,
+                              chunk_executor,
+                              pool,
+                              workers,
+                              mem_cap,
+                              chunk_size,
+                              autotune_cfg = NULL,
+                              profile,
+                              diagnostics,
+                              diag,
+                              health_check_interval,
+                              max_retries,
+                              timeout,
+                              scheduler_policy) {
+  n <- as.integer(n)
+  if (is.na(n) || n < 1L) stop("n must be >= 1", call. = FALSE)
+
+  # Conservative defaults; keep user-facing ceremony low by being predictable.
+  cfg <- list(
+    max_rounds = 3L,
+    probe_shards_per_worker = 4L,
+    min_shard_time = 0.02, # seconds; below this, overhead dominates -> grow block
+    grow_factor = 2.0,
+    shrink_factor = 0.5,
+    rss_hi = 0.85,
+    rss_lo = 0.50
+  )
+  if (is.list(autotune_cfg)) {
+    for (nm in names(cfg)) {
+      if (!is.null(autotune_cfg[[nm]])) cfg[[nm]] <- autotune_cfg[[nm]]
+    }
+  }
+
+  # Initial block size from the existing heuristic.
+  bs <- autotune_block_size(
+    n = n,
+    workers = workers,
+    min_shards_per_worker = 4L,
+    max_shards_per_worker = 64L,
+    scratch_bytes_per_item = 0,
+    scratch_budget = 0
+  )
+
+  cursor <- 1L
+  shard_id <- 1L
+  all_shards <- list()
+  all_results <- list()
+  all_failures <- list()
+
+  # Aggregate dispatch diagnostics across phases.
+  agg_diag <- list(
+    health_checks = list(),
+    view_stats = list(created = 0L, materialized = 0L, materialized_bytes = 0, packed = 0L, packed_bytes = 0),
+    copy_stats = list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0),
+    table_stats = list(writes = 0L, rows = 0L, bytes = 0),
+    scratch_stats = list(hits = 0L, misses = 0L, high_water = 0),
+    scheduler = list(throttle_events = 0L),
+    chunks_dispatched = 0L
+  )
+
+  hist <- list()
+  rounds <- 0L
+
+  # Use chunk_size=1 for probe phases so timing per shard is meaningful.
+  probe_chunk_size <- 1L
+
+  while (cursor <= n) {
+    # Probe in early rounds; afterward, use the run's requested chunk_size.
+    is_probe <- rounds < cfg$max_rounds
+    use_chunk_size <- if (is_probe) probe_chunk_size else chunk_size
+
+    # Probe only a small prefix; after tuning, take bigger bites.
+    target_shards <- if (is_probe) workers * cfg$probe_shards_per_worker else workers * 32L
+    phase_items <- min(n - cursor + 1L, as.integer(bs) * as.integer(max(target_shards, 1L)))
+    if (phase_items < 1L) phase_items <- 1L
+    phase_end <- min(cursor + phase_items - 1L, n)
+
+    phase_shards <- create_contiguous_shards_window_(
+      start = cursor,
+      end = phase_end,
+      block_size = bs,
+      start_id = shard_id
+    )
+    shard_id <- shard_id + length(phase_shards)
+
+    all_shards <- c(all_shards, phase_shards)
+    phase_desc <- structure(
+      list(
+        n = phase_end - cursor + 1L,
+        block_size = as.integer(bs),
+        strategy = "contiguous",
+        num_shards = length(phase_shards),
+        shards = phase_shards
+      ),
+      class = "shard_descriptor"
+    )
+
+    chunks <- create_shard_chunks(phase_desc, use_chunk_size, fun, borrow, out, kernel_meta = kernel_meta)
+
+    rss_before <- tryCatch(mem_report(pool)$peak_rss, error = function(e) NA_real_)
+    t0 <- proc.time()[["elapsed"]]
+    dr <- dispatch_chunks(
+      chunks = chunks,
+      fun = chunk_executor,
+      pool = pool,
+      health_check_interval = health_check_interval,
+      max_retries = max_retries,
+      timeout = timeout,
+      scheduler_policy = scheduler_policy
+    )
+    t1 <- proc.time()[["elapsed"]]
+    rss_after <- tryCatch(mem_report(pool)$peak_rss, error = function(e) NA_real_)
+
+    # Flatten phase results into per-shard results and append.
+    phase_res <- if (use_chunk_size > 1L) unlist(dr$results, recursive = FALSE) else dr$results
+    all_results <- c(all_results, phase_res)
+    if (length(dr$failures)) all_failures <- c(all_failures, dr$failures)
+
+    # Update aggregate diagnostics.
+    agg_diag$health_checks <- c(agg_diag$health_checks, dr$diagnostics$health_checks %||% list())
+    agg_diag$chunks_dispatched <- agg_diag$chunks_dispatched + length(chunks)
+    if (is.list(dr$diagnostics$view_stats)) {
+      for (k in names(agg_diag$view_stats)) agg_diag$view_stats[[k]] <- (agg_diag$view_stats[[k]] %||% 0) + (dr$diagnostics$view_stats[[k]] %||% 0)
+    }
+    if (is.list(dr$diagnostics$copy_stats)) {
+      for (k in names(agg_diag$copy_stats)) agg_diag$copy_stats[[k]] <- (agg_diag$copy_stats[[k]] %||% 0) + (dr$diagnostics$copy_stats[[k]] %||% 0)
+    }
+    if (is.list(dr$diagnostics$table_stats)) {
+      for (k in names(agg_diag$table_stats)) agg_diag$table_stats[[k]] <- (agg_diag$table_stats[[k]] %||% 0) + (dr$diagnostics$table_stats[[k]] %||% 0)
+    }
+    if (is.list(dr$diagnostics$scratch_stats)) {
+      agg_diag$scratch_stats$hits <- (agg_diag$scratch_stats$hits %||% 0L) + (dr$diagnostics$scratch_stats$hits %||% 0L)
+      agg_diag$scratch_stats$misses <- (agg_diag$scratch_stats$misses %||% 0L) + (dr$diagnostics$scratch_stats$misses %||% 0L)
+      agg_diag$scratch_stats$high_water <- max(as.double(agg_diag$scratch_stats$high_water %||% 0), as.double(dr$diagnostics$scratch_stats$high_water %||% 0))
+    }
+    if (is.list(dr$diagnostics$scheduler)) {
+      agg_diag$scheduler$throttle_events <- (agg_diag$scheduler$throttle_events %||% 0L) + as.integer(dr$diagnostics$scheduler$throttle_events %||% 0L)
+    }
+
+    # Phase metrics
+    elapsed <- as.double(t1 - t0)
+    items_done <- as.integer(phase_end - cursor + 1L)
+    shards_done <- length(phase_shards)
+    throughput <- if (elapsed > 0) as.double(items_done) / elapsed else NA_real_
+    shard_time <- if (shards_done > 0) elapsed / as.double(shards_done) else NA_real_
+
+    rss_peak <- suppressWarnings(max(c(rss_before, rss_after), na.rm = TRUE))
+    rss_frac <- if (is.finite(rss_peak) && is.finite(mem_cap) && mem_cap > 0) rss_peak / mem_cap else NA_real_
+
+    if (is_probe) rounds <- rounds + 1L
+    hist[[length(hist) + 1L]] <- list(
+      round = rounds,
+      start = cursor,
+      end = phase_end,
+      block_size = as.integer(bs),
+      chunk_size = as.integer(use_chunk_size),
+      elapsed_sec = elapsed,
+      items = items_done,
+      shards = shards_done,
+      throughput_items_per_sec = throughput,
+      shard_time_sec = shard_time,
+      rss_peak = rss_peak,
+      rss_fraction_of_mem_cap = rss_frac
+    )
+
+    cursor <- phase_end + 1L
+
+    # Update block_size for next probe phase using simple, safe heuristics.
+    if (is_probe && cursor <= n) {
+      bs_next <- bs
+      reason <- "keep"
+
+      # If we get close to mem_cap, shrink.
+      if (is.finite(rss_frac) && rss_frac >= cfg$rss_hi) {
+        bs_next <- max(as.integer(floor(as.double(bs) * cfg$shrink_factor)), 1L)
+        reason <- "shrink_rss"
+      } else if (is.finite(shard_time) && shard_time < cfg$min_shard_time) {
+        # If shards are too tiny (overhead dominates), grow.
+        bs_next <- as.integer(ceiling(as.double(bs) * cfg$grow_factor))
+        bs_next <- min(bs_next, n)
+        reason <- "grow_overhead"
+      } else if (is.finite(rss_frac) && rss_frac <= cfg$rss_lo && is.finite(shard_time) && shard_time < (cfg$min_shard_time * 0.5)) {
+        # Extra nudge: very low RSS and very small shard time.
+        bs_next <- as.integer(ceiling(as.double(bs) * cfg$grow_factor))
+        bs_next <- min(bs_next, n)
+        reason <- "grow_low_rss"
+      }
+
+      # Record decision.
+      hist[[length(hist)]]$decision <- reason
+      hist[[length(hist)]]$next_block_size <- as.integer(bs_next)
+      bs <- bs_next
+    }
+  }
+
+  full_desc <- structure(
+    list(
+      n = n,
+      block_size = NA_integer_,
+      strategy = "contiguous",
+      num_shards = length(all_shards),
+      shards = all_shards
+    ),
+    class = "shard_descriptor"
+  )
+
+  # Produce a unified dispatch_result-like payload.
+  dispatch_result <- structure(
+    list(
+      results = all_results,
+      failures = all_failures,
+      queue_status = list(
+        total = agg_diag$chunks_dispatched,
+        pending = 0L,
+        in_flight = 0L,
+        completed = agg_diag$chunks_dispatched - length(all_failures),
+        failed = length(all_failures),
+        total_retries = sum(vapply(all_failures, function(x) x$retry_count %||% 0L, integer(1)), na.rm = TRUE)
+      ),
+      diagnostics = list(
+        health_checks = agg_diag$health_checks,
+        view_stats = agg_diag$view_stats,
+        copy_stats = agg_diag$copy_stats,
+        table_stats = agg_diag$table_stats,
+        scratch_stats = agg_diag$scratch_stats,
+        scheduler = agg_diag$scheduler
+      ),
+      pool_stats = pool_get()$stats
+    ),
+    class = "shard_dispatch_result"
+  )
+
+  if (diagnostics) {
+    diag$end_time <- Sys.time()
+    diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
+    diag$health_checks <- agg_diag$health_checks
+    diag$shards_processed <- full_desc$num_shards
+    diag$chunks_dispatched <- agg_diag$chunks_dispatched
+    diag$pool_stats <- dispatch_result$pool_stats
+    diag$view_stats <- agg_diag$view_stats
+    diag$copy_stats <- agg_diag$copy_stats
+    diag$table_stats <- agg_diag$table_stats
+    diag$scratch_stats <- agg_diag$scratch_stats
+    diag$scheduler <- agg_diag$scheduler
+    diag$autotune <- list(mode = "online", history = hist)
+  }
+
+  list(
+    shards = full_desc,
+    results = all_results,
+    dispatch_result = dispatch_result,
+    diag = diag
   )
 }
 

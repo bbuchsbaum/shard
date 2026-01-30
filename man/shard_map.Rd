@@ -11,6 +11,7 @@ shard_map(
   out = list(),
   kernel = NULL,
   scheduler_policy = NULL,
+  autotune = NULL,
   workers = NULL,
   chunk_size = 1L,
   profile = c("default", "memory", "speed"),
@@ -47,6 +48,20 @@ If provided, \code{fun} must be NULL.}
 \itemize{
 \item \code{max_huge_concurrency}: cap concurrent chunks whose kernel footprint is
 classified as \code{"huge"} (see \code{\link[=register_kernel]{register_kernel()}}).
+}}
+
+\item{autotune}{Optional. Online autotuning for scalar-N sharding (advanced).
+When \code{shards} is an integer \code{N}, shard_map can adjust shard block sizes over
+time based on observed wall time and worker RSS.
+
+Accepted values:
+\itemize{
+\item \code{NULL} (default): enable online autotuning for \code{shard_map(N, ...)}, off for
+precomputed shard descriptors.
+\item \code{TRUE} / \code{"online"}: force online autotuning (only applies when \code{shards} is
+an integer \code{N}).
+\item \code{FALSE} / \code{"none"}: disable autotuning.
+\item a list: \code{list(mode="online", max_rounds=..., probe_shards_per_worker=..., min_shard_time=...)}
 }}
 
 \item{workers}{Integer. Number of worker processes. If NULL, uses existing
