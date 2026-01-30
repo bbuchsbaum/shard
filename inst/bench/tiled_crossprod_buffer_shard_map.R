@@ -6,6 +6,7 @@
 # - each task constructs two block views (vX, vY)
 # - compute uses BLAS-3 (dgemm) without materializing either view
 # - results write directly into a shared output buffer (no gather + bind)
+# - kernel dispatch avoids boilerplate: shard_map(..., kernel="crossprod_tile")
 #
 # Run from repo root:
 #   R -q -f inst/bench/tiled_crossprod_buffer_shard_map.R
@@ -23,34 +24,20 @@ Y <- matrix(rnorm(n * v), nrow = n)
 colnames(X) <- paste0("x", seq_len(ncol(X)))
 colnames(Y) <- paste0("y", seq_len(ncol(Y)))
 
-Xsh <- share(X, backing = "mmap")
-Ysh <- share(Y, backing = "mmap")
-
-# Preallocate the full output (p x v).
-Z <- buffer("double", dim = c(p, v), init = 0, backing = "mmap")
-
-# 2D tiling over output space. Each tile writes to a disjoint slice in Z.
-tiles <- shard:::tiles2d(n_x = p, n_y = v, block_x = 32L, block_y = 64L)
-
-res <- shard_map(
-  tiles,
-  borrow = list(X = Xsh, Y = Ysh),
-  out = list(Z = Z),
-  fun = function(tile, X, Y, Z) {
-    vX <- view_block(X, cols = idx_range(tile$x_start, tile$x_end))
-    vY <- view_block(Y, cols = idx_range(tile$y_start, tile$y_end))
-    blk <- shard:::view_crossprod(vX, vY)
-    Z[tile$x_start:tile$x_end, tile$y_start:tile$y_end] <- blk
-    NULL
-  },
+res <- shard_crossprod(
+  X,
+  Y,
   workers = 4,
+  block_x = 32L,
+  block_y = 64L,
+  backing = "mmap",
+  materialize = "always",
   diagnostics = TRUE
 )
 
-print(task_report(res))
-print(copy_report(res))
+print(task_report(res$run))
+print(copy_report(res$run))
 
-out <- as.matrix(Z)
+out <- res$value
 cat("\nResult dim:", paste(dim(out), collapse = "x"), "\n")
 cat("Max abs error vs base crossprod:", max(abs(out - crossprod(X, Y))), "\n")
-

@@ -6,9 +6,11 @@
 \usage{
 shard_map(
   shards,
-  fun,
+  fun = NULL,
   borrow = list(),
   out = list(),
+  kernel = NULL,
+  scheduler_policy = NULL,
   workers = NULL,
   chunk_size = 1L,
   profile = c("default", "memory", "speed"),
@@ -29,13 +31,23 @@ shard_map(
 auto-generate shards.}
 
 \item{fun}{Function to execute per shard. Receives the shard descriptor
-as first argument, followed by borrowed inputs and outputs.}
+as first argument, followed by borrowed inputs and outputs. You can also
+select a registered kernel via \verb{kernel=} instead of providing \verb{fun=}.}
 
 \item{borrow}{Named list of shared inputs. These are exported to workers
 once and reused across shards. Treated as read-only by default.}
 
 \item{out}{Named list of output buffers (from \code{buffer()}). Workers write
 results directly to these buffers.}
+
+\item{kernel}{Optional. Name of a registered kernel (see \code{\link[=list_kernels]{list_kernels()}}).
+If provided, \code{fun} must be NULL.}
+
+\item{scheduler_policy}{Optional list of scheduling hints (advanced). Currently:
+\itemize{
+\item \code{max_huge_concurrency}: cap concurrent chunks whose kernel footprint is
+classified as \code{"huge"} (see \code{\link[=register_kernel]{register_kernel()}}).
+}}
 
 \item{workers}{Integer. Number of worker processes. If NULL, uses existing
 pool or creates one with \code{detectCores() - 1}.}

@@ -11,7 +11,11 @@ dispatch_chunks(
   pool = NULL,
   health_check_interval = 10L,
   max_retries = 3L,
-  timeout = 3600
+  timeout = 3600,
+  scheduler_policy = NULL,
+  on_result = NULL,
+  store_results = TRUE,
+  retain_chunks = TRUE
 )
 }
 \arguments{
@@ -28,6 +32,21 @@ dispatch_chunks(
 \item{max_retries}{Integer. Maximum retries per chunk before permanent failure (default 3).}
 
 \item{timeout}{Numeric. Seconds to wait for each chunk (default 3600).}
+
+\item{scheduler_policy}{Optional list of scheduling hints (advanced). Currently:
+\itemize{
+\item \code{max_huge_concurrency}: cap concurrent chunks with \code{footprint_class=="huge"}.
+}}
+
+\item{on_result}{Optional callback (advanced). If provided, called on the
+master process as \code{on_result(tag, value, worker_id)} for each successful
+chunk completion. Used by \code{\link[=shard_reduce]{shard_reduce()}} to stream reductions.}
+
+\item{store_results}{Logical (advanced). If FALSE, successful chunk values are
+not retained in the returned \code{results} list (streaming use cases).}
+
+\item{retain_chunks}{Logical (advanced). If FALSE, completed chunk descriptors
+are stored minimally (avoids retaining large shard lists in memory).}
 }
 \value{
 A \code{shard_dispatch_result} object with results and diagnostics.

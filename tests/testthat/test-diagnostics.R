@@ -198,6 +198,28 @@ test_that("report() handles missing/dead workers", {
   }
 })
 
+test_that("recommendations() is deterministic given the same run telemetry", {
+  skip_on_cran()
+
+  pool_stop()
+  pool_create(2)
+  on.exit(pool_stop(), add = TRUE)
+
+  X <- share(matrix(rnorm(200), nrow = 20), backing = "mmap")
+  blocks <- shards(10, block_size = 1)
+
+  # Force view materialization inside the task.
+  result <- shard_map(blocks, borrow = list(X = X), fun = function(s, X) {
+    v <- view_block(X, cols = idx_range(1, 5))
+    sum(materialize(v))
+  }, workers = 2, diagnostics = TRUE)
+
+  r1 <- recommendations(result)
+  r2 <- recommendations(result)
+  expect_identical(r1, r2)
+  expect_true(any(grepl("Views were materialized", r1, fixed = TRUE)))
+})
+
 test_that("reports have consistent timestamp format", {
   rpt1 <- report()
   rpt2 <- mem_report()

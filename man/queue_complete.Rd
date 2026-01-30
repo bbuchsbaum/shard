@@ -4,7 +4,7 @@
 \alias{queue_complete}
 \title{Mark Chunk as Completed}
 \usage{
-queue_complete(queue, chunk_id, result = NULL)
+queue_complete(queue, chunk_id, result = NULL, retain = TRUE)
 }
 \arguments{
 \item{queue}{A \code{shard_queue} object.}

@@ -60,6 +60,33 @@ queue_next <- function(queue, worker_id) {
   chunk
 }
 
+queue_next_where <- function(queue, worker_id, predicate = NULL) {
+  env <- queue$env
+  if (length(env$pending) == 0) return(NULL)
+  if (is.null(predicate)) return(queue_next(queue, worker_id))
+  if (!is.function(predicate)) stop("predicate must be a function or NULL", call. = FALSE)
+
+  idx <- NA_integer_
+  for (i in seq_along(env$pending)) {
+    ch <- env$pending[[i]]
+    ok <- FALSE
+    ok <- tryCatch(isTRUE(predicate(ch)), error = function(e) FALSE)
+    if (ok) {
+      idx <- i
+      break
+    }
+  }
+  if (is.na(idx)) return(NULL)
+
+  chunk <- env$pending[[idx]]
+  env$pending <- env$pending[-idx]
+
+  chunk_id <- as.character(chunk$id)
+  env$in_flight[[chunk_id]] <- chunk
+  env$assignment[[chunk_id]] <- worker_id
+  chunk
+}
+
 #' Mark Chunk as Completed
 #'
 #' @param queue A `shard_queue` object.
@@ -67,16 +94,26 @@ queue_next <- function(queue, worker_id) {
 #' @param result The result from processing.
 #' @return NULL (invisibly).
 #' @keywords internal
-queue_complete <- function(queue, chunk_id, result = NULL) {
+queue_complete <- function(queue, chunk_id, result = NULL, retain = TRUE) {
   env <- queue$env
   chunk_id <- as.character(chunk_id)
 
   if (!is.null(env$in_flight[[chunk_id]])) {
     chunk <- env$in_flight[[chunk_id]]
-    chunk$result <- result
-    chunk$completed_at <- Sys.time()
-
-    env$completed[[chunk_id]] <- chunk
+    if (isTRUE(retain)) {
+      chunk$result <- result
+      chunk$completed_at <- Sys.time()
+      env$completed[[chunk_id]] <- chunk
+    } else {
+      # Keep only minimal completion metadata to avoid retaining large shard lists
+      # when callers are doing streaming reductions.
+      env$completed[[chunk_id]] <- list(
+        id = chunk$id,
+        completed_at = Sys.time(),
+        retry_count = chunk$retry_count %||% 0L,
+        result = result
+      )
+    }
     env$in_flight[[chunk_id]] <- NULL
     env$assignment[[chunk_id]] <- NULL
   }

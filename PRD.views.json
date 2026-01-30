@@ -225,6 +225,28 @@
     "Diagnostics report view materialization and packing bytes; view-enabled kernel shows near-zero materialization in hot path.",
     "R CMD check remains clean on supported platforms for core view features."
   ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-V-001",
+      "description": "Block view construction (view_block + idx_range) does not allocate slice-sized matrices.",
+      "verification": "Unit tests validate view objects stay small; copy_report(view_materialized_bytes)==0 for view-enabled kernels."
+    },
+    {
+      "id": "AC-V-002",
+      "description": "materialize(view_block(x)) and materialize(view_gather(x)) match base slicing for supported types and selectors.",
+      "verification": "Unit tests compare materialized views to x[, idx] / x[rows, cols] for representative cases and edge cases."
+    },
+    {
+      "id": "AC-V-003",
+      "description": "At least one BLAS-3-friendly kernel runs end-to-end using views + explicit output buffers with 0 view materialized bytes in the hot path.",
+      "verification": "tests/testthat/test-tiled-crossprod-buffer-shard_map.R asserts view_materialized_bytes==0 and validates numerical correctness."
+    },
+    {
+      "id": "AC-V-004",
+      "description": "View diagnostics are aggregated from workers and reported via copy_report().",
+      "verification": "copy_report(result) exposes view_created/materialized/packed counters for shard_map runs."
+    }
+  ],
   "open_questions": [
     "Should view() support opt-in auto-sharing of non-shared matrices for UX?",
     "Should shards() optionally return precomputed view descriptors to reduce per-task overhead?",

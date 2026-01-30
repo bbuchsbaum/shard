@@ -12,7 +12,9 @@ table_sink(
 )
 }
 \arguments{
-\item{schema}{A \code{shard_schema}.}
+\item{schema}{A \code{shard_schema}. If NULL, a schema-less sink is created (RDS
+format only). This is primarily intended for doShard/foreach compatibility
+where output schemas may not be known in advance.}
 
 \item{mode}{\code{"row_groups"} (temp, managed) or \code{"partitioned"} (persistent path).}
 

@@ -15,6 +15,15 @@ NULL
 #' @param health_check_interval Integer. Check pool health every N chunks (default 10).
 #' @param max_retries Integer. Maximum retries per chunk before permanent failure (default 3).
 #' @param timeout Numeric. Seconds to wait for each chunk (default 3600).
+#' @param scheduler_policy Optional list of scheduling hints (advanced). Currently:
+#'   - `max_huge_concurrency`: cap concurrent chunks with `footprint_class=="huge"`.
+#' @param on_result Optional callback (advanced). If provided, called on the
+#'   master process as `on_result(tag, value, worker_id)` for each successful
+#'   chunk completion. Used by [shard_reduce()] to stream reductions.
+#' @param store_results Logical (advanced). If FALSE, successful chunk values are
+#'   not retained in the returned `results` list (streaming use cases).
+#' @param retain_chunks Logical (advanced). If FALSE, completed chunk descriptors
+#'   are stored minimally (avoids retaining large shard lists in memory).
 #'
 #' @return A `shard_dispatch_result` object with results and diagnostics.
 #' @export
@@ -22,7 +31,11 @@ dispatch_chunks <- function(chunks, fun, ...,
                             pool = NULL,
                             health_check_interval = 10L,
                             max_retries = 3L,
-                            timeout = 3600) {
+                            timeout = 3600,
+                            scheduler_policy = NULL,
+                            on_result = NULL,
+                            store_results = TRUE,
+                            retain_chunks = TRUE) {
   if (is.null(pool)) {
     pool <- pool_get()
   }
@@ -45,7 +58,8 @@ dispatch_chunks <- function(chunks, fun, ...,
   diag <- list(
     start_time = Sys.time(),
     health_checks = list(),
-    worker_assignments = list()
+    worker_assignments = list(),
+    scheduler = list(throttle_events = 0L)
   )
 
   # Export fun + args to workers once to avoid per-chunk re-export overhead.
@@ -65,6 +79,7 @@ dispatch_chunks <- function(chunks, fun, ...,
     vd0 <- tryCatch(view_diagnostics(), error = function(e) NULL)
     cd0 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
     td0 <- tryCatch(table_diagnostics(), error = function(e) NULL)
+    sd0 <- tryCatch(scratch_diagnostics(), error = function(e) NULL)
     res <- tryCatch(
       {
         f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
@@ -76,6 +91,7 @@ dispatch_chunks <- function(chunks, fun, ...,
     vd1 <- tryCatch(view_diagnostics(), error = function(e) NULL)
     cd1 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
     td1 <- tryCatch(table_diagnostics(), error = function(e) NULL)
+    sd1 <- tryCatch(scratch_diagnostics(), error = function(e) NULL)
 
     if (is.list(vd0) && is.list(vd1)) {
       res$view_delta <- list(
@@ -102,18 +118,41 @@ dispatch_chunks <- function(chunks, fun, ...,
       )
     }
 
+    if (is.list(sd0) && is.list(sd1)) {
+      res$scratch_delta <- list(
+        hits = (sd1$hits %||% 0L) - (sd0$hits %||% 0L),
+        misses = (sd1$misses %||% 0L) - (sd0$misses %||% 0L),
+        high_water = sd1$high_water %||% 0
+      )
+      res$scratch_needs_recycle <- isTRUE(sd1$needs_recycle)
+    }
+
     res
   }
 
   # Async scheduling state
   idle <- rep(TRUE, pool$n)
   inflight <- vector("list", pool$n) # worker_id -> {chunk_id,start_time}
+  inflight_class <- rep(NA_character_, pool$n)
 
   chunks_processed <- 0L
   view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0,
                      packed = 0L, packed_bytes = 0)
   copy_stats <- list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0)
   table_stats <- list(writes = 0L, rows = 0L, bytes = 0)
+  scratch_stats <- list(hits = 0L, misses = 0L, high_water = 0)
+
+  policy <- scheduler_policy %||% list()
+  max_huge <- as.integer(policy$max_huge_concurrency %||% NA_integer_)
+  if (!is.na(max_huge) && max_huge < 1L) max_huge <- 1L
+
+  chunk_class <- function(ch) {
+    (ch$footprint_class %||% "tiny")
+  }
+
+  huge_inflight <- function() {
+    sum(inflight_class == "huge", na.rm = TRUE)
+  }
 
   # Helper: receive a single result (non-blocking with small timeout) from any worker.
   recv_one <- function(timeout_sec = 0.1) {
@@ -206,8 +245,20 @@ dispatch_chunks <- function(chunks, fun, ...,
     for (worker_id in which(idle)) {
       if (!queue_has_pending(queue)) break
 
-      chunk <- queue_next(queue, worker_id)
-      if (is.null(chunk)) next
+      pred <- NULL
+      if (!is.na(max_huge) && huge_inflight() >= max_huge) {
+        pred <- function(ch) chunk_class(ch) != "huge"
+      }
+
+      chunk <- queue_next_where(queue, worker_id, pred)
+      if (is.null(chunk)) {
+        # If we couldn't find a non-huge chunk under throttling, leave the
+        # worker idle and wait for an in-flight huge task to finish.
+        if (!is.null(pred)) {
+          diag$scheduler$throttle_events <- diag$scheduler$throttle_events + 1L
+        }
+        next
+      }
 
       w <- pool$workers[[worker_id]]
       if (is.null(w) || !worker_is_alive(w)) {
@@ -260,6 +311,7 @@ dispatch_chunks <- function(chunks, fun, ...,
                         return = TRUE, tag = as.character(chunk$id))
       idle[worker_id] <- FALSE
       inflight[[worker_id]] <- list(chunk_id = as.character(chunk$id), start_time = Sys.time())
+      inflight_class[worker_id] <- chunk_class(chunk)
       pool$stats$total_tasks <- pool$stats$total_tasks + 1L
       .pool_env$pool <- pool
     }
@@ -361,9 +413,16 @@ dispatch_chunks <- function(chunks, fun, ...,
 
     idle[worker_id] <- TRUE
     inflight[worker_id] <- list(NULL)
+    inflight_class[worker_id] <- NA_character_
 
     if (is.list(payload) && isTRUE(payload$ok)) {
-      queue_complete(queue, tag, payload$value)
+      val <- payload$value
+      if (!is.null(on_result)) {
+        if (!is.function(on_result)) stop("on_result must be a function or NULL", call. = FALSE)
+        # If the reducer throws, fail fast: continuing would silently corrupt results.
+        on_result(tag = tag, value = val, worker_id = worker_id)
+      }
+      queue_complete(queue, tag, if (isTRUE(store_results)) val else NULL, retain = retain_chunks)
     } else {
       err <- if (is.list(payload)) payload$error else "unknown worker error"
       ch <- queue$env$in_flight[[as.character(tag)]]
@@ -399,6 +458,23 @@ dispatch_chunks <- function(chunks, fun, ...,
       table_stats$bytes <- table_stats$bytes + (td$table_bytes %||% 0)
     }
 
+    if (is.list(payload) && is.list(payload$scratch_delta)) {
+      sd <- payload$scratch_delta
+      scratch_stats$hits <- scratch_stats$hits + (sd$hits %||% 0L)
+      scratch_stats$misses <- scratch_stats$misses + (sd$misses %||% 0L)
+      scratch_stats$high_water <- max(as.double(scratch_stats$high_water), as.double(sd$high_water %||% 0))
+    }
+
+    if (isTRUE(payload$scratch_needs_recycle)) {
+      # Request a recycle at the next safe point (before the worker is reused).
+      w <- pool$workers[[worker_id]]
+      if (!is.null(w)) {
+        w$needs_recycle <- TRUE
+        pool$workers[[worker_id]] <- w
+        .pool_env$pool <- pool
+      }
+    }
+
     chunks_processed <- chunks_processed + 1L
   }
 
@@ -407,6 +483,7 @@ dispatch_chunks <- function(chunks, fun, ...,
   diag$view_stats <- view_stats
   diag$copy_stats <- copy_stats
   diag$table_stats <- table_stats
+  diag$scratch_stats <- scratch_stats
 
   structure(
     list(

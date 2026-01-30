@@ -115,12 +115,76 @@ report <- function(level = c("summary", "workers", "tasks", "segments"),
     }
   }
 
+  # Performance recommendations (only when a result is provided).
+  if (!is.null(result) && inherits(result, "shard_result")) {
+    rpt$recommendations <- recommendations(result)
+  }
+
   # Segment details (for segments level only)
   if (level == "segments") {
     rpt$segments <- segment_report()
   }
 
   structure(rpt, class = "shard_report")
+}
+
+#' Performance Recommendations
+#'
+#' Uses run telemetry (copy/materialization stats, packing volume, buffer/table
+#' writes, scratch pool stats) to produce actionable recommendations.
+#'
+#' @param result A `shard_result` from [shard_map()].
+#' @return A character vector of recommendations (possibly empty).
+#' @export
+recommendations <- function(result) {
+  if (is.null(result) || !inherits(result, "shard_result")) {
+    stop("result must be a shard_result", call. = FALSE)
+  }
+
+  recs <- character(0)
+
+  cr <- tryCatch(copy_report(result), error = function(e) NULL)
+  if (is.list(cr)) {
+    mb <- as.double(cr$view_materialized_bytes %||% 0)
+    pb <- as.double(cr$view_packed_bytes %||% 0)
+    if (mb > 0) {
+      recs <- c(recs, sprintf(
+        "Views were materialized (%.1f MB). Prefer view_block()/view_gather() and shard-aware kernels to avoid slice copies.",
+        mb / 1024^2
+      ))
+    }
+    if (pb > 0) {
+      recs <- c(recs, sprintf(
+        "Views required packing (%.1f MB). Prefer contiguous/block shards when possible, or use gather-aware kernels to keep packing bounded.",
+        pb / 1024^2
+      ))
+    }
+    bb <- as.double(cr$buffer_bytes %||% 0)
+    if (bb == 0 && (mb > 0 || pb > 0)) {
+      recs <- c(recs, "Consider writing large outputs into explicit buffers (buffer()/table_buffer()/table_sink()) to avoid master-side gather/concat.")
+    }
+  }
+
+  d <- result$diagnostics %||% list()
+  if (is.list(d$scratch_stats)) {
+    hw <- as.double(d$scratch_stats$high_water %||% 0)
+    if (hw > 0) {
+      recs <- c(recs, sprintf(
+        "Scratch pool high-water mark: %.1f MB. If allocations churn, consider using scratch_matrix() (and set scratch_pool_config(max_bytes=...)).",
+        hw / 1024^2
+      ))
+    }
+  }
+
+  if (is.list(d$scheduler) && is.finite(as.double(d$scheduler$throttle_events %||% 0)) &&
+      as.double(d$scheduler$throttle_events %||% 0) > 0) {
+    recs <- c(recs, sprintf(
+      "Scheduler throttled heavy chunks %d times. Consider tuning scheduler_policy (e.g., max_huge_concurrency) or reducing per-shard footprint.",
+      as.integer(d$scheduler$throttle_events)
+    ))
+  }
+
+  unique(recs)
 }
 
 #' Memory Usage Report
@@ -610,6 +674,13 @@ print_main_report <- function(x) {
     cat("\nSegments:\n")
     cat("  Available backings:", paste(x$segments$backing_summary$available, collapse = ", "), "\n")
     cat("  Platform:", x$segments$backing_summary$platform, "\n")
+  }
+
+  if (!is.null(x$recommendations) && length(x$recommendations) > 0) {
+    cat("\nRecommendations:\n")
+    for (r in x$recommendations) {
+      cat("  - ", r, "\n", sep = "")
+    }
   }
 }
 

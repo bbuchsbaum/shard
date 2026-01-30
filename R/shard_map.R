@@ -12,11 +12,17 @@ NULL
 #' @param shards A `shard_descriptor` from [shards()], or an integer N to
 #'   auto-generate shards.
 #' @param fun Function to execute per shard. Receives the shard descriptor
-#'   as first argument, followed by borrowed inputs and outputs.
+#'   as first argument, followed by borrowed inputs and outputs. You can also
+#'   select a registered kernel via `kernel=` instead of providing `fun=`.
 #' @param borrow Named list of shared inputs. These are exported to workers
 #'   once and reused across shards. Treated as read-only by default.
 #' @param out Named list of output buffers (from `buffer()`). Workers write
 #'   results directly to these buffers.
+#' @param kernel Optional. Name of a registered kernel (see [list_kernels()]).
+#'   If provided, `fun` must be NULL.
+#' @param scheduler_policy Optional list of scheduling hints (advanced). Currently:
+#'   - `max_huge_concurrency`: cap concurrent chunks whose kernel footprint is
+#'     classified as `"huge"` (see [register_kernel()]).
 #' @param workers Integer. Number of worker processes. If NULL, uses existing
 #'   pool or creates one with `detectCores() - 1`.
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
@@ -64,9 +70,11 @@ NULL
 #' )
 #' }
 shard_map <- function(shards,
-                      fun,
+                      fun = NULL,
                       borrow = list(),
                       out = list(),
+                      kernel = NULL,
+                      scheduler_policy = NULL,
                       workers = NULL,
                       chunk_size = 1L,
                       profile = c("default", "memory", "speed"),
@@ -83,6 +91,17 @@ shard_map <- function(shards,
   profile <- match.arg(profile)
   cow <- match.arg(cow)
 
+  kernel_meta <- NULL
+  if (!is.null(kernel)) {
+    kernel <- as.character(kernel)
+    km <- get_kernel(kernel)
+    if (is.null(km)) stop("Unknown kernel: ", kernel, call. = FALSE)
+    if (!is.null(fun)) stop("Provide either fun= or kernel=, not both", call. = FALSE)
+    fun <- km$impl
+    kernel_meta <- km
+  }
+  if (!is.function(fun)) stop("fun must be a function (or specify kernel=)", call. = FALSE)
+
   # Start timing
   start_time <- Sys.time()
   diag <- if (diagnostics) {
@@ -90,7 +109,8 @@ shard_map <- function(shards,
       start_time = start_time,
       health_checks = list(),
       shard_times = list(),
-      worker_usage = list()
+      worker_usage = list(),
+      kernel = kernel %||% NULL
     )
   } else {
     NULL
@@ -147,7 +167,7 @@ shard_map <- function(shards,
   }
 
   # Create chunk batches if chunk_size > 1
-  chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out)
+  chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out, kernel_meta = kernel_meta)
 
   # Create self-contained executor function for workers
   chunk_executor <- make_chunk_executor()
@@ -159,7 +179,8 @@ shard_map <- function(shards,
     pool = pool,
     health_check_interval = health_check_interval,
     max_retries = max_retries,
-    timeout = timeout
+    timeout = timeout,
+    scheduler_policy = scheduler_policy
   )
 
   # Collect diagnostics
@@ -173,6 +194,8 @@ shard_map <- function(shards,
     diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
     diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
     diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
+    diag$scratch_stats <- dispatch_result$diagnostics$scratch_stats %||% NULL
+    diag$scheduler <- dispatch_result$diagnostics$scheduler %||% NULL
   }
 
   # Flatten results if chunk_size > 1
@@ -493,7 +516,7 @@ export_out_to_workers <- function(pool, out) {
 #' @param out Output buffers.
 #' @return List of chunk descriptors.
 #' @keywords internal
-create_shard_chunks <- function(shards, chunk_size, fun, borrow, out) {
+create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_meta = NULL) {
   chunk_size <- max(as.integer(chunk_size), 1L)
   num_chunks <- ceiling(shards$num_shards / chunk_size)
 
@@ -502,11 +525,48 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out) {
   borrow_names <- names(borrow)
   out_names <- names(out)
 
+  classify_bytes <- function(bytes) {
+    bytes <- as.double(bytes)
+    if (!is.finite(bytes) || is.na(bytes)) return("tiny")
+    if (bytes >= 64 * 1024^2) return("huge")
+    if (bytes >= 8 * 1024^2) return("medium")
+    "tiny"
+  }
+
   for (i in seq_len(num_chunks)) {
     start_idx <- (i - 1L) * chunk_size + 1L
     end_idx <- min(i * chunk_size, shards$num_shards)
 
     chunk_shards <- shards$shards[start_idx:end_idx]
+
+    # Optional footprint hint for memory-aware scheduling.
+    fp_class <- NULL
+    fp_bytes <- NULL
+    if (!is.null(kernel_meta) && !is.null(kernel_meta$footprint)) {
+      fp <- kernel_meta$footprint
+      if (is.numeric(fp) && length(fp) == 1L) {
+        fp_bytes <- as.double(fp)
+        fp_class <- classify_bytes(fp_bytes)
+      } else if (is.function(fp)) {
+        vals <- lapply(chunk_shards, function(s) {
+          tryCatch(fp(s), error = function(e) NULL)
+        })
+        # Accept either numeric bytes or list(class=..., bytes=...).
+        bytes <- vapply(vals, function(v) {
+          if (is.null(v)) return(NA_real_)
+          if (is.numeric(v)) return(as.double(v[[1]]))
+          if (is.list(v) && !is.null(v$bytes)) return(as.double(v$bytes))
+          NA_real_
+        }, numeric(1))
+        fp_bytes <- suppressWarnings(max(bytes, na.rm = TRUE))
+        if (!is.finite(fp_bytes)) fp_bytes <- NULL
+        cls <- vapply(vals, function(v) {
+          if (is.list(v) && !is.null(v$class)) as.character(v$class) else NA_character_
+        }, character(1))
+        cls <- cls[!is.na(cls) & nzchar(cls)]
+        fp_class <- if (length(cls) > 0) cls[[1]] else if (!is.null(fp_bytes)) classify_bytes(fp_bytes) else NULL
+      }
+    }
 
     chunks[[i]] <- list(
       id = i,
@@ -514,7 +574,9 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out) {
       shards = chunk_shards,
       fun = fun,
       borrow_names = borrow_names,
-      out_names = out_names
+      out_names = out_names,
+      footprint_class = fp_class,
+      footprint_bytes = fp_bytes
     )
   }
 
@@ -612,7 +674,11 @@ make_chunk_executor <- function() {
       }
 
       # Execute user function
-      do.call(fun, args)
+      # `do.call()` has a sharp edge: if an argument value is a language object,
+      # it will be spliced into the call and evaluated (surprising for "data"
+      # being passed through borrow/out). Using quote=TRUE ensures language
+      # objects are passed as values, not executed as code.
+      do.call(fun, args, quote = TRUE)
     })
 
     results
@@ -683,9 +749,8 @@ results <- function(x, flatten = TRUE) {
 #' @return Logical. TRUE if no failures.
 #' @export
 succeeded <- function(x) {
-  if (!inherits(x, "shard_result")) {
-    stop("x must be a shard_result object", call. = FALSE)
+  if (inherits(x, "shard_result") || inherits(x, "shard_reduce_result")) {
+    return(length(x$failures) == 0)
   }
-
-  length(x$failures) == 0
+  stop("x must be a shard_result or shard_reduce_result object", call. = FALSE)
 }

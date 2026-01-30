@@ -24,17 +24,13 @@ test_that("tiled crossprod writes into an output buffer with zero view materiali
 
   tiles <- shard:::tiles2d(n_x = p, n_y = v, block_x = 4L, block_y = 6L)
 
+  expect_true("crossprod_tile" %in% list_kernels())
+
   res <- shard_map(
     tiles,
     borrow = list(X = Xsh, Y = Ysh),
     out = list(Z = Z),
-    fun = function(tile, X, Y, Z) {
-      vX <- view_block(X, cols = idx_range(tile$x_start, tile$x_end))
-      vY <- view_block(Y, cols = idx_range(tile$y_start, tile$y_end))
-      blk <- shard:::view_crossprod(vX, vY)
-      Z[tile$x_start:tile$x_end, tile$y_start:tile$y_end] <- blk
-      NULL
-    },
+    kernel = "crossprod_tile",
     workers = 2,
     diagnostics = TRUE
   )

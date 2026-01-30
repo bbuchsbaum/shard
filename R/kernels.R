@@ -75,13 +75,7 @@ shard_crossprod <- function(X,
     tiles,
     borrow = list(X = Xsh, Y = Ysh),
     out = list(Z = Z),
-    fun = function(tile, X, Y, Z) {
-      vX <- view_block(X, cols = idx_range(tile$x_start, tile$x_end))
-      vY <- view_block(Y, cols = idx_range(tile$y_start, tile$y_end))
-      blk <- view_crossprod(vX, vY)
-      Z[tile$x_start:tile$x_end, tile$y_start:tile$y_end] <- blk
-      NULL
-    },
+    kernel = "crossprod_tile",
     workers = workers,
     diagnostics = diagnostics
   )

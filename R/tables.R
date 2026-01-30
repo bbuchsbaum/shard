@@ -444,7 +444,9 @@ as_tibble.shard_table_handle <- function(x, max_bytes = 256 * 1024^2, ...) {
 #' - This guarantees bounded master memory during execution; final collection
 #'   may still be large if you materialize.
 #'
-#' @param schema A `shard_schema`.
+#' @param schema A `shard_schema`. If NULL, a schema-less sink is created (RDS
+#'   format only). This is primarily intended for doShard/foreach compatibility
+#'   where output schemas may not be known in advance.
 #' @param mode `"row_groups"` (temp, managed) or `"partitioned"` (persistent path).
 #' @param path Directory to write row-group files. If NULL, a temp dir is created.
 #' @param format Storage format for partitions: `"rds"` (data.frame RDS),
@@ -458,7 +460,18 @@ table_sink <- function(schema,
                        format = c("auto", "rds", "native")) {
   mode <- match.arg(mode)
   format <- match.arg(format)
-  if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
+  if (!is.null(schema) && !inherits(schema, "shard_schema")) {
+    stop("schema must be a shard_schema (or NULL for schema-less RDS sinks)", call. = FALSE)
+  }
+
+  # Schema-less sinks are allowed only for the simple RDS format, primarily for
+  # doShard/foreach compatibility. Schema-driven validation/encoding requires a
+  # shard_schema.
+  if (is.null(schema)) {
+    if (!identical(format, "rds")) {
+      format <- "rds"
+    }
+  }
 
   if (identical(format, "auto")) {
     has_string <- any(vapply(schema$columns, function(ct) identical(ct$kind, "string"), logical(1)))
@@ -532,7 +545,9 @@ table_sink <- function(schema,
   # so shard core stays CRAN-friendly.
   if (requireNamespace("jsonlite", quietly = TRUE)) {
     man_json <- man_rds
-    man_json$schema <- .schema_to_plain_list(sink$schema)
+    if (!is.null(sink$schema)) {
+      man_json$schema <- .schema_to_plain_list(sink$schema)
+    }
     tmp <- paste0(.sink_manifest_json_path(sink), ".tmp_", Sys.getpid(), "_", sample.int(1e9, 1))
     jsonlite::write_json(man_json, tmp, auto_unbox = TRUE, pretty = TRUE)
     ok <- file.rename(tmp, .sink_manifest_json_path(sink))
@@ -741,44 +756,49 @@ table_write.shard_table_sink <- function(target, rows_or_shard_id, data, ...) {
   }
   if (!is.data.frame(data)) stop("data must be a data.frame", call. = FALSE)
 
-  sch <- sink$schema$columns
-  if (!setequal(names(data), names(sch))) {
-    missing_cols <- setdiff(names(sch), names(data))
-    extra_cols <- setdiff(names(data), names(sch))
-    msg <- "table_write(sink, ...) data columns must match schema"
-    if (length(missing_cols)) msg <- paste0(msg, "; missing: ", paste(missing_cols, collapse = ", "))
-    if (length(extra_cols)) msg <- paste0(msg, "; extra: ", paste(extra_cols, collapse = ", "))
-    stop(msg, call. = FALSE)
-  }
-
-  # Cast + validate each column.
-  out <- data
-  for (nm in names(sch)) {
-    ct <- sch[[nm]]
-    col <- out[[nm]]
-    if (ct$kind == "factor") {
-      lev <- ct$levels
-      if (is.factor(col)) {
-        chr <- as.character(col)
-      } else if (is.character(col)) {
-        chr <- col
-      } else if (is.integer(col) || is.numeric(col)) {
-        codes <- as.integer(col)
-        chr <- rep(NA_character_, length(codes))
-        ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
-        chr[ok] <- lev[codes[ok]]
-        if (any(!ok & !is.na(codes))) {
-          stop("Invalid factor code in column '", nm, "'", call. = FALSE)
-        }
-      } else {
-        stop("Unsupported factor column input type", call. = FALSE)
-      }
-      bad <- !is.na(chr) & !(chr %in% lev)
-      if (any(bad)) stop("factor levels mismatch in write", call. = FALSE)
-      out[[nm]] <- factor(chr, levels = lev)
-    } else {
-      out[[nm]] <- .table_cast(ct, col)
+  if (!is.null(sink$schema)) {
+    sch <- sink$schema$columns
+    if (!setequal(names(data), names(sch))) {
+      missing_cols <- setdiff(names(sch), names(data))
+      extra_cols <- setdiff(names(data), names(sch))
+      msg <- "table_write(sink, ...) data columns must match schema"
+      if (length(missing_cols)) msg <- paste0(msg, "; missing: ", paste(missing_cols, collapse = ", "))
+      if (length(extra_cols)) msg <- paste0(msg, "; extra: ", paste(extra_cols, collapse = ", "))
+      stop(msg, call. = FALSE)
     }
+
+    # Cast + validate each column.
+    out <- data
+    for (nm in names(sch)) {
+      ct <- sch[[nm]]
+      col <- out[[nm]]
+      if (ct$kind == "factor") {
+        lev <- ct$levels
+        if (is.factor(col)) {
+          chr <- as.character(col)
+        } else if (is.character(col)) {
+          chr <- col
+        } else if (is.integer(col) || is.numeric(col)) {
+          codes <- as.integer(col)
+          chr <- rep(NA_character_, length(codes))
+          ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
+          chr[ok] <- lev[codes[ok]]
+          if (any(!ok & !is.na(codes))) {
+            stop("Invalid factor code in column '", nm, "'", call. = FALSE)
+          }
+        } else {
+          stop("Unsupported factor column input type", call. = FALSE)
+        }
+        bad <- !is.na(chr) & !(chr %in% lev)
+        if (any(bad)) stop("factor levels mismatch in write", call. = FALSE)
+        out[[nm]] <- factor(chr, levels = lev)
+      } else {
+        out[[nm]] <- .table_cast(ct, col)
+      }
+    }
+  } else {
+    # Schema-less sink: accept the data.frame as-is and persist as RDS.
+    out <- data
   }
 
   p <- .sink_part_path(sink, shard_id)

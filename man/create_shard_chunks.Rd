@@ -4,7 +4,7 @@
 \alias{create_shard_chunks}
 \title{Create Shard Chunks}
 \usage{
-create_shard_chunks(shards, chunk_size, fun, borrow, out)
+create_shard_chunks(shards, chunk_size, fun, borrow, out, kernel_meta = NULL)
 }
 \arguments{
 \item{shards}{Shard descriptor.}
