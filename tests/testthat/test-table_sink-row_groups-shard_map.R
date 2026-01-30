@@ -22,7 +22,7 @@ test_that("table_sink(row_groups) can be used as an out= target in shard_map", {
         df <- data.frame(
           id = as.integer(shard$idx),
           grp = rep("even", length(shard$idx)),
-          msg = paste0("x", shard$idx),
+          msg = ifelse(shard$idx == 5L, NA_character_, paste0("x", shard$idx)),
           val = as.double(shard$idx) * 0.25,
           stringsAsFactors = FALSE
         )
@@ -53,10 +53,13 @@ test_that("table_sink(row_groups) can be used as an out= target in shard_map", {
   }))
 
   expect_equal(df$id, as.integer(expected_idx))
-  expect_equal(df$msg, paste0("x", expected_idx))
+  expected_msg <- paste0("x", expected_idx)
+  if (5L %in% expected_idx) {
+    expected_msg[which(expected_idx == 5L)] <- NA_character_
+  }
+  expect_equal(df$msg, expected_msg)
   expect_equal(df$val, as.double(expected_idx) * 0.25)
 
   unlink(sink_path, recursive = TRUE, force = TRUE)
   pool_stop()
 })
-

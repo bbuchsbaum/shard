@@ -447,13 +447,23 @@ as_tibble.shard_table_handle <- function(x, max_bytes = 256 * 1024^2, ...) {
 #' @param schema A `shard_schema`.
 #' @param mode `"row_groups"` (temp, managed) or `"partitioned"` (persistent path).
 #' @param path Directory to write row-group files. If NULL, a temp dir is created.
+#' @param format Storage format for partitions: `"rds"` (data.frame RDS),
+#'   `"native"` (columnar encoding with string offsets+bytes), or `"auto"`
+#'   (selects `"native"` if the schema contains `string_col()`; otherwise `"rds"`).
 #' @return A `shard_table_sink`.
 #' @export
 table_sink <- function(schema,
                        mode = c("row_groups", "partitioned"),
-                       path = NULL) {
+                       path = NULL,
+                       format = c("auto", "rds", "native")) {
   mode <- match.arg(mode)
+  format <- match.arg(format)
   if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
+
+  if (identical(format, "auto")) {
+    has_string <- any(vapply(schema$columns, function(ct) identical(ct$kind, "string"), logical(1)))
+    format <- if (has_string) "native" else "rds"
+  }
 
   if (is.null(path)) {
     path <- file.path(tempdir(), paste0("shard_table_sink_", unique_id()))
@@ -461,7 +471,7 @@ table_sink <- function(schema,
   if (!dir.exists(path)) dir.create(path, recursive = TRUE, showWarnings = FALSE)
 
   structure(
-    list(schema = schema, mode = mode, path = path, format = "rds"),
+    list(schema = schema, mode = mode, path = path, format = format),
     class = "shard_table_sink"
   )
 }
@@ -543,6 +553,117 @@ table_sink <- function(schema,
   invisible(NULL)
 }
 
+.table_part_native_encode_string <- function(x) {
+  x <- as.character(x)
+  n <- length(x)
+  is_na <- is.na(x)
+  x0 <- x
+  x0[is_na] <- ""
+
+  # Ensure stable byte encoding.
+  x0 <- enc2utf8(x0)
+
+  lens <- vapply(x0, function(s) length(charToRaw(s)), integer(1))
+  total <- sum(lens)
+  if (total > .Machine$integer.max) {
+    stop("String payload too large for native encoding", call. = FALSE)
+  }
+
+  bytes <- raw(total)
+  offsets <- integer(n + 1L)
+  pos <- 0L
+  offsets[1] <- 0L
+
+  for (i in seq_len(n)) {
+    l <- lens[[i]]
+    if (l > 0L) {
+      b <- charToRaw(x0[[i]])
+      bytes[(pos + 1L):(pos + l)] <- b
+      pos <- pos + l
+    }
+    offsets[i + 1L] <- pos
+  }
+
+  structure(
+    list(offsets = offsets, bytes = bytes, is_na = is_na),
+    class = "shard_string_blob"
+  )
+}
+
+.table_part_native_decode_string <- function(blob) {
+  if (!inherits(blob, "shard_string_blob")) stop("blob must be a shard_string_blob", call. = FALSE)
+  offsets <- blob$offsets
+  bytes <- blob$bytes
+  is_na <- blob$is_na
+  n <- length(is_na)
+
+  out <- character(n)
+  for (i in seq_len(n)) {
+    if (isTRUE(is_na[[i]])) {
+      out[[i]] <- NA_character_
+      next
+    }
+    s <- offsets[[i]]
+    e <- offsets[[i + 1L]]
+    if (e <= s) {
+      out[[i]] <- ""
+    } else {
+      out[[i]] <- rawToChar(bytes[(s + 1L):e])
+    }
+  }
+  out
+}
+
+.table_part_native_encode <- function(df, schema) {
+  if (!is.data.frame(df)) stop("df must be a data.frame", call. = FALSE)
+  if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
+
+  cols <- schema$columns
+  out_cols <- list()
+  for (nm in names(cols)) {
+    ct <- cols[[nm]]
+    v <- df[[nm]]
+    if (ct$kind == "string") {
+      out_cols[[nm]] <- .table_part_native_encode_string(v)
+    } else if (ct$kind == "factor") {
+      out_cols[[nm]] <- as.integer(v)
+    } else {
+      out_cols[[nm]] <- v
+    }
+  }
+  structure(
+    list(encoding = "native1", nrow = nrow(df), columns = out_cols),
+    class = "shard_table_part_native"
+  )
+}
+
+.table_part_native_decode <- function(part, schema) {
+  if (!inherits(part, "shard_table_part_native")) stop("part must be shard_table_part_native", call. = FALSE)
+  if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
+
+  cols <- schema$columns
+  out <- list()
+  for (nm in names(cols)) {
+    ct <- cols[[nm]]
+    v <- part$columns[[nm]]
+    if (ct$kind == "string") {
+      out[[nm]] <- .table_part_native_decode_string(v)
+    } else if (ct$kind == "factor") {
+      lev <- ct$levels
+      codes <- as.integer(v)
+      chr <- rep(NA_character_, length(codes))
+      ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
+      chr[ok] <- lev[codes[ok]]
+      out[[nm]] <- factor(chr, levels = lev)
+    } else if (ct$kind == "bool") {
+      out[[nm]] <- as.logical(v)
+    } else {
+      out[[nm]] <- v
+    }
+  }
+  as.data.frame(out, stringsAsFactors = FALSE)
+}
+
 #' Write a shard's row-group output
 #'
 #' @param target A `shard_table_sink`.
@@ -604,7 +725,12 @@ table_write.shard_table_sink <- function(target, rows_or_shard_id, data, ...) {
   }
 
   p <- .sink_part_path(sink, shard_id)
-  .sink_atomic_write_rds(out, p)
+  if (identical(sink$format, "native")) {
+    part <- .table_part_native_encode(out, sink$schema)
+    .sink_atomic_write_rds(part, p)
+  } else {
+    .sink_atomic_write_rds(out, p)
+  }
 
   n <- nrow(out)
   sz <- tryCatch(file.info(p)$size, error = function(e) NA_real_)
@@ -662,11 +788,16 @@ iterate_row_groups <- function(x) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
   }
   files <- x$files
+  schema <- x$schema
   i <- 0L
   function() {
     i <<- i + 1L
     if (i > length(files)) return(NULL)
-    readRDS(files[[i]])
+    obj <- readRDS(files[[i]])
+    if (inherits(obj, "shard_table_part_native")) {
+      return(.table_part_native_decode(obj, schema))
+    }
+    obj
   }
 }
 

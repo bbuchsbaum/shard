@@ -4,7 +4,12 @@
 \alias{table_sink}
 \title{Create a table sink for row-group or partitioned outputs}
 \usage{
-table_sink(schema, mode = c("row_groups", "partitioned"), path = NULL)
+table_sink(
+  schema,
+  mode = c("row_groups", "partitioned"),
+  path = NULL,
+  format = c("auto", "rds", "native")
+)
 }
 \arguments{
 \item{schema}{A \code{shard_schema}.}
@@ -12,6 +17,10 @@ table_sink(schema, mode = c("row_groups", "partitioned"), path = NULL)
 \item{mode}{\code{"row_groups"} (temp, managed) or \code{"partitioned"} (persistent path).}
 
 \item{path}{Directory to write row-group files. If NULL, a temp dir is created.}
+
+\item{format}{Storage format for partitions: \code{"rds"} (data.frame RDS),
+\code{"native"} (columnar encoding with string offsets+bytes), or \code{"auto"}
+(selects \code{"native"} if the schema contains \code{string_col()}; otherwise \code{"rds"}).}
 }
 \value{
 A \code{shard_table_sink}.

@@ -18,7 +18,7 @@ test_that("table_sink(partitioned) writes a manifest and can be collected", {
       df <- data.frame(
         id = as.integer(shard$idx),
         grp = rep(grp, length(shard$idx)),
-        msg = paste0("x", shard$idx),
+        msg = ifelse(shard$idx == 3L, "", paste0("x", shard$idx)),
         val = as.double(shard$idx) * 0.1,
         stringsAsFactors = FALSE
       )
@@ -40,10 +40,11 @@ test_that("table_sink(partitioned) writes a manifest and can be collected", {
   df <- as.data.frame(df, stringsAsFactors = FALSE)
 
   expect_equal(df$id, as.integer(1:12))
-  expect_equal(df$msg, paste0("x", 1:12))
+  expected_msg <- paste0("x", 1:12)
+  expected_msg[3] <- ""
+  expect_equal(df$msg, expected_msg)
   expect_equal(df$val, as.double(1:12) * 0.1)
 
   unlink(out_path, recursive = TRUE, force = TRUE)
   pool_stop()
 })
-
