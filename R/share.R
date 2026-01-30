@@ -84,9 +84,9 @@ validate_serializable <- function(x, path = "x") {
 
     # Recursively check S4 slots
     if (isS4(x)) {
-        slot_names <- slotNames(x)
+        slot_names <- methods::slotNames(x)
         for (sn in slot_names) {
-            validate_serializable(slot(x, sn), paste0(path, "@", sn))
+            validate_serializable(methods::slot(x, sn), paste0(path, "@", sn))
         }
     }
 
@@ -95,17 +95,12 @@ validate_serializable <- function(x, path = "x") {
 
 # Helper: get object identity (memory address) for alias detection
 object_identity <- function(x) {
-    # Use data.table::address() if available for more reliable address extraction
-    # Fall back to lobstr::obj_addr() or manual extraction from capture.output
-    if (requireNamespace("data.table", quietly = TRUE)) {
-        return(data.table::address(x))
-    }
-    # Extract memory address from environment representation
-    # This gives consistent identity for the same object
-    addr <- capture.output(.Internal(inspect(x)))[1]
-    # Extract the hex address from the output
-    m <- regmatches(addr, regexpr("@[0-9a-f]+", addr))
-    if (length(m) > 0) m else paste0("obj_", sample.int(1e9, 1))
+    # Prefer a stable, API-safe address token from C. This avoids using
+    # .Internal(inspect()), which is not part of R's public API.
+    tryCatch(
+        .Call("C_shard_obj_address", x, PACKAGE = "shard"),
+        error = function(e) paste0("obj_", sample.int(1e9, 1))
+    )
 }
 
 # Helper: check if object is a shareable atomic type
@@ -114,7 +109,9 @@ is_shareable_atomic <- function(x) {
     # Not shareable: character, lists, environments, functions, etc.
     if (is.atomic(x) && !is.null(x)) {
         mode <- typeof(x)
-        return(mode %in% c("double", "integer", "logical", "raw", "complex"))
+        # Complex is intentionally excluded: shard ALTREP currently supports
+        # double/integer/logical/raw only.
+        return(mode %in% c("double", "integer", "logical", "raw"))
     }
     FALSE
 }
@@ -446,7 +443,7 @@ share_deep_traverse <- function(x,
 
     # Determine what to do with this object
     should_share <- is_shareable_atomic(x) &&
-        (force_share || object.size(x) >= min_bytes)
+        (force_share || utils::object.size(x) >= min_bytes)
 
     if (should_share) {
         # Share this atomic object
@@ -709,12 +706,14 @@ share_deep_traverse <- function(x,
 # Internal: reconstruct object from deep shared structure
 fetch_deep_reconstruct <- function(node) {
     if (inherits(node, "shard_deep_node")) {
-        # Shared atomic - fetch from shared segment
-        return(fetch(node$shared))
+        # Shared leaf - fetch and materialize so reconstruction yields ordinary
+        # R objects (important for S4 slot assignment and for equality checks
+        # against the original, non-shared objects).
+        return(materialize(fetch(node$shared)))
     } else if (inherits(node, "shard_deep_alias")) {
         # Alias - fetch from the original shared segment or return kept value
         if (!is.null(node$shared)) {
-            return(fetch(node$shared))
+            return(materialize(fetch(node$shared)))
         } else {
             # Alias to a kept value - return the stored value
             return(node$value)
@@ -889,7 +888,20 @@ share <- function(x,
         count_nodes <- function(node) {
             if (inherits(node, "shard_deep_node")) {
                 shared_count <<- shared_count + 1
-                total_shared_bytes <<- total_shared_bytes + node$shared$size
+                if (inherits(node$shared, "shard_shared")) {
+                    total_shared_bytes <<- total_shared_bytes + node$shared$size
+                } else if (is_shared_vector(node$shared)) {
+                    elem_size <- switch(typeof(node$shared),
+                        "integer" = 4L,
+                        "double"  = 8L,
+                        "logical" = 4L,
+                        "raw"     = 1L,
+                        NA_integer_
+                    )
+                    if (!is.na(elem_size)) {
+                        total_shared_bytes <<- total_shared_bytes + length(node$shared) * elem_size
+                    }
+                }
             } else if (inherits(node, "shard_deep_alias")) {
                 alias_count <<- alias_count + 1
             } else if (inherits(node, "shard_deep_cycle")) {
@@ -930,6 +942,32 @@ share <- function(x,
             ),
             class = "shard_deep_shared"
         ))
+    }
+
+    # Fast path: shareable atomic vectors/matrices/arrays become ALTREP-backed
+    # shared vectors. This avoids per-worker serialization of large inputs.
+    if (is.atomic(x) && !is.null(x) &&
+        typeof(x) %in% c("double", "integer", "logical", "raw") &&
+        !is_shared_vector(x)) {
+        cow <- if (isTRUE(readonly)) "deny" else "allow"
+        # Build with cow='allow' so we can attach attributes, then lock down
+        # by setting shard_cow to the requested policy.
+        shared <- as_shared(x, readonly = readonly, backing = backing, cow = "allow")
+
+        # Preserve non-class attributes (dim, dimnames, names, tsp, etc).
+        attrs <- attributes(x)
+        x_class <- attr(x, "class")
+        attrs$class <- NULL
+        if (length(attrs)) {
+            for (nm in names(attrs)) {
+                attr(shared, nm) <- attrs[[nm]]
+            }
+        }
+
+        # Preserve any underlying class (e.g., Date) behind the wrapper class.
+        class(shared) <- unique(c("shard_shared_vector", x_class))
+        attr(shared, "shard_cow") <- cow
+        return(shared)
     }
 
     # Standard (non-deep) sharing: serialize entire object
@@ -1081,7 +1119,23 @@ materialize.shard_shared <- function(x) {
 materialize.default <- function(x) {
     # Handle shard ALTREP vectors (from shared_vector/as_shared)
     if (is_shared_vector(x)) {
-        return(.Call("C_shard_altrep_materialize", x, PACKAGE = "shard"))
+        out <- .Call("C_shard_altrep_materialize", x, PACKAGE = "shard")
+
+        # Restore non-shard attributes (dim, dimnames, names, and any original
+        # underlying class like Date/POSIXct behind the wrapper class).
+        attrs <- attributes(x)
+        if (!is.null(attrs)) {
+            attrs$shard_cow <- NULL
+            attrs$shard_readonly <- NULL
+
+            cls <- class(x)
+            cls2 <- setdiff(cls, "shard_shared_vector")
+            attrs$class <- if (length(cls2)) cls2 else NULL
+
+            attributes(out) <- attrs
+        }
+
+        return(out)
     }
     x
 }
@@ -1101,6 +1155,20 @@ close.shard_shared <- function(con, ...) {
     if (!is.null(con$segment)) {
         segment_close(con$segment, unlink = TRUE)
     }
+    invisible(NULL)
+}
+
+#' @export
+#' @method close shard_shared_vector
+close.shard_shared_vector <- function(con, ...) {
+    if (!is_shared_vector(con)) {
+        stop("con must be a shard ALTREP vector", call. = FALSE)
+    }
+
+    ptr <- shared_segment(con)
+    info <- .Call("C_shard_segment_info", ptr, PACKAGE = "shard")
+    unlink <- isTRUE(info$owns)
+    .Call("C_shard_segment_close", ptr, unlink, PACKAGE = "shard")
     invisible(NULL)
 }
 
@@ -1127,7 +1195,8 @@ close.shard_deep_shared <- function(con, ...) {
 #' is_shared(share(1:10))  # TRUE
 #' is_shared(1:10)         # FALSE
 is_shared <- function(x) {
-    inherits(x, c("shard_shared", "shard_deep_shared"))
+    inherits(x, c("shard_shared", "shard_deep_shared", "shard_shared_vector")) ||
+        (is.atomic(x) && is_shared_vector(x))
 }
 
 #' Get Information About a Shared Object
@@ -1136,16 +1205,41 @@ is_shared <- function(x) {
 #' @return A list with detailed information about the shared segment.
 #' @export
 shared_info <- function(x) {
-    stopifnot(inherits(x, "shard_shared"))
+    if (inherits(x, "shard_shared")) {
+        return(list(
+            path = x$path,
+            backing = x$backing,
+            size = x$size,
+            readonly = x$readonly,
+            class_info = x$class_info,
+            segment_info = if (!is.null(x$segment)) segment_info(x$segment) else NULL
+        ))
+    }
 
-    list(
-        path = x$path,
-        backing = x$backing,
-        size = x$size,
-        readonly = x$readonly,
-        class_info = x$class_info,
-        segment_info = if (!is.null(x$segment)) segment_info(x$segment) else NULL
-    )
+    if (is.atomic(x) && is_shared_vector(x)) {
+        ptr <- shared_segment(x)
+        sinfo <- .Call("C_shard_segment_info", ptr, PACKAGE = "shard")
+
+        class_info <- if (is.matrix(x)) {
+            list(type = "matrix", dim = dim(x), mode = typeof(x))
+        } else if (is.array(x) && length(dim(x)) > 1L) {
+            list(type = "array", dim = dim(x), mode = typeof(x))
+        } else {
+            list(type = "vector", length = length(x), mode = typeof(x))
+        }
+
+        return(list(
+            path = sinfo$path,
+            backing = sinfo$backing,
+            size = sinfo$size,
+            readonly = sinfo$readonly,
+            class_info = class_info,
+            segment_info = sinfo
+        ))
+    }
+
+    stop("shared_info() expects a shard_shared object or shard shared vector.",
+         call. = FALSE)
 }
 
 #' @export

@@ -1,5 +1,20 @@
 # Tests for deep sharing hook system
 
+.shard_test_register_hook <- function(class, fun) {
+    nm <- paste0("shard_share_hook.", class)
+    # S3 method lookup for UseMethod() will find methods in the global env,
+    # and we avoid mutating the (locked) package namespace.
+    assign(nm, fun, envir = globalenv())
+    nm
+}
+
+.shard_test_unregister_hook <- function(name) {
+    if (exists(name, envir = globalenv(), inherits = FALSE)) {
+        rm(list = name, envir = globalenv())
+    }
+    invisible(NULL)
+}
+
 test_that("default hook returns empty list (no-op)", {
     x <- list(a = 1:10)
     ctx <- list(
@@ -22,12 +37,9 @@ test_that("hook with skip_paths prevents traversal", {
     setClass("SkipPathTest", slots = c(data = "numeric", cache = "list"))
 
     # Create hook that skips the cache
-    shard_share_hook.SkipPathTest <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("SkipPathTest", function(x, ctx) {
         list(skip_paths = paste0(ctx$path, "@cache"))
-    }
-
-    # Register the method
-    registerS3method("shard_share_hook", "SkipPathTest", shard_share_hook.SkipPathTest)
+    })
 
     obj <- new("SkipPathTest",
                data = rnorm(10000),  # Large enough to share
@@ -48,7 +60,7 @@ test_that("hook with skip_paths prevents traversal", {
     close(shared)
 
     # Clean up
-    rm(shard_share_hook.SkipPathTest, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("SkipPathTest")
 })
 
@@ -60,11 +72,9 @@ test_that("hook with skip_slots prevents slot traversal for S4 objects", {
     ))
 
     # Hook that skips cache slot
-    shard_share_hook.CacheModel <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("CacheModel", function(x, ctx) {
         list(skip_slots = "cache")
-    }
-
-    registerS3method("shard_share_hook", "CacheModel", shard_share_hook.CacheModel)
+    })
 
     obj <- new("CacheModel",
                coefficients = rnorm(10000),
@@ -84,7 +94,7 @@ test_that("hook with skip_slots prevents slot traversal for S4 objects", {
 
     close(shared)
 
-    rm(shard_share_hook.CacheModel, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("CacheModel")
 })
 
@@ -95,11 +105,9 @@ test_that("hook with force_share_paths shares small objects", {
         unimportant_large = "numeric"
     ))
 
-    shard_share_hook.ForceShareTest <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("ForceShareTest", function(x, ctx) {
         list(force_share_paths = paste0(ctx$path, "@important_small"))
-    }
-
-    registerS3method("shard_share_hook", "ForceShareTest", shard_share_hook.ForceShareTest)
+    })
 
     obj <- new("ForceShareTest",
                important_small = 1:10,  # Small - normally wouldn't be shared
@@ -120,7 +128,7 @@ test_that("hook with force_share_paths shares small objects", {
 
     close(shared)
 
-    rm(shard_share_hook.ForceShareTest, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("ForceShareTest")
 })
 
@@ -128,7 +136,7 @@ test_that("hook with rewrite transforms object before sharing", {
     # Class that has lazy data needing materialization
     setClass("LazyData", slots = c(data = "ANY", materialized = "logical"))
 
-    shard_share_hook.LazyData <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("LazyData", function(x, ctx) {
         list(
             rewrite = function(obj) {
                 # Transform the object - e.g., materialize lazy data
@@ -136,9 +144,7 @@ test_that("hook with rewrite transforms object before sharing", {
                 obj
             }
         )
-    }
-
-    registerS3method("shard_share_hook", "LazyData", shard_share_hook.LazyData)
+    })
 
     obj <- new("LazyData", data = rnorm(10000), materialized = FALSE)
 
@@ -153,18 +159,16 @@ test_that("hook with rewrite transforms object before sharing", {
 
     close(shared)
 
-    rm(shard_share_hook.LazyData, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("LazyData")
 })
 
 test_that("hook errors in strict mode propagate", {
     setClass("ErrorHook", slots = c(data = "numeric"))
 
-    shard_share_hook.ErrorHook <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("ErrorHook", function(x, ctx) {
         stop("Deliberate hook error")
-    }
-
-    registerS3method("shard_share_hook", "ErrorHook", shard_share_hook.ErrorHook)
+    })
 
     obj <- new("ErrorHook", data = rnorm(10000))
 
@@ -173,18 +177,16 @@ test_that("hook errors in strict mode propagate", {
         "Hook error in strict mode"
     )
 
-    rm(shard_share_hook.ErrorHook, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("ErrorHook")
 })
 
 test_that("hook errors in balanced mode continue and track error", {
     setClass("ErrorHookBalanced", slots = c(data = "numeric"))
 
-    shard_share_hook.ErrorHookBalanced <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("ErrorHookBalanced", function(x, ctx) {
         stop("Deliberate hook error for balanced mode")
-    }
-
-    registerS3method("shard_share_hook", "ErrorHookBalanced", shard_share_hook.ErrorHookBalanced)
+    })
 
     obj <- new("ErrorHookBalanced", data = rnorm(10000))
 
@@ -203,7 +205,7 @@ test_that("hook errors in balanced mode continue and track error", {
 
     close(shared)
 
-    rm(shard_share_hook.ErrorHookBalanced, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("ErrorHookBalanced")
 })
 
@@ -218,12 +220,10 @@ test_that("custom class hook dispatches correctly", {
     )
 
     # Define hook for this class
-    shard_share_hook.MyCustomClass <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("MyCustomClass", function(x, ctx) {
         # Force share small_data even though it's tiny
         list(force_share_paths = paste0(ctx$path, "$small_data"))
-    }
-
-    registerS3method("shard_share_hook", "MyCustomClass", shard_share_hook.MyCustomClass)
+    })
 
     # With very high threshold, normally nothing would be shared
     shared <- share(my_object, deep = TRUE, min_bytes = 1000000)
@@ -237,7 +237,7 @@ test_that("custom class hook dispatches correctly", {
 
     close(shared)
 
-    rm(shard_share_hook.MyCustomClass, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
 })
 
 test_that("hook context contains correct information", {
@@ -245,12 +245,10 @@ test_that("hook context contains correct information", {
 
     setClass("ContextCapture", slots = c(data = "numeric"))
 
-    shard_share_hook.ContextCapture <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("ContextCapture", function(x, ctx) {
         captured_ctx <<- ctx
         list()
-    }
-
-    registerS3method("shard_share_hook", "ContextCapture", shard_share_hook.ContextCapture)
+    })
 
     obj <- new("ContextCapture", data = rnorm(100))
 
@@ -266,22 +264,20 @@ test_that("hook context contains correct information", {
 
     close(shared)
 
-    rm(shard_share_hook.ContextCapture, captured_ctx, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("ContextCapture")
 })
 
 test_that("hook rewrite error in strict mode propagates", {
     setClass("RewriteError", slots = c(data = "numeric"))
 
-    shard_share_hook.RewriteError <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("RewriteError", function(x, ctx) {
         list(
             rewrite = function(obj) {
                 stop("Rewrite failed!")
             }
         )
-    }
-
-    registerS3method("shard_share_hook", "RewriteError", shard_share_hook.RewriteError)
+    })
 
     obj <- new("RewriteError", data = rnorm(100))
 
@@ -290,22 +286,20 @@ test_that("hook rewrite error in strict mode propagates", {
         "Rewrite function error"
     )
 
-    rm(shard_share_hook.RewriteError, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("RewriteError")
 })
 
 test_that("hook rewrite error in balanced mode continues", {
     setClass("RewriteErrorBalanced", slots = c(data = "numeric"))
 
-    shard_share_hook.RewriteErrorBalanced <- function(x, ctx) {
+    hook_name <- .shard_test_register_hook("RewriteErrorBalanced", function(x, ctx) {
         list(
             rewrite = function(obj) {
                 stop("Rewrite failed in balanced!")
             }
         )
-    }
-
-    registerS3method("shard_share_hook", "RewriteErrorBalanced", shard_share_hook.RewriteErrorBalanced)
+    })
 
     obj <- new("RewriteErrorBalanced", data = rnorm(10000))
 
@@ -323,7 +317,7 @@ test_that("hook rewrite error in balanced mode continues", {
 
     close(shared)
 
-    rm(shard_share_hook.RewriteErrorBalanced, envir = globalenv())
+    .shard_test_unregister_hook(hook_name)
     removeClass("RewriteErrorBalanced")
 })
 

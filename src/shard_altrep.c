@@ -7,10 +7,14 @@
  *
  * ALTREP data layout:
  *   data1: External pointer to shard_altrep_info struct
- *   data2: Parent ALTREP vector (for views) or R_NilValue
+ *   data2: Either:
+ *     - R_NilValue (normal case / views)
+ *     - A non-ALTREP vector holding a private materialized copy (COW on write)
  *
  * The shard_altrep_info struct contains:
  *   - Pointer to the segment external pointer (to prevent GC)
+ *   - Optional parent ALTREP (views) so derived views can "see" a parent's
+ *     materialized copy, if one exists
  *   - Byte offset into segment
  *   - Element count
  *   - Element size in bytes
@@ -26,14 +30,16 @@
 /* Info struct stored in ALTREP data1 */
 typedef struct shard_altrep_info {
     SEXP segment_ptr;        /* External pointer to segment (protected) */
+    SEXP parent;             /* Parent ALTREP for views (or R_NilValue) */
     size_t offset;           /* Byte offset into segment */
     R_xlen_t length;         /* Number of elements */
     size_t element_size;     /* Size of each element in bytes */
     int readonly;            /* Read-only flag */
+    int deny_write;          /* Error on write attempts when readonly (cow='deny') */
     int sexp_type;           /* R type (INTSXP, REALSXP, etc.) */
 
     /* Diagnostic counters */
-    R_xlen_t dataptr_calls;      /* Times DATAPTR was called */
+    R_xlen_t dataptr_calls;      /* Times a data pointer was requested */
     R_xlen_t materialize_calls;  /* Times vector was materialized */
 } shard_altrep_info_t;
 
@@ -57,6 +63,20 @@ static shard_segment_t *get_segment(shard_altrep_info_t *info) {
     return (shard_segment_t *)R_ExternalPtrAddr(info->segment_ptr);
 }
 
+/* Helper: Return the underlying data pointer for a standard (non-ALTREP)
+ * atomic vector of the given type. Avoid R's internal dataptr macro so
+ * R CMD check does not flag non-API usage. */
+static void *vec_data_ptr(SEXP v, int type) {
+    if (TYPEOF(v) != type) return NULL;
+    switch (type) {
+        case INTSXP: return (void *)INTEGER(v);
+        case REALSXP: return (void *)REAL(v);
+        case LGLSXP: return (void *)LOGICAL(v);
+        case RAWSXP: return (void *)RAW(v);
+        default: return NULL;
+    }
+}
+
 /* Helper: Get data pointer for the vector.
  * If the vector has been materialized (data2 is a non-ALTREP vector), returns that.
  * Note: Views store the parent ALTREP in data2 for reference counting, so we
@@ -66,7 +86,32 @@ static void *get_data_ptr(SEXP x, shard_altrep_info_t *info) {
     SEXP data2 = R_altrep_data2(x);
     if (data2 != R_NilValue && !ALTREP(data2)) {
         /* data2 is a regular vector - this is our materialized COW copy */
-        return DATAPTR(data2);
+        return vec_data_ptr(data2, TYPEOF(data2));
+    }
+
+    /*
+     * If this is a view, and the parent (or an ancestor) has been
+     * materialized, use the ancestor's materialized copy. This ensures that
+     * subviews of a materialized view see the updated data.
+     */
+    shard_altrep_info_t *cur_info = info;
+    while (cur_info && cur_info->parent != R_NilValue && ALTREP(cur_info->parent)) {
+        SEXP parent = cur_info->parent;
+        shard_altrep_info_t *pinfo = get_info(parent);
+        if (!pinfo) break;
+
+        SEXP p_data2 = R_altrep_data2(parent);
+        if (p_data2 != R_NilValue && !ALTREP(p_data2)) {
+            size_t delta = 0;
+            if (info->offset >= pinfo->offset) {
+                delta = info->offset - pinfo->offset;
+            }
+            /* delta is in bytes */
+            void *pbase = vec_data_ptr(p_data2, TYPEOF(p_data2));
+            return pbase ? (char *)pbase + delta : NULL;
+        }
+
+        cur_info = pinfo;
     }
 
     /* Otherwise use the shared memory segment */
@@ -85,6 +130,9 @@ static void info_finalizer(SEXP ptr) {
     if (info) {
         /* Release protection of segment_ptr */
         R_ReleaseObject(info->segment_ptr);
+        if (info->parent != R_NilValue) {
+            R_ReleaseObject(info->parent);
+        }
         free(info);
         R_ClearExternalPtr(ptr);
     }
@@ -153,8 +201,9 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
         SEXP result = PROTECT(allocVector(info->sexp_type, n));
 
         void *src = get_data_ptr(x, info);
-        if (src) {
-            memcpy(DATAPTR(result), src, n * info->element_size);
+        void *dst = vec_data_ptr(result, info->sexp_type);
+        if (src && dst) {
+            memcpy(dst, src, n * info->element_size);
         }
         UNPROTECT(1);
         return result;
@@ -167,9 +216,11 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
     memcpy(new_info, info, sizeof(shard_altrep_info_t));
     new_info->dataptr_calls = 0;
     new_info->materialize_calls = 0;
+    new_info->parent = x;
 
     /* Protect segment reference */
     R_PreserveObject(new_info->segment_ptr);
+    R_PreserveObject(new_info->parent);
 
     SEXP info_ptr = PROTECT(R_MakeExternalPtr(new_info, R_NilValue, R_NilValue));
     R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
@@ -177,6 +228,15 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
     /* Create new ALTREP object */
     R_altrep_class_t cls = get_class_for_type(info->sexp_type);
     SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+
+    /* Preserve user-visible attributes needed for policy enforcement */
+    setAttrib(result, R_ClassSymbol, getAttrib(x, R_ClassSymbol));
+    {
+        SEXP sym_cow = install("shard_cow");
+        SEXP sym_ro = install("shard_readonly");
+        setAttrib(result, sym_cow, getAttrib(x, sym_cow));
+        setAttrib(result, sym_ro, getAttrib(x, sym_ro));
+    }
 
     UNPROTECT(1);
     return result;
@@ -194,22 +254,154 @@ static SEXP altrep_serialized_state(SEXP x) {
     shard_altrep_info_t *info = get_info(x);
     if (!info) return R_NilValue;
 
-    /* Materialize and return as standard vector */
-    info->materialize_calls++;
-    R_xlen_t n = info->length;
-    SEXP result = PROTECT(allocVector(info->sexp_type, n));
-
-    void *src = get_data_ptr(x, info);
-    if (src) {
-        memcpy(DATAPTR(result), src, n * info->element_size);
+    /*
+     * Serialize as a small reopenable descriptor (path/backing/offset/length).
+     *
+     * This is critical for PSOCK clusters: sending a large materialized vector
+     * defeats the whole point of shared segments. Workers can re-open the
+     * segment by path/name and rebuild the ALTREP wrapper.
+     *
+     * Fallback: if the segment isn't reopenable (no path/name), materialize.
+     */
+    shard_segment_t *seg = get_segment(info);
+    if (!seg || !seg->path) {
+        info->materialize_calls++;
+        R_xlen_t n = info->length;
+        SEXP result = PROTECT(allocVector(info->sexp_type, n));
+        void *src = get_data_ptr(x, info);
+        void *dst = vec_data_ptr(result, info->sexp_type);
+        if (src && dst) {
+            memcpy(dst, src, n * info->element_size);
+        }
+        UNPROTECT(1);
+        return result;
     }
-    UNPROTECT(1);
-    return result;
+
+    SEXP state = PROTECT(allocVector(VECSXP, 7));
+    SEXP names = PROTECT(allocVector(STRSXP, 7));
+
+    SET_STRING_ELT(names, 0, mkChar("path"));
+    SET_STRING_ELT(names, 1, mkChar("backing"));
+    SET_STRING_ELT(names, 2, mkChar("offset"));
+    SET_STRING_ELT(names, 3, mkChar("length"));
+    SET_STRING_ELT(names, 4, mkChar("readonly"));
+    SET_STRING_ELT(names, 5, mkChar("cow"));
+    SET_STRING_ELT(names, 6, mkChar("type"));
+    setAttrib(state, R_NamesSymbol, names);
+
+    SET_VECTOR_ELT(state, 0, ScalarString(mkChar(seg->path)));
+    SET_VECTOR_ELT(state, 1, ScalarInteger((int)seg->backing));
+    SET_VECTOR_ELT(state, 2, ScalarReal((double)info->offset));
+    SET_VECTOR_ELT(state, 3, ScalarReal((double)info->length));
+    SET_VECTOR_ELT(state, 4, ScalarLogical(info->readonly));
+    {
+        SEXP sym_cow = install("shard_cow");
+        SEXP cow_attr = getAttrib(x, sym_cow);
+        if (TYPEOF(cow_attr) == STRSXP && XLENGTH(cow_attr) > 0) {
+            SET_VECTOR_ELT(state, 5, cow_attr);
+        } else {
+            SET_VECTOR_ELT(state, 5, mkString(info->deny_write ? "deny" : "allow"));
+        }
+    }
+    SET_VECTOR_ELT(state, 6, ScalarInteger(info->sexp_type));
+
+    UNPROTECT(2);
+    return state;
 }
 
 static SEXP altrep_unserialize(SEXP cls, SEXP state) {
-    /* Just return the state (standard vector) */
-    return state;
+    /*
+     * Backwards/compat fallback: if state is a standard vector (older
+     * serialization or "unreopenable" fallback), just return it.
+     */
+    if (TYPEOF(state) != VECSXP || XLENGTH(state) < 7) {
+        return state;
+    }
+
+    SEXP path_sexp = VECTOR_ELT(state, 0);
+    if (TYPEOF(path_sexp) != STRSXP || XLENGTH(path_sexp) < 1) {
+        return state;
+    }
+    const char *path = CHAR(STRING_ELT(path_sexp, 0));
+
+    int backing = INTEGER(VECTOR_ELT(state, 1))[0];
+    size_t off = (size_t)REAL(VECTOR_ELT(state, 2))[0];
+    R_xlen_t len = (R_xlen_t)REAL(VECTOR_ELT(state, 3))[0];
+    int ro = LOGICAL(VECTOR_ELT(state, 4))[0];
+    int deny_write = 0;
+    const char *cow_str = NULL;
+    SEXP cow_sexp = VECTOR_ELT(state, 5);
+    if (TYPEOF(cow_sexp) == STRSXP && XLENGTH(cow_sexp) > 0) {
+        cow_str = CHAR(STRING_ELT(cow_sexp, 0));
+        if (strcmp(cow_str, "deny") == 0) {
+            deny_write = 1;
+        }
+    } else if (TYPEOF(cow_sexp) == LGLSXP) {
+        /* Back-compat for older serialized state */
+        deny_write = LOGICAL(cow_sexp)[0];
+    }
+    int sexp_type = INTEGER(VECTOR_ELT(state, 6))[0];
+
+    size_t elem_size = element_size_for_type(sexp_type);
+    if (elem_size == 0) {
+        error("Unsupported SEXP type in serialized state: %d", sexp_type);
+    }
+
+    shard_segment_t *seg = shard_segment_open(path, (shard_backing_t)backing, ro);
+    if (!seg) {
+        error("Failed to open shared memory segment for ALTREP unserialize");
+    }
+
+    /* Validate bounds against segment size */
+    size_t seg_size = shard_segment_size(seg);
+    if (off + (size_t)len * elem_size > seg_size) {
+        shard_segment_close(seg, 0);
+        error("Serialized ALTREP range exceeds segment size");
+    }
+
+    SEXP seg_xptr = PROTECT(shard_segment_wrap_xptr(seg));
+
+    shard_altrep_info_t *info = (shard_altrep_info_t *)malloc(sizeof(shard_altrep_info_t));
+    if (!info) {
+        UNPROTECT(1);
+        error("Failed to allocate ALTREP info");
+    }
+
+    info->segment_ptr = seg_xptr;
+    info->parent = R_NilValue;
+    info->offset = off;
+    info->length = len;
+    info->element_size = elem_size;
+    info->readonly = ro;
+    info->deny_write = deny_write;
+    info->sexp_type = sexp_type;
+    info->dataptr_calls = 0;
+    info->materialize_calls = 0;
+
+    R_PreserveObject(seg_xptr);
+
+    SEXP info_ptr = PROTECT(R_MakeExternalPtr(info, R_NilValue, R_NilValue));
+    R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
+
+    /* Rebuild as the correct shard ALTREP class for this stored type */
+    R_altrep_class_t acls = get_class_for_type(sexp_type);
+    SEXP result = R_new_altrep(acls, info_ptr, R_NilValue);
+
+    /* Restore user-visible attributes for policy enforcement */
+    setAttrib(result, R_ClassSymbol, mkString("shard_shared_vector"));
+    {
+        SEXP sym_cow = install("shard_cow");
+        SEXP sym_ro = install("shard_readonly");
+        if (cow_str) {
+            setAttrib(result, sym_cow, mkString(cow_str));
+        } else {
+            setAttrib(result, sym_cow, mkString(deny_write ? "deny" : "allow"));
+        }
+        setAttrib(result, sym_ro, ScalarLogical(ro));
+    }
+
+    UNPROTECT(2);
+    return result;
 }
 
 /*
@@ -229,29 +421,33 @@ static void *altvec_dataptr(SEXP x, Rboolean writable) {
     if (writable && info->readonly) {
         SEXP data2 = R_altrep_data2(x);
 
-        /* Check if we already have a materialized copy */
-        if (data2 == R_NilValue) {
-            /* Materialize: allocate R vector and copy shared memory data */
-            info->materialize_calls++;
-            R_xlen_t n = info->length;
-            SEXP materialized = PROTECT(allocVector(info->sexp_type, n));
-
-            void *src = get_data_ptr(x, info);
-            if (src && n > 0) {
-                memcpy(DATAPTR(materialized), src, n * info->element_size);
-            }
-
-            /* Store in data2 for future access */
-            R_set_altrep_data2(x, materialized);
-            UNPROTECT(1);
-
+        /*
+         * data2 is used to stash a private, materialized copy. Views historically
+         * stored the parent ALTREP in data2, so treat ALTREP data2 as "not yet
+         * materialized" and overwrite it with the materialized vector.
+         */
+        if (data2 != R_NilValue && !ALTREP(data2)) {
             info->dataptr_calls++;
-            return DATAPTR(materialized);
+            return vec_data_ptr(data2, TYPEOF(data2));
         }
 
-        /* Already materialized - return the copy */
+        /* Materialize: allocate R vector and copy shared memory data */
+        info->materialize_calls++;
+        R_xlen_t n = info->length;
+        SEXP materialized = PROTECT(allocVector(info->sexp_type, n));
+
+        void *src = get_data_ptr(x, info);
+        void *dst = vec_data_ptr(materialized, info->sexp_type);
+        if (src && dst && n > 0) {
+            memcpy(dst, src, n * info->element_size);
+        }
+
+        /* Store in data2 for future access */
+        R_set_altrep_data2(x, materialized);
+        UNPROTECT(1);
+
         info->dataptr_calls++;
-        return DATAPTR(data2);
+        return dst;
     }
 
     info->dataptr_calls++;
@@ -336,22 +532,34 @@ static SEXP altvec_extract_subset(SEXP x, SEXP indx, SEXP call) {
         if (!new_info) return NULL;
 
         new_info->segment_ptr = info->segment_ptr;
+        new_info->parent = x;
         new_info->offset = info->offset + start * info->element_size;
         new_info->length = view_len;
         new_info->element_size = info->element_size;
         new_info->readonly = info->readonly;
+        new_info->deny_write = info->deny_write;
         new_info->sexp_type = info->sexp_type;
         new_info->dataptr_calls = 0;
         new_info->materialize_calls = 0;
 
         /* Protect segment reference */
         R_PreserveObject(new_info->segment_ptr);
+        R_PreserveObject(new_info->parent);
 
         SEXP info_ptr = PROTECT(R_MakeExternalPtr(new_info, R_NilValue, R_NilValue));
         R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
         R_altrep_class_t cls = get_class_for_type(info->sexp_type);
         SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+
+        /* Preserve user-visible attributes needed for policy enforcement */
+        setAttrib(result, R_ClassSymbol, getAttrib(x, R_ClassSymbol));
+        {
+            SEXP sym_cow = install("shard_cow");
+            SEXP sym_ro = install("shard_readonly");
+            setAttrib(result, sym_cow, getAttrib(x, sym_cow));
+            setAttrib(result, sym_ro, getAttrib(x, sym_ro));
+        }
 
         UNPROTECT(1);
         return result;
@@ -538,7 +746,7 @@ void shard_altrep_init(DllInfo *dll) {
  */
 
 /* Create an ALTREP vector from a segment */
-SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP readonly) {
+SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP readonly, SEXP cow) {
     /* Validate segment */
     if (TYPEOF(seg) != EXTPTRSXP) {
         error("seg must be an external pointer to a segment");
@@ -569,6 +777,25 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
     size_t off = (size_t)REAL(offset)[0];
     R_xlen_t len = (R_xlen_t)REAL(length)[0];
     int ro = LOGICAL(readonly)[0];
+    int deny_write = 0;
+
+    if (TYPEOF(cow) == STRSXP && XLENGTH(cow) > 0) {
+        const char *cow_str = CHAR(STRING_ELT(cow, 0));
+        if (strcmp(cow_str, "deny") == 0) {
+            deny_write = 1;
+        } else if (strcmp(cow_str, "copy") == 0 ||
+                   strcmp(cow_str, "allow") == 0 ||
+                   strcmp(cow_str, "audit") == 0) {
+            deny_write = 0;
+        } else {
+            error("Unsupported cow policy: %s", cow_str);
+        }
+    }
+
+    /* deny_write is only meaningful for readonly shared memory */
+    if (!ro) {
+        deny_write = 0;
+    }
 
     /* Validate bounds */
     size_t seg_size = shard_segment_size(segment);
@@ -584,10 +811,12 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
     }
 
     info->segment_ptr = seg;
+    info->parent = R_NilValue;
     info->offset = off;
     info->length = len;
     info->element_size = elem_size;
     info->readonly = ro;
+    info->deny_write = deny_write;
     info->sexp_type = sexp_type;
     info->dataptr_calls = 0;
     info->materialize_calls = 0;
@@ -602,6 +831,23 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
     /* Create ALTREP object */
     R_altrep_class_t cls = get_class_for_type(sexp_type);
     SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+
+    /*
+     * Mark as a shard shared object and record policy. We use a lightweight
+     * S3 class so R-level replacement can enforce cow='deny' without relying
+     * on dataptr(writable=TRUE), which some read-only algorithms may request.
+     */
+    setAttrib(result, R_ClassSymbol, mkString("shard_shared_vector"));
+    {
+        SEXP sym_cow = install("shard_cow");
+        SEXP sym_ro = install("shard_readonly");
+        if (TYPEOF(cow) == STRSXP && XLENGTH(cow) > 0) {
+            setAttrib(result, sym_cow, cow);
+        } else {
+            setAttrib(result, sym_cow, mkString("allow"));
+        }
+        setAttrib(result, sym_ro, ScalarLogical(ro));
+    }
 
     UNPROTECT(1);
     return result;
@@ -636,22 +882,35 @@ SEXP C_shard_altrep_view(SEXP x, SEXP start, SEXP length) {
     }
 
     new_info->segment_ptr = info->segment_ptr;
+    new_info->parent = x;
     new_info->offset = info->offset + st * info->element_size;
     new_info->length = len;
     new_info->element_size = info->element_size;
     new_info->readonly = info->readonly;
+    new_info->deny_write = info->deny_write;
     new_info->sexp_type = info->sexp_type;
     new_info->dataptr_calls = 0;
     new_info->materialize_calls = 0;
 
     /* Protect segment reference */
     R_PreserveObject(new_info->segment_ptr);
+    R_PreserveObject(new_info->parent);
 
     SEXP info_ptr = PROTECT(R_MakeExternalPtr(new_info, R_NilValue, R_NilValue));
     R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
     R_altrep_class_t cls = get_class_for_type(info->sexp_type);
-    SEXP result = R_new_altrep(cls, info_ptr, x);  /* Store parent in data2 */
+    /* data2 is reserved for a private, materialized COW copy on write. */
+    SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+
+    /* Preserve user-visible attributes needed for policy enforcement */
+    setAttrib(result, R_ClassSymbol, getAttrib(x, R_ClassSymbol));
+    {
+        SEXP sym_cow = install("shard_cow");
+        SEXP sym_ro = install("shard_readonly");
+        setAttrib(result, sym_cow, getAttrib(x, sym_cow));
+        setAttrib(result, sym_ro, getAttrib(x, sym_ro));
+    }
 
     UNPROTECT(1);
     return result;
@@ -750,8 +1009,9 @@ SEXP C_shard_altrep_materialize(SEXP x) {
 
     /* Copy data from shared memory to R vector */
     void *src = get_data_ptr(x, info);
-    if (src && n > 0) {
-        memcpy(DATAPTR(result), src, n * info->element_size);
+    void *dst = vec_data_ptr(result, info->sexp_type);
+    if (src && dst && n > 0) {
+        memcpy(dst, src, n * info->element_size);
     }
 
     UNPROTECT(1);

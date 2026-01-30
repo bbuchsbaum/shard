@@ -46,9 +46,15 @@ shared_vector <- function(segment,
                           type = c("double", "integer", "logical", "raw"),
                           offset = 0,
                           length = NULL,
-                          readonly = TRUE) {
+                          readonly = TRUE,
+                          cow = NULL) {
     stopifnot(inherits(segment, "shard_segment"))
     type <- match.arg(type)
+
+    if (is.null(cow)) {
+        cow <- if (isTRUE(readonly)) "deny" else "allow"
+    }
+    cow <- match.arg(cow, c("deny", "audit", "allow"))
 
     # Calculate element size
     elem_size <- switch(type,
@@ -66,8 +72,8 @@ shared_vector <- function(segment,
         length <- floor(available / elem_size)
     }
 
-    if (length <= 0) {
-        stop("length must be positive")
+    if (length < 0) {
+        stop("length must be non-negative")
     }
 
     .Call("C_shard_altrep_create",
@@ -76,6 +82,7 @@ shared_vector <- function(segment,
           as.double(offset),
           as.double(length),
           readonly,
+          cow,
           PACKAGE = "shard")
 }
 
@@ -218,7 +225,7 @@ shared_reset_diagnostics <- function(x) {
 #' y <- x[1:10]
 #' is_shared_vector(y)  # TRUE for contiguous subsets
 #' }
-as_shared <- function(x, readonly = TRUE, backing = "auto") {
+as_shared <- function(x, readonly = TRUE, backing = "auto", cow = NULL) {
     if (!is.atomic(x) || is.null(x)) {
         stop("x must be an atomic vector")
     }
@@ -240,10 +247,14 @@ as_shared <- function(x, readonly = TRUE, backing = "auto") {
         "raw"     = 1L
     )
     size <- length(x) * elem_size
+    # mmap(2) of length 0 is invalid; allocate a 1-byte segment for empty vectors.
+    alloc_size <- max(size, 1L)
 
     # Create segment and write data
-    seg <- segment_create(size, backing = backing)
-    segment_write(seg, x, offset = 0)
+    seg <- segment_create(alloc_size, backing = backing)
+    if (size > 0) {
+        segment_write(seg, x, offset = 0)
+    }
 
     # Optionally protect segment
     if (readonly) {
@@ -252,6 +263,5 @@ as_shared <- function(x, readonly = TRUE, backing = "auto") {
 
     # Create ALTREP view
     shared_vector(seg, type = type, offset = 0, length = length(x),
-                  readonly = readonly)
+                  readonly = readonly, cow = cow)
 }
-

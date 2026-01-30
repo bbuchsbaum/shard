@@ -34,6 +34,10 @@ dispatch_chunks <- function(chunks, fun, ...,
   # Capture additional arguments as a list
   extra_args <- list(...)
 
+  # Avoid `parallel:::` usage (R CMD check will warn). We still rely on
+  # parallel's internal protocol, but obtain the function dynamically.
+  parallel_sendCall <- utils::getFromNamespace("sendCall", "parallel")
+
   # Create queue
   queue <- queue_create(chunks)
 
@@ -44,15 +48,89 @@ dispatch_chunks <- function(chunks, fun, ...,
     worker_assignments = list()
   )
 
-  chunks_processed <- 0L
-  worker_idx <- 1L
+  # Export fun + args to workers once to avoid per-chunk re-export overhead.
+  # Each worker runs a small wrapper via sendCall/recv that references these globals.
+  for (i in seq_len(pool$n)) {
+    w <- pool$workers[[i]]
+    if (!is.null(w) && worker_is_alive(w)) {
+      export_env <- new.env(parent = emptyenv())
+      export_env$.shard_dispatch_fun <- fun
+      export_env$.shard_dispatch_args <- extra_args
+      parallel::clusterExport(w$cluster, c(".shard_dispatch_fun", ".shard_dispatch_args"),
+                              envir = export_env)
+    }
+  }
 
-  # Main dispatch loop
+  dispatch_wrapper <- function(chunk) {
+    tryCatch(
+      {
+        f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
+        a <- get(".shard_dispatch_args", envir = globalenv(), inherits = FALSE)
+        list(ok = TRUE, value = do.call(f, c(list(chunk), a)))
+      },
+      error = function(e) list(ok = FALSE, error = conditionMessage(e))
+    )
+  }
+
+  # Async scheduling state
+  idle <- rep(TRUE, pool$n)
+  inflight <- vector("list", pool$n) # worker_id -> {chunk_id,start_time}
+
+  chunks_processed <- 0L
+
+  # Helper: receive a single result (non-blocking with small timeout) from any worker.
+  recv_one <- function(timeout_sec = 0.1) {
+    nodes <- lapply(pool$workers, function(w) if (is.null(w)) NULL else w$cluster[[1]])
+
+    socklist <- list()
+    idx_map <- integer(0)
+    for (i in seq_along(nodes)) {
+      n <- nodes[[i]]
+      if (!is.null(n) && !is.null(n$con)) {
+        socklist[[length(socklist) + 1L]] <- n$con
+        idx_map <- c(idx_map, i)
+      }
+    }
+
+    if (length(socklist) == 0) return(NULL)
+
+    # socketSelect() is provided by base R (works for socket connections).
+    ready <- socketSelect(socklist, timeout = timeout_sec)
+    if (length(ready) == 0 || !any(ready)) return(NULL)
+
+    # socketSelect is documented to return a logical vector (like parallel uses),
+    # but be defensive if it returns indices on some platforms.
+    if (is.logical(ready)) {
+      n_local <- which.max(ready)
+    } else if (is.numeric(ready)) {
+      # Some platforms return a 0/1 numeric vector; others may return indices.
+      if (length(ready) == length(socklist)) {
+        n_local <- which.max(ready)
+      } else {
+        n_local <- as.integer(ready[1])
+      }
+    } else {
+      return(NULL)
+    }
+
+    if (is.na(n_local) || n_local < 1L || n_local > length(socklist)) {
+      return(NULL)
+    }
+    worker_id <- idx_map[n_local]
+
+    msg <- unserialize(socklist[[n_local]])
+    list(worker_id = worker_id, tag = msg$tag, value = msg$value)
+  }
+
+  # Main dispatch loop: keep all workers busy and collect results as they finish.
   while (!queue_is_done(queue)) {
-    # Health check at intervals
+    # Health check at intervals (based on completions)
     if (chunks_processed > 0 && chunks_processed %% health_check_interval == 0) {
       health <- pool_health_check(pool)
       diag$health_checks <- c(diag$health_checks, list(health))
+
+      # Refresh pool reference after potential recycle/restart.
+      pool <- pool_get()
 
       # Requeue any in-flight chunks from recycled/restarted workers
       for (action in health$worker_actions) {
@@ -62,48 +140,130 @@ dispatch_chunks <- function(chunks, fun, ...,
             message(sprintf("Requeued %d chunks from worker %d (%s)",
                             requeued, action$worker_id, action$reason))
           }
+          idle[action$worker_id] <- TRUE
+          inflight[action$worker_id] <- list(NULL)
+
+          # Ensure the replacement worker has the dispatch globals.
+          w_new <- pool$workers[[action$worker_id]]
+          if (!is.null(w_new)) {
+            export_env <- new.env(parent = emptyenv())
+            export_env$.shard_dispatch_fun <- fun
+            export_env$.shard_dispatch_args <- extra_args
+            parallel::clusterExport(w_new$cluster,
+                                    c(".shard_dispatch_fun", ".shard_dispatch_args"),
+                                    envir = export_env)
+          }
         }
       }
-
-      # Refresh pool reference
-      pool <- pool_get()
     }
 
-    # Get next pending chunk
-    if (!queue_has_pending(queue)) {
-      # No pending chunks but still have in-flight - wait briefly
-      Sys.sleep(0.01)
+    # Fill idle workers
+    for (worker_id in which(idle)) {
+      if (!queue_has_pending(queue)) break
+
+      chunk <- queue_next(queue, worker_id)
+      if (is.null(chunk)) next
+
+      w <- pool$workers[[worker_id]]
+      if (is.null(w) || !worker_is_alive(w)) {
+        pool$workers[[worker_id]] <- worker_spawn(
+          id = worker_id,
+          init_expr = pool$init_expr,
+          packages = pool$packages
+        )
+        pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
+        pool$stats$total_deaths <- pool$stats$total_deaths + 1L
+        .pool_env$pool <- pool
+        w <- pool$workers[[worker_id]]
+
+        # Re-export globals to the restarted worker
+        export_env <- new.env(parent = emptyenv())
+        export_env$.shard_dispatch_fun <- fun
+        export_env$.shard_dispatch_args <- extra_args
+        parallel::clusterExport(w$cluster, c(".shard_dispatch_fun", ".shard_dispatch_args"),
+                                envir = export_env)
+      }
+
+      # Async send
+      parallel_sendCall(w$cluster[[1]], fun = dispatch_wrapper, args = list(chunk),
+                        return = TRUE, tag = as.character(chunk$id))
+      idle[worker_id] <- FALSE
+      inflight[[worker_id]] <- list(chunk_id = as.character(chunk$id), start_time = Sys.time())
+      pool$stats$total_tasks <- pool$stats$total_tasks + 1L
+      .pool_env$pool <- pool
+    }
+
+    # Handle timeouts for in-flight chunks
+    if (any(!idle)) {
+      now <- Sys.time()
+      for (worker_id in which(!idle)) {
+        meta <- inflight[[worker_id]]
+        if (is.null(meta)) next
+        age <- as.numeric(difftime(now, meta$start_time, units = "secs"))
+        if (!is.na(age) && age > timeout) {
+          # Kill and restart the worker; requeue or permanently fail the chunk.
+          chunk_id <- meta$chunk_id
+          ch <- queue$env$in_flight[[chunk_id]]
+          retry_count <- (ch$retry_count %||% 0L)
+          requeue <- retry_count < max_retries
+          queue_fail(queue, chunk_id, error = "timeout", requeue = requeue)
+          if (!requeue) {
+            warning(sprintf("Chunk %s permanently failed after %d retries: %s",
+                            chunk_id, retry_count, "timeout"))
+          }
+
+          worker_kill(pool$workers[[worker_id]])
+          pool$workers[[worker_id]] <- worker_spawn(
+            id = worker_id,
+            init_expr = pool$init_expr,
+            packages = pool$packages
+          )
+          pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
+          pool$stats$total_deaths <- pool$stats$total_deaths + 1L
+          .pool_env$pool <- pool
+
+          # Re-export globals to the restarted worker
+          export_env <- new.env(parent = emptyenv())
+          export_env$.shard_dispatch_fun <- fun
+          export_env$.shard_dispatch_args <- extra_args
+          parallel::clusterExport(pool$workers[[worker_id]]$cluster,
+                                  c(".shard_dispatch_fun", ".shard_dispatch_args"),
+                                  envir = export_env)
+
+          idle[worker_id] <- TRUE
+          inflight[worker_id] <- list(NULL)
+        }
+      }
+    }
+
+    # Receive at most one completed chunk per loop iteration.
+    rec <- recv_one(timeout_sec = 0.1)
+    if (is.null(rec)) {
+      if (!queue_has_pending(queue) && any(!idle)) {
+        Sys.sleep(0.01)
+      }
       next
     }
 
-    # Round-robin worker selection
-    worker_id <- worker_idx
-    worker_idx <- (worker_idx %% pool$n) + 1L
+    worker_id <- rec$worker_id
+    tag <- rec$tag
+    payload <- rec$value
 
-    # Get chunk and assign to worker
-    chunk <- queue_next(queue, worker_id)
-    if (is.null(chunk)) next
+    idle[worker_id] <- TRUE
+    inflight[worker_id] <- list(NULL)
 
-    # Execute chunk
-    result <- tryCatch({
-      # Call function with chunk and extra args using do.call
-      value <- dispatch_eval_chunk(pool, worker_id, fun, chunk, extra_args, timeout)
-      list(success = TRUE, value = value)
-    }, error = function(e) {
-      list(success = FALSE, error = conditionMessage(e))
-    })
-
-    if (result$success) {
-      queue_complete(queue, chunk$id, result$value)
+    if (is.list(payload) && isTRUE(payload$ok)) {
+      queue_complete(queue, tag, payload$value)
     } else {
-      # Check retry count
-      retry_count <- (chunk$retry_count %||% 0L)
+      err <- if (is.list(payload)) payload$error else "unknown worker error"
+      ch <- queue$env$in_flight[[as.character(tag)]]
+      retry_count <- (ch$retry_count %||% 0L)
       if (retry_count >= max_retries) {
-        queue_fail(queue, chunk$id, error = result$error, requeue = FALSE)
+        queue_fail(queue, tag, error = err, requeue = FALSE)
         warning(sprintf("Chunk %s permanently failed after %d retries: %s",
-                        chunk$id, retry_count, result$error))
+                        tag, retry_count, err))
       } else {
-        queue_fail(queue, chunk$id, error = result$error, requeue = TRUE)
+        queue_fail(queue, tag, error = err, requeue = TRUE)
       }
     }
 
@@ -123,54 +283,6 @@ dispatch_chunks <- function(chunks, fun, ...,
     ),
     class = "shard_dispatch_result"
   )
-}
-
-#' Evaluate Chunk on Worker
-#'
-#' Internal function to dispatch a chunk to a worker with proper argument handling.
-#'
-#' @param pool Worker pool.
-#' @param worker_id Worker to use.
-#' @param fun Function to call.
-#' @param chunk Chunk descriptor.
-#' @param extra_args List of additional arguments.
-#' @param timeout Timeout in seconds.
-#' @return Result of evaluation.
-#' @keywords internal
-dispatch_eval_chunk <- function(pool, worker_id, fun, chunk, extra_args, timeout) {
-  w <- pool$workers[[worker_id]]
-
-  if (is.null(w) || !worker_is_alive(w)) {
-    # Restart dead worker
-    pool$workers[[worker_id]] <- worker_spawn(
-      id = worker_id,
-      init_expr = pool$init_expr,
-      packages = pool$packages
-    )
-    pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
-    pool$stats$total_deaths <- pool$stats$total_deaths + 1L
-    .pool_env$pool <- pool
-    w <- pool$workers[[worker_id]]
-  }
-
-  pool$stats$total_tasks <- pool$stats$total_tasks + 1L
-  .pool_env$pool <- pool
-
-  # Export function and arguments to worker
-  export_env <- new.env(parent = emptyenv())
-  export_env$.shard_fun <- fun
-  export_env$.shard_chunk <- chunk
-  export_env$.shard_args <- extra_args
-
-  parallel::clusterExport(w$cluster, c(".shard_fun", ".shard_chunk", ".shard_args"),
-                          envir = export_env)
-
-  # Execute on worker
-  result <- parallel::clusterCall(w$cluster, function() {
-    do.call(.shard_fun, c(list(.shard_chunk), .shard_args))
-  })
-
-  result[[1]]
 }
 
 #' Parallel Dispatch with Async Workers

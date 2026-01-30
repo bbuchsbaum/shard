@@ -235,7 +235,7 @@ test_that("non-deep share ignores deep parameters", {
     x <- 1:100
     shared <- share(x, deep = FALSE)
 
-    expect_s3_class(shared, "shard_shared")
+    expect_true(is_shared_vector(shared) || inherits(shared, "shard_shared"))
     expect_false(inherits(shared, "shard_deep_shared"))
 
     close(shared)

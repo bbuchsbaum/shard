@@ -16,7 +16,9 @@ NULL
 worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
   # Use makeCluster to spawn a single worker
   # This creates a socket connection to an R process
-  cl <- parallel::makeCluster(1L, type = "PSOCK", outfile = "")
+  # Use --vanilla to avoid user/site profiles that may pre-load packages and
+  # interfere with deterministic worker setup (notably ALTREP class methods).
+  cl <- parallel::makeCluster(1L, type = "PSOCK", outfile = "", rscript_args = "--vanilla")
   node <- cl[[1]]
 
   # Get the PID of the worker
@@ -25,10 +27,31 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL) {
     error = function(e) NA_integer_
   )
 
+  # Ensure workers can load the same library paths as the master process.
+  # This is critical for ALTREP class registration and for loading this
+  # in-development package when tests install to a temp lib.
+  master_libpaths <- .libPaths()
+  parallel::clusterCall(cl, function(paths) {
+    .libPaths(paths)
+
+    # If shard was loaded via user/site profiles (or other bootstrapping),
+    # unload it so we re-load from the intended library path.
+    if ("package:shard" %in% search()) {
+      try(detach("package:shard", unload = TRUE, character.only = TRUE), silent = TRUE)
+    }
+    if ("shard" %in% loadedNamespaces()) {
+      try(unloadNamespace("shard"), silent = TRUE)
+    }
+
+    suppressPackageStartupMessages(library(shard))
+    TRUE
+  }, master_libpaths)
+
   # Load packages if specified
   if (length(packages) > 0) {
     parallel::clusterCall(cl, function(pkgs) {
       for (pkg in pkgs) {
+        if (identical(pkg, "shard")) next
         suppressPackageStartupMessages(library(pkg, character.only = TRUE))
       }
     }, packages)
@@ -68,13 +91,17 @@ worker_is_alive <- function(worker) {
     return(FALSE)
   }
 
-  # Try a simple ping
+  # Prefer a PID-level check: cluster round-trips can fail when the worker is
+  # legitimately busy (e.g. during async sendCall/recv dispatch).
+  if (!is.na(worker$pid) && isTRUE(pid_is_alive(worker$pid))) {
+    return(TRUE)
+  }
+
+  # Fallback: try a simple ping.
   tryCatch({
     result <- parallel::clusterCall(worker$cluster, function() TRUE)
     isTRUE(result[[1]])
-  }, error = function(e) {
-    FALSE
-  })
+  }, error = function(e) FALSE)
 }
 
 #' Get Worker RSS (Resident Set Size)

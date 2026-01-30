@@ -9,7 +9,8 @@ shared_vector(
   type = c("double", "integer", "logical", "raw"),
   offset = 0,
   length = NULL,
-  readonly = TRUE
+  readonly = TRUE,
+  cow = NULL
 )
 }
 \arguments{
@@ -21,7 +22,11 @@ shared_vector(
 
 \item{length}{Number of elements. If NULL, calculated from segment size.}
 
-\item{readonly}{If TRUE, prevent write access via DATAPTR (default: TRUE)}
+\item{readonly}{If TRUE, prevent write access (default: TRUE)}
+
+\item{cow}{Copy-on-write policy for read-only shared vectors. One of
+"deny", "audit", or "allow". If NULL (default), the policy defaults to
+"deny" when \code{readonly = TRUE} and "allow" otherwise.}
 }
 \value{
 An ALTREP vector backed by shared memory

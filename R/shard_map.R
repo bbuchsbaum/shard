@@ -283,9 +283,47 @@ validate_borrow <- function(borrow, cow) {
     stop("All borrowed inputs must be named", call. = FALSE)
   }
 
-  # Mark inputs with COW policy
+  # Auto-share large atomic inputs once in the main process so PSOCK workers
+  # can receive a small descriptor (via ALTREP serialization) instead of full
+  # data copies.
   for (name in names(borrow)) {
-    attr(borrow[[name]], "shard_cow") <- cow
+    x <- borrow[[name]]
+
+    if (is.atomic(x) && !is.null(x) &&
+        typeof(x) %in% c("double", "integer", "logical", "raw") &&
+        !is_shared_vector(x)) {
+      # Build with cow='allow' so we can attach attributes, then lock down to
+      # the requested policy.
+      shared <- as_shared(x, readonly = TRUE, backing = "auto", cow = "allow")
+
+      # Preserve non-class attributes (dim, dimnames, names, tsp, etc).
+      attrs <- attributes(x)
+      x_class <- attr(x, "class")
+      attrs$class <- NULL
+      if (length(attrs)) {
+        for (nm in names(attrs)) {
+          attr(shared, nm) <- attrs[[nm]]
+        }
+      }
+      class(shared) <- unique(c("shard_shared_vector", x_class))
+      attr(shared, "shard_cow") <- cow
+
+      borrow[[name]] <- shared
+      x <- shared
+    }
+
+    # Best-effort tag for downstream diagnostics.
+    if (!is_shared_vector(x)) {
+      attr(borrow[[name]], "shard_cow") <- cow
+    } else {
+      existing <- attr(x, "shard_cow", exact = TRUE)
+      if (!is.null(existing) && is.character(existing) &&
+          length(existing) == 1L && !identical(existing, cow)) {
+        warning("Borrowed input '", name, "' has shard_cow='", existing,
+                "' but shard_map(cow='", cow, "') was requested. Using '",
+                existing, "'.", call. = FALSE)
+      }
+    }
   }
 
   borrow
@@ -307,6 +345,12 @@ validate_out <- function(out) {
 
   if (any(names(out) == "")) {
     stop("All output buffers must be named", call. = FALSE)
+  }
+
+  bad <- vapply(out, function(x) !inherits(x, "shard_buffer"), logical(1))
+  if (any(bad)) {
+    stop("All output buffers must be shard_buffer objects (from buffer()).",
+         call. = FALSE)
   }
 
   out
@@ -370,8 +414,20 @@ export_borrow_to_workers <- function(pool, borrow) {
 export_out_to_workers <- function(pool, out) {
   if (length(out) == 0) return(invisible(NULL))
 
+  # Export reopenable descriptors rather than shard_buffer objects. The raw
+  # segment externalptr does not survive PSOCK serialization.
+  out_desc <- lapply(out, function(buf) {
+    info <- buffer_info(buf)
+    list(
+      path = info$path,
+      backing = info$backing,
+      type = info$type,
+      dim = info$dim
+    )
+  })
+
   export_env <- new.env(parent = emptyenv())
-  export_env$.shard_out <- out
+  export_env$.shard_out <- out_desc
 
   for (i in seq_len(pool$n)) {
     w <- pool$workers[[i]]
@@ -445,10 +501,33 @@ make_chunk_executor <- function() {
       list()
     }
 
-    out <- if (exists(".shard_out", envir = globalenv())) {
+    out_desc <- if (exists(".shard_out", envir = globalenv())) {
       get(".shard_out", envir = globalenv())
     } else {
       list()
+    }
+
+    # Lazily open output buffers once per worker process and cache them.
+    out <- list()
+    if (length(out_desc) > 0) {
+      if (!exists(".shard_out_opened", envir = globalenv(), inherits = FALSE)) {
+        assign(".shard_out_opened", new.env(parent = emptyenv()), envir = globalenv())
+      }
+      opened <- get(".shard_out_opened", envir = globalenv())
+
+      for (nm in names(out_desc)) {
+        if (!exists(nm, envir = opened, inherits = FALSE)) {
+          d <- out_desc[[nm]]
+          opened[[nm]] <- buffer_open(
+            path = d$path,
+            type = d$type,
+            dim = d$dim,
+            backing = d$backing,
+            readonly = FALSE
+          )
+        }
+        out[[nm]] <- opened[[nm]]
+      }
     }
 
     # Get the user function from the chunk

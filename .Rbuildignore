@@ -6,4 +6,12 @@
 ^configure$
 ^cleanup$
 ^shard\.Rcheck$
+^\\.\\.Rcheck$
 ^shard.*\.tar\.gz$
+^target$
+^src/.*\.(o|so|dll)$
+^src/symbols\.rds$
+^src/.*\.rs$
+^Cargo\.toml$
+^Cargo\.lock$
+^doShard$

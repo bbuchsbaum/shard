@@ -4,13 +4,9 @@
  * Registers C routines with R and handles package load/unload.
  */
 
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/Rdynload.h>
-#include <R_ext/Visibility.h>
-
 #include "shard_shm.h"
 #include "shard_altrep.h"
+#include "shard_utils.h"
 
 /* Callable methods from R */
 static const R_CallMethodDef CallEntries[] = {
@@ -28,13 +24,14 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_is_windows",        (DL_FUNC) &C_shard_is_windows,        0},
     {"C_shard_available_backings",(DL_FUNC) &C_shard_available_backings,0},
     /* ALTREP functions */
-    {"C_shard_altrep_create",           (DL_FUNC) &C_shard_altrep_create,           5},
+    {"C_shard_altrep_create",           (DL_FUNC) &C_shard_altrep_create,           6},
     {"C_shard_altrep_view",              (DL_FUNC) &C_shard_altrep_view,              3},
     {"C_shard_altrep_diagnostics",       (DL_FUNC) &C_shard_altrep_diagnostics,       1},
     {"C_is_shard_altrep",                (DL_FUNC) &C_is_shard_altrep,                1},
     {"C_shard_altrep_segment",           (DL_FUNC) &C_shard_altrep_segment,           1},
     {"C_shard_altrep_reset_diagnostics", (DL_FUNC) &C_shard_altrep_reset_diagnostics, 1},
     {"C_shard_altrep_materialize",       (DL_FUNC) &C_shard_altrep_materialize,       1},
+    {"C_shard_obj_address",              (DL_FUNC) &C_shard_obj_address,              1},
     {NULL, NULL, 0}
 };
 

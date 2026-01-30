@@ -14,9 +14,7 @@
 #ifndef SHARD_SHM_H
 #define SHARD_SHM_H
 
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/Visibility.h>
+#include "shard_r.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -121,6 +119,9 @@ attribute_visible SEXP C_shard_segment_path(SEXP seg_ptr);
 attribute_visible SEXP C_shard_segment_write_raw(SEXP seg_ptr, SEXP data, SEXP offset);
 attribute_visible SEXP C_shard_segment_read_raw(SEXP seg_ptr, SEXP offset, SEXP size);
 attribute_visible SEXP C_shard_segment_protect(SEXP seg_ptr);
+
+/* Wrap an already-open shard_segment_t* in an externalptr with finalizer */
+attribute_visible SEXP shard_segment_wrap_xptr(shard_segment_t *seg);
 
 /* Get segment info as list */
 attribute_visible SEXP C_shard_segment_info(SEXP seg_ptr);

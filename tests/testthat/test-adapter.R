@@ -2,7 +2,7 @@
 
 test_that("shard_register_adapter registers adapter correctly", {
     # Clean up any existing adapters
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     adapter <- list(
         class = "TestClass",
@@ -22,11 +22,11 @@ test_that("shard_register_adapter registers adapter correctly", {
     expect_true("TestClass" %in% shard_list_adapters())
 
     # Clean up
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("shard_register_adapter returns previous adapter on re-registration", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     adapter1 <- list(
         class = "TestClass",
@@ -46,11 +46,11 @@ test_that("shard_register_adapter returns previous adapter on re-registration", 
     expect_identical(previous$class, "TestClass")
     expect_identical(previous$children(NULL), list(a = 1))
 
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("shard_unregister_adapter removes adapter and returns it", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     adapter <- list(
         class = "TestClass",
@@ -66,18 +66,18 @@ test_that("shard_unregister_adapter removes adapter and returns it", {
     expect_identical(removed$class, "TestClass")
     expect_false("TestClass" %in% shard_list_adapters())
 
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("shard_unregister_adapter returns NULL for non-existent adapter", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     result <- shard_unregister_adapter("NonExistentClass")
     expect_null(result)
 })
 
 test_that("shard_get_adapter returns adapter for object's class", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     adapter <- list(
         class = "myclass",
@@ -95,11 +95,11 @@ test_that("shard_get_adapter returns adapter for object's class", {
 
     expect_identical(found$class, "myclass")
 
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("shard_get_adapter returns NULL for unregistered class", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     obj <- structure(list(value = 42), class = "unregistered")
     found <- shard_get_adapter(obj)
@@ -108,7 +108,7 @@ test_that("shard_get_adapter returns NULL for unregistered class", {
 })
 
 test_that("shard_get_adapter checks class hierarchy", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     adapter <- list(
         class = "parentclass",
@@ -127,11 +127,11 @@ test_that("shard_get_adapter checks class hierarchy", {
 
     expect_identical(found$class, "parentclass")
 
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("adapter validation rejects invalid adapters", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     # Missing class
     expect_error(
@@ -183,7 +183,7 @@ test_that("adapter validation rejects invalid adapters", {
 })
 
 test_that("deep share uses adapter's children function", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     # Create a simple S3 class with internal structure
     create_myobj <- function(data, meta) {
@@ -215,11 +215,11 @@ test_that("deep share uses adapter's children function", {
     expect_equal(recovered$meta, list(name = "test"))  # meta preserved
 
     close(shared)
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("deep share uses adapter's replace function for reconstruction", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     # Track calls to replace
     replace_called <- FALSE
@@ -244,11 +244,11 @@ test_that("deep share uses adapter's replace function for reconstruction", {
     expect_true(recovered$reconstructed)
 
     close(shared)
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("adapter with path_prefix uses custom path", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     shard_register_adapter("prefixed", list(
         class = "prefixed",
@@ -267,12 +267,12 @@ test_that("adapter with path_prefix uses custom path", {
     expect_true(grepl("/custom", shared$tree$children$data$path))
 
     close(shared)
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("no adapter falls back to S4 slot traversal", {
     skip_if_not_installed("methods")
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     # Define a simple S4 class
     setClass("TestS4", slots = c(mat = "matrix", info = "character"))
@@ -296,7 +296,7 @@ test_that("no adapter falls back to S4 slot traversal", {
 
 test_that("S4 adapter takes precedence over generic slot traversal", {
     skip_if_not_installed("methods")
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     setClass("AdaptedS4", slots = c(data = "numeric", private = "numeric"))
 
@@ -321,12 +321,12 @@ test_that("S4 adapter takes precedence over generic slot traversal", {
     expect_equal(recovered@private, 1:100)  # preserved unchanged
 
     close(shared)
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
     removeClass("AdaptedS4")
 })
 
 test_that("shard_list_adapters returns registered classes", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     expect_length(shard_list_adapters(), 0)
 
@@ -347,11 +347,11 @@ test_that("shard_list_adapters returns registered classes", {
     expect_true("ClassA" %in% adapters)
     expect_true("ClassB" %in% adapters)
 
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 })
 
 test_that("shard_clear_adapters removes all adapters", {
-    shard_clear_adapters()
+    shard:::shard_clear_adapters()
 
     shard_register_adapter("A", list(class = "A", children = function(x) list(), replace = function(x, ch) x))
     shard_register_adapter("B", list(class = "B", children = function(x) list(), replace = function(x, ch) x))
@@ -359,7 +359,7 @@ test_that("shard_clear_adapters removes all adapters", {
 
     expect_length(shard_list_adapters(), 3)
 
-    n <- shard_clear_adapters()
+    n <- shard:::shard_clear_adapters()
 
     expect_equal(n, 3)
     expect_length(shard_list_adapters(), 0)

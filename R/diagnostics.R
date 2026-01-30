@@ -317,7 +317,7 @@ copy_report <- function(result = NULL) {
       rpt$result_imports <- length(result$results)
       # Estimate result size
       rpt$result_bytes <- tryCatch(
-        as.numeric(object.size(result$results)),
+        as.numeric(utils::object.size(result$results)),
         error = function(e) 0
       )
     }

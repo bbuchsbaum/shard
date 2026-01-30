@@ -11,7 +11,6 @@
  */
 
 #include "shard_shm.h"
-#include <R_ext/Rdynload.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -598,9 +597,31 @@ int shard_segment_write(shard_segment_t *seg, const void *data, size_t offset,
 static void segment_finalizer(SEXP ptr) {
     shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(ptr);
     if (seg) {
-        shard_segment_close(seg, 1);  /* unlink on finalize */
+        /*
+         * IMPORTANT: only unlink the underlying shm/file when this handle owns
+         * it. Worker-opened handles must not unlink, or they can break later
+         * re-opens (e.g., after worker recycling) and can invalidate other
+         * processes expecting the name/path to remain valid.
+         */
+        shard_segment_close(seg, seg->owns_shm ? 1 : 0);
         R_ClearExternalPtr(ptr);
     }
+}
+
+/*
+ * Wrap a shard_segment_t* in an externalptr with the standard finalizer.
+ * This is used by both the R-callable create/open entrypoints and by other
+ * C code (e.g., ALTREP unserialize) that needs to open segments.
+ */
+SEXP shard_segment_wrap_xptr(shard_segment_t *seg) {
+    if (!seg) {
+        error("Invalid segment");
+    }
+
+    SEXP ptr = PROTECT(R_MakeExternalPtr(seg, R_NilValue, R_NilValue));
+    R_RegisterCFinalizerEx(ptr, segment_finalizer, TRUE);
+    UNPROTECT(1);
+    return ptr;
 }
 
 /* Create segment and return external pointer */
@@ -619,12 +640,7 @@ SEXP C_shard_segment_create(SEXP size, SEXP backing, SEXP path, SEXP readonly) {
         error("Failed to create shared memory segment");
     }
 
-    /* Create external pointer with finalizer */
-    SEXP ptr = PROTECT(R_MakeExternalPtr(seg, R_NilValue, R_NilValue));
-    R_RegisterCFinalizerEx(ptr, segment_finalizer, TRUE);
-    UNPROTECT(1);
-
-    return ptr;
+    return shard_segment_wrap_xptr(seg);
 }
 
 /* Open existing segment */
@@ -638,11 +654,7 @@ SEXP C_shard_segment_open(SEXP path, SEXP backing, SEXP readonly) {
         error("Failed to open shared memory segment");
     }
 
-    SEXP ptr = PROTECT(R_MakeExternalPtr(seg, R_NilValue, R_NilValue));
-    R_RegisterCFinalizerEx(ptr, segment_finalizer, TRUE);
-    UNPROTECT(1);
-
-    return ptr;
+    return shard_segment_wrap_xptr(seg);
 }
 
 /* Close segment */

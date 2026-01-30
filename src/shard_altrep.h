@@ -11,10 +11,7 @@
 #ifndef SHARD_ALTREP_H
 #define SHARD_ALTREP_H
 
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/Altrep.h>
-#include <R_ext/Visibility.h>
+#include "shard_r.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -33,11 +30,12 @@ attribute_visible void shard_altrep_init(DllInfo *dll);
  * @param type      R type: INTSXP, REALSXP, LGLSXP, or RAWSXP
  * @param offset    Byte offset into segment
  * @param length    Number of elements
- * @param readonly  If TRUE, prevent write access via DATAPTR
+ * @param readonly  If TRUE, treat shared memory as read-only
+ * @param cow       Copy-on-write policy: "copy" (default) or "deny"
  * @return          ALTREP SEXP, or R_NilValue on error
  */
 attribute_visible SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset,
-                                             SEXP length, SEXP readonly);
+                                             SEXP length, SEXP readonly, SEXP cow);
 
 /*
  * Create an ALTREP view (subset) of an existing ALTREP vector

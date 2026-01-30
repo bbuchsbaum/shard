@@ -1,13 +1,23 @@
 # Tests for share() - zero-copy shared objects
 
-test_that("share creates a shard_shared object", {
+test_that("share returns an ALTREP-backed shared vector for atomic inputs", {
     x <- 1:100
     shared <- share(x)
 
+    expect_true(is_shared_vector(shared))
+    expect_s3_class(shared, "shard_shared_vector")
+
+    info <- shared_info(shared)
+    expect_true(info$size > 0)
+    expect_true(!is.null(info$path))
+})
+
+test_that("share returns a shard_shared handle for non-shareable types", {
+    x <- letters
+    shared <- share(x)
     expect_s3_class(shared, "shard_shared")
     expect_true(shared$size > 0)
     expect_true(!is.null(shared$path))
-
     close(shared)
 })
 
@@ -15,16 +25,14 @@ test_that("share and local round-trip preserves data", {
     # Integer vector
     x <- 1:100
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 
     # Numeric vector
     x <- rnorm(50)
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_equal(x, recovered)
-    close(shared)
 
     # Character vector
     x <- letters
@@ -36,35 +44,32 @@ test_that("share and local round-trip preserves data", {
     # Logical vector
     x <- c(TRUE, FALSE, TRUE, NA)
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 })
 
 test_that("share preserves matrix structure", {
     mat <- matrix(1:20, nrow = 4, ncol = 5)
     shared <- share(mat)
 
-    expect_equal(shared$class_info$type, "matrix")
-    expect_equal(shared$class_info$dim, c(4L, 5L))
+    info <- shared_info(shared)
+    expect_equal(info$class_info$type, "matrix")
+    expect_equal(info$class_info$dim, c(4L, 5L))
 
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(mat, recovered)
-
-    close(shared)
 })
 
 test_that("share preserves array structure", {
     arr <- array(1:24, dim = c(2, 3, 4))
     shared <- share(arr)
 
-    expect_equal(shared$class_info$type, "array")
-    expect_equal(shared$class_info$dim, c(2L, 3L, 4L))
+    info <- shared_info(shared)
+    expect_equal(info$class_info$type, "array")
+    expect_equal(info$class_info$dim, c(2L, 3L, 4L))
 
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(arr, recovered)
-
-    close(shared)
 })
 
 test_that("share preserves data.frame structure", {
@@ -107,25 +112,20 @@ test_that("share creates read-only segment by default", {
     x <- 1:10
     shared <- share(x)
 
-    expect_true(shared$readonly)
-
     info <- shared_info(shared)
     expect_true(info$readonly)
-
-    close(shared)
 })
 
 test_that("share with readonly=FALSE creates writable segment", {
     x <- 1:10
     shared <- share(x, readonly = FALSE)
 
-    expect_false(shared$readonly)
-
-    close(shared)
+    info <- shared_info(shared)
+    expect_false(info$readonly)
 })
 
 test_that("materialize is equivalent to fetch", {
-    x <- 1:100
+    x <- letters
     shared <- share(x)
 
     via_fetch <- fetch(shared)
@@ -152,8 +152,6 @@ test_that("is_shared correctly identifies shared objects", {
     expect_false(is_shared(x))
     expect_false(is_shared(NULL))
     expect_false(is_shared(list()))
-
-    close(shared)
 })
 
 test_that("shared_info returns complete information", {
@@ -169,17 +167,14 @@ test_that("shared_info returns complete information", {
     expect_true(!is.null(info$readonly))
     expect_true(!is.null(info$class_info))
     expect_true(!is.null(info$segment_info))
-
-    close(shared)
 })
 
 test_that("print.shard_shared works", {
-    x <- matrix(1:20, nrow = 4)
+    x <- letters
     shared <- share(x)
 
     expect_output(print(shared), "shard_shared")
     expect_output(print(shared), "Size:")
-    expect_output(print(shared), "matrix")
 
     close(shared)
 })
@@ -189,16 +184,15 @@ test_that("share handles large objects", {
     x <- rnorm(1e6)
     shared <- share(x)
 
-    expect_true(shared$size > 8e6)  # At least 8 bytes per double
+    info <- shared_info(shared)
+    expect_true(info$size >= 8e6)  # At least 8 bytes per double
 
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_equal(x, recovered)
-
-    close(shared)
 })
 
 test_that("share_open can reopen existing shared segment", {
-    x <- 1:100
+    x <- letters
     shared1 <- share(x)
 
     path <- shared1$path
@@ -220,7 +214,7 @@ test_that("share_open can reopen existing shared segment", {
 })
 
 test_that("share respects backing type", {
-    x <- 1:10
+    x <- letters
 
     # Test mmap backing
     shared_mmap <- share(x, backing = "mmap")
@@ -234,7 +228,7 @@ test_that("share respects backing type", {
 })
 
 test_that("close releases resources", {
-    x <- 1:10
+    x <- letters
     shared <- share(x)
     path <- shared$path
 
@@ -251,26 +245,22 @@ test_that("share handles empty vectors", {
     x <- integer(0)
     shared <- share(x)
 
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-
-    close(shared)
 })
 
 test_that("share handles zero-length vectors of all types", {
     # Double
     x <- double(0)
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 
     # Logical
     x <- logical(0)
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 
     # Character
     x <- character(0)
@@ -282,25 +272,22 @@ test_that("share handles zero-length vectors of all types", {
     # Raw
     x <- raw(0)
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 })
 
 test_that("share handles single-element vectors", {
     # Single integer
     x <- 1L
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 
     # Single double
     x <- 3.14
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_equal(x, recovered)
-    close(shared)
 
     # Single character
     x <- "hello"
@@ -312,32 +299,28 @@ test_that("share handles single-element vectors", {
     # Single logical
     x <- TRUE
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 
     # Single NA
     x <- NA
     shared <- share(x)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(x, recovered)
-    close(shared)
 })
 
 test_that("share handles single-element matrix and array", {
     # 1x1 matrix
     mat <- matrix(42, nrow = 1, ncol = 1)
     shared <- share(mat)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(mat, recovered)
-    close(shared)
 
     # 1x1x1 array
     arr <- array(42, dim = c(1, 1, 1))
     shared <- share(arr)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(arr, recovered)
-    close(shared)
 })
 
 test_that("share handles empty data.frame", {
@@ -378,16 +361,14 @@ test_that("share handles complex objects", {
     # Factor
     f <- factor(c("a", "b", "a", "c"))
     shared <- share(f)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_identical(f, recovered)
-    close(shared)
 
     # POSIXct
     dt <- as.POSIXct("2024-01-01 12:00:00")
     shared <- share(dt)
-    recovered <- fetch(shared)
+    recovered <- materialize(shared)
     expect_equal(dt, recovered)
-    close(shared)
 
     # Formula (environment-sensitive)
     # Skip this as formulas capture environments

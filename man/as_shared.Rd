@@ -4,7 +4,7 @@
 \alias{as_shared}
 \title{Create a shared vector from an existing R vector}
 \usage{
-as_shared(x, readonly = TRUE, backing = "auto")
+as_shared(x, readonly = TRUE, backing = "auto", cow = NULL)
 }
 \arguments{
 \item{x}{An atomic vector (integer, double, logical, or raw)}
@@ -12,6 +12,10 @@ as_shared(x, readonly = TRUE, backing = "auto")
 \item{readonly}{If TRUE, prevent write access (default: TRUE)}
 
 \item{backing}{Backing type for the segment: "auto", "mmap", or "shm"}
+
+\item{cow}{Copy-on-write policy for read-only shared vectors. One of
+"deny", "audit", or "allow". If NULL (default), the policy defaults to
+"deny" when \code{readonly = TRUE} and "allow" otherwise.}
 }
 \value{
 An ALTREP vector backed by shared memory

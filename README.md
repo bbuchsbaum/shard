@@ -127,9 +127,7 @@ shard::copy_report(run)
 
 ## Vignettes
 
-- Shared inputs + explicit outputs
-- Memory determinism via recycling
-- Many regressions / voxelwise GLM case study (QR-once + chunked QᵀY)
+Vignettes are planned but not yet included in the package source.
 
 ---
 

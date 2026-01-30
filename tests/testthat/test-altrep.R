@@ -8,8 +8,8 @@ test_that("shared_vector creates ALTREP vectors for different types", {
 
     expect_true(is_shared_vector(x_int))
     expect_equal(length(x_int), 100)
-    expect_equal(x_int[1], 1L)
-    expect_equal(x_int[100], 100L)
+    expect_equal(as.integer(x_int[1]), 1L)
+    expect_equal(as.integer(x_int[100]), 100L)
 
     # Double
     seg_dbl <- segment_create(800)
@@ -18,8 +18,8 @@ test_that("shared_vector creates ALTREP vectors for different types", {
 
     expect_true(is_shared_vector(x_dbl))
     expect_equal(length(x_dbl), 100)
-    expect_equal(x_dbl[1], 1.0)
-    expect_equal(x_dbl[100], 100.0)
+    expect_equal(as.double(x_dbl[1]), 1.0)
+    expect_equal(as.double(x_dbl[100]), 100.0)
 
     # Logical
     seg_lgl <- segment_create(400)
@@ -29,8 +29,8 @@ test_that("shared_vector creates ALTREP vectors for different types", {
 
     expect_true(is_shared_vector(x_lgl))
     expect_equal(length(x_lgl), 100)
-    expect_true(x_lgl[1])
-    expect_false(x_lgl[2])
+    expect_true(as.logical(x_lgl[1]))
+    expect_false(as.logical(x_lgl[2]))
 
     # Raw
     seg_raw <- segment_create(100)
@@ -39,7 +39,7 @@ test_that("shared_vector creates ALTREP vectors for different types", {
 
     expect_true(is_shared_vector(x_raw))
     expect_equal(length(x_raw), 100)
-    expect_equal(x_raw[1], as.raw(1))
+    expect_equal(as.raw(x_raw[1]), as.raw(1))
 })
 
 test_that("shared_vector respects offset parameter", {
@@ -51,8 +51,8 @@ test_that("shared_vector respects offset parameter", {
     x <- shared_vector(seg, "integer", offset = 400, length = 100)
 
     expect_equal(length(x), 100)
-    expect_equal(x[1], 101L)
-    expect_equal(x[100], 200L)
+    expect_equal(as.integer(x[1]), 101L)
+    expect_equal(as.integer(x[100]), 200L)
 })
 
 test_that("contiguous subsetting returns views, not copies", {
@@ -69,8 +69,8 @@ test_that("contiguous subsetting returns views, not copies", {
     # For contiguous indices, we should get a view (also ALTREP)
     # Note: R's subsetting might materialize in some cases
     expect_equal(length(y), 10)
-    expect_equal(y[1], 1L)
-    expect_equal(y[10], 10L)
+    expect_equal(as.integer(y[1]), 1L)
+    expect_equal(as.integer(y[10]), 10L)
 })
 
 test_that("shared_view creates views explicitly", {
@@ -83,8 +83,8 @@ test_that("shared_view creates views explicitly", {
 
     expect_true(is_shared_vector(y))
     expect_equal(length(y), 10)
-    expect_equal(y[1], 11L)  # x[11]
-    expect_equal(y[10], 20L) # x[20]
+    expect_equal(as.integer(y[1]), 11L)  # x[11]
+    expect_equal(as.integer(y[10]), 20L) # x[20]
 })
 
 test_that("shared_diagnostics tracks dataptr and materialize calls", {
@@ -110,31 +110,23 @@ test_that("shared_diagnostics tracks dataptr and materialize calls", {
     expect_equal(sum_val, sum(1:100))
 })
 
-test_that("readonly prevents write access via copy-on-write", {
+test_that("cow='deny' prevents mutation via replacement functions", {
     seg <- segment_create(400)
     segment_write(seg, 1:100, offset = 0)
 
     # Create readonly vector on UNPROTECTED segment
-    x <- shared_vector(seg, "integer", length = 100, readonly = TRUE)
+    x <- shared_vector(seg, "integer", length = 100, readonly = TRUE, cow = "deny")
 
     # Reading should work
-    expect_equal(x[1], 1L)
-    expect_equal(x[50], 50L)
+    expect_equal(as.integer(x[1]), 1L)
+    expect_equal(as.integer(x[50]), 50L)
 
-    # Attempt to write - this should trigger copy-on-write
-    # The original shared memory should NOT be mutated
-    x[1] <- 999L
+    # Attempt to write should error and leave x unchanged.
+    expect_error(x[1] <- 999L, "cow='deny'")
+    expect_equal(as.integer(x[1]), 1L)
 
-    # x now has the modified value (it was copied internally)
-    expect_equal(x[1], 999L)
-
-    # But the underlying shared memory should still have the original value
-    # Verify by creating a new view of the same segment
-    y <- shared_vector(seg, "integer", length = 100, readonly = TRUE)
-    expect_equal(y[1], 1L)  # Original value preserved
-
-    # x is still technically a shared_vector ALTREP, but now backed by a copy
-    expect_true(is_shared_vector(x))
+    # x remains a shard shared object (it may be materialized by R internals).
+    expect_true(inherits(x, "shard_shared_vector"))
 })
 
 test_that("is_shared_vector correctly identifies ALTREP vectors", {
@@ -154,23 +146,23 @@ test_that("as_shared converts standard vectors to shared", {
     x_int <- as_shared(1:100)
     expect_true(is_shared_vector(x_int))
     expect_equal(length(x_int), 100)
-    expect_equal(x_int[50], 50L)
+    expect_equal(as.integer(x_int[50]), 50L)
 
     # Double
     x_dbl <- as_shared(as.double(1:100))
     expect_true(is_shared_vector(x_dbl))
-    expect_equal(x_dbl[50], 50.0)
+    expect_equal(as.double(x_dbl[50]), 50.0)
 
     # Logical
     x_lgl <- as_shared(c(TRUE, FALSE, TRUE))
     expect_true(is_shared_vector(x_lgl))
-    expect_true(x_lgl[1])
-    expect_false(x_lgl[2])
+    expect_true(as.logical(x_lgl[1]))
+    expect_false(as.logical(x_lgl[2]))
 
     # Raw
     x_raw <- as_shared(as.raw(1:10))
     expect_true(is_shared_vector(x_raw))
-    expect_equal(x_raw[5], as.raw(5))
+    expect_equal(as.raw(x_raw[5]), as.raw(5))
 })
 
 test_that("shared_segment returns the underlying segment", {
@@ -192,7 +184,7 @@ test_that("vector operations work on shared vectors", {
     expect_equal(mean(x), mean(1:100))
 
     # Range
-    expect_equal(range(x), c(1L, 100L))
+    expect_equal(as.integer(range(x)), c(1L, 100L))
 
     # Comparison
     expect_equal(sum(x > 50), 50)
@@ -204,7 +196,7 @@ test_that("shared vectors work with double precision", {
 
     expect_true(is_shared_vector(x))
     expect_equal(length(x), 100)
-    expect_equal(x[1], 0.1)
+    expect_equal(as.double(x[1]), 0.1)
     expect_equal(sum(x), sum(vals))
 })
 
@@ -221,8 +213,28 @@ test_that("views share the same underlying memory", {
     expect_equal(shared_segment(x), shared_segment(z))
 
     # Data should match
-    expect_equal(y[1], 1L)
-    expect_equal(z[1], 51L)
+    expect_equal(as.integer(y[1]), 1L)
+    expect_equal(as.integer(z[1]), 51L)
+})
+
+test_that("writing through a view triggers private copy at the correct offset", {
+    seg <- segment_create(400)
+    segment_write(seg, 1:100, offset = 0)
+
+    # Allow copy-on-write so we can verify the "view write" path is correct.
+    x <- shared_vector(seg, "integer", length = 100, readonly = TRUE, cow = "allow")
+    v <- shared_view(x, start = 11, length = 10)  # maps x[11:20]
+
+    # Write should materialize v privately, and must not mutate the shared segment.
+    v[1] <- 999L
+
+    expect_equal(as.integer(v[1]), 999L)
+    expect_equal(as.integer(x[11]), 11L)
+    expect_equal(as.integer(x[1]), 1L)
+
+    # A fresh view of the same segment sees the original data.
+    y <- shared_vector(seg, "integer", length = 100, readonly = TRUE, cow = "allow")
+    expect_equal(as.integer(y[11]), 11L)
 })
 
 test_that("multiple views can be created", {

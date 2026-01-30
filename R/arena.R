@@ -251,7 +251,7 @@ arena_depth <- function() {
 #' @keywords internal
 .estimate_object_size <- function(x) {
     tryCatch({
-        as.numeric(object.size(x))
+        as.numeric(utils::object.size(x))
     }, error = function(e) {
         NA_real_
     })
