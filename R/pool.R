@@ -52,7 +52,7 @@ pool_create <- function(n = parallel::detectCores() - 1L,
 
   # Create pool structure
   dev_path <- tryCatch(getNamespaceInfo("shard", "path"), error = function(e) NULL)
-  if (!is.null(dev_path) && isTRUE(dir.exists(file.path(dev_path, ".git")))) {
+  if (!is.null(dev_path) && isTRUE(file.exists(file.path(dev_path, ".git")))) {
     .pool_env$dev_path <- dev_path
   } else {
     # Best-effort dev mode: if we're in the *shard* repo root, use it as
@@ -60,7 +60,7 @@ pool_create <- function(n = parallel::detectCores() - 1L,
     # tools.
     repo_root <- tryCatch(normalizePath(".", winslash = "/", mustWork = TRUE), error = function(e) NULL)
     if (!is.null(repo_root) &&
-        isTRUE(dir.exists(file.path(repo_root, ".git"))) &&
+        isTRUE(file.exists(file.path(repo_root, ".git"))) &&
         isTRUE(file.exists(file.path(repo_root, "DESCRIPTION")))) {
       desc <- tryCatch(readLines(file.path(repo_root, "DESCRIPTION"), warn = FALSE), error = function(e) character())
       is_shard_pkg <- any(grepl("^Package:\\s*shard\\s*$", desc))
