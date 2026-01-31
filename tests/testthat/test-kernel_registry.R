@@ -5,6 +5,8 @@ test_that("kernel registry supports dispatch via shard_map(kernel=)", {
 
   # Built-ins should be registered at load time.
   expect_true("crossprod_tile" %in% list_kernels())
+  expect_true("col_means" %in% list_kernels())
+  expect_true("col_vars" %in% list_kernels())
 
   # Register a tiny custom kernel.
   register_kernel(

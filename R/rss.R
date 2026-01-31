@@ -97,8 +97,19 @@ rss_via_proc <- function(pid) {
 rss_via_ps_cmd <- function(pid) {
   tryCatch({
     # ps -o rss= gives RSS in KB
-    output <- system2("ps", args = c("-o", "rss=", "-p", as.character(pid)),
-                      stdout = TRUE, stderr = FALSE)
+    output <- withCallingHandlers(
+      system2(
+        "ps",
+        args = c("-o", "rss=", "-p", as.character(pid)),
+        stdout = TRUE,
+        stderr = NULL
+      ),
+      warning = function(w) invokeRestart("muffleWarning")
+    )
+    status <- attr(output, "status", exact = TRUE)
+    if (!is.null(status) && !identical(as.integer(status), 0L)) {
+      return(NA_real_)
+    }
     if (length(output) == 0 || nchar(trimws(output[1])) == 0) {
       return(NA_real_)
     }

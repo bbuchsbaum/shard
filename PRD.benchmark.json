@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "document_type": "PRD",
+    "version": "1.0.0",
+    "product_name": "shard",
+    "title": "Benchmark Reliability + memshare Parity",
+    "created": "2026-01-31",
+    "status": "draft",
+    "owners": ["shard core"]
+  },
+  "elevator_pitch": "Make shard’s benchmarks trustworthy and make shard competitive (or faster) than memshare on common shared-matrix workloads by (1) fixing worker recycle/restart context loss, (2) hardening the benchmark harness against memshare macOS constraints and input-type pitfalls, and (3) adding fast-path kernels for column-wise primitives.",
+  "problem_statement": {
+    "summary": "The current shard vs memshare benchmark can fail (correctness) and can under-represent shard performance (overhead + non-optimal kernels).",
+    "symptoms": [
+      "shard_map() can lose borrowed inputs/outputs after a worker recycle/restart, leading to missing-argument errors (e.g., `mats` missing) and partially-written output buffers",
+      "memshare benchmarks can fail on macOS due to strict UID length limits and fragile variable registration/lifecycle semantics",
+      "column-wise workloads in shard are often written as per-column R loops inside a shard, inflating overhead vs memshare’s vectorized primitives"
+    ],
+    "root_causes": [
+      "dispatch runtime re-exports only the dispatch closure on worker replacement; shard_map/shard_reduce borrow/out context is not automatically re-established",
+      "benchmark harness uses namespaces/inputs that trip memshare constraints (macOS UID length, list-of-lists payloads) and lacks a self-test gate",
+      "benchmark shard implementations use slow, non-idiomatic shard usage patterns (inner R loops) rather than view-enabled kernels"
+    ]
+  },
+  "goals": {
+    "functional": [
+      "shard_map/shard_reduce remain correct under worker recycle/restart/death (borrow/out always present for retried chunks)",
+      "benchmark script runs reliably and explains why memshare timings are skipped when memshare is not usable on the host",
+      "shard provides built-in fast paths for common column-wise operations on shared matrices (means, variance)"
+    ],
+    "non_functional": [
+      "no benchmark-only hacks: performance improvements must apply to real shard usage",
+      "minimal additional user-facing API surface; prefer kernel registry where possible",
+      "CRAN-safe behavior (tests skipped on CRAN where appropriate)"
+    ]
+  },
+  "requirements": {
+    "R1_correctness": [
+      "When a worker is restarted/recycled during dispatch, any retry of in-flight chunks must run with the same `.shard_borrow` and `.shard_out` context as the original worker",
+      "No partial/zero outputs due to missing out buffers or missing borrowed inputs"
+    ],
+    "R2_benchmark_harness": [
+      "Use short memshare namespaces compatible with macOS UID limits (<32 chars total UID)",
+      "Avoid memshare payload types known to fail (e.g., list-of-lists); prefer atomic tile specs",
+      "Provide a memshare self-test and skip memshare timings with an actionable message if it fails"
+    ],
+    "R3_performance": [
+      "Add `col_means` and `col_vars` kernels that operate on shared matrices via view-enabled C helpers",
+      "Update benchmark to use these kernels as the canonical shard approach for column-wise workloads",
+      "Maintain correctness parity with base R `colMeans()` / `apply(var)` for no-NA inputs (and NA propagation semantics when NA/NaN present)"
+    ]
+  },
+  "success_metrics": [
+    "Benchmark no longer reports shard correctness failures in Frobenius-norm test under worker recycling",
+    "Benchmark completes shard timing for all tests without chunk permanent failures under typical settings",
+    "For column means/variance tests, shard timings are at least competitive with memshare (target: ratio >= 1.0 on a typical laptop with 4 workers) when memshare is functioning"
+  ],
+  "deliverables": [
+    "dispatch_chunks(on_worker_ready=...) hook used by shard_map/shard_reduce to re-export runtime context to replacement workers",
+    "view/C kernel: `C_shard_mat_block_col_vars` + R wrapper `view_col_vars`",
+    "kernel registry entries: `col_means`, `col_vars`",
+    "hardened benchmark script: `inst/bench/shard_vs_memshare_quick.R`",
+    "regression tests covering scratch-triggered recycle + re-export and view_col_vars correctness"
+  ],
+  "risks": [
+    "Worker replacement paths are numerous; missing one path could reintroduce context loss under unusual failure modes (timeouts, recv/unserialize failures)",
+    "memshare may be unstable/incompatible on some hosts; benchmark must clearly separate shard regressions from memshare environment problems",
+    "Column variance kernel must match base R semantics (sample variance, NA propagation); numeric stability may differ slightly for extreme values"
+  ],
+  "open_questions": [
+    "Should shard expose a public `shard_col_means()` / `shard_col_vars()` wrapper API, or keep kernels only?",
+    "Should the benchmark time correctness checks separately from compute time to reduce noise for small tasks?",
+    "Do we want additional view-enabled kernels (colSums, colSd, row-wise variants) as follow-ons?"
+  ],
+  "milestones": [
+    {
+      "id": "M1",
+      "title": "Correctness under recycle",
+      "acceptance": [
+        "New test reproduces scratch-triggered recycle mid-run and shard_map still completes with correct outputs"
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Benchmark hardening",
+      "acceptance": [
+        "Benchmark uses macOS-safe namespaces and avoids memshare list payload pitfalls",
+        "Benchmark prints a clear note and skips memshare timings if memshare self-test fails"
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Performance fast paths",
+      "acceptance": [
+        "col_means/col_vars kernels pass correctness tests",
+        "Benchmark uses kernels for tests 1 and 4"
+      ]
+    }
+  ]
+}
+

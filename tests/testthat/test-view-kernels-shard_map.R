@@ -89,3 +89,25 @@ test_that("shard_map view-enabled crossprod(vX, vY) path has zero view materiali
 
   pool_stop()
 })
+
+test_that("view_col_vars matches base var() for block views", {
+  skip_on_cran()
+
+  pool_stop()
+
+  n <- 200L
+  p <- 20L
+  X <- matrix(rnorm(n * p), nrow = n)
+  colnames(X) <- paste0("x", seq_len(ncol(X)))
+
+  Xsh <- share(X, backing = "mmap")
+  vX <- view_block(Xsh, cols = idx_range(5, 15))
+
+  expected <- apply(X[, 5:15, drop = FALSE], 2, var)
+  actual <- shard:::view_col_vars(vX)
+
+  expect_equal(as.numeric(actual), as.numeric(expected), tolerance = 1e-10)
+  expect_equal(names(actual), colnames(X)[5:15])
+
+  pool_stop()
+})

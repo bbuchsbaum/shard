@@ -500,6 +500,36 @@ view_col_sums <- function(v) {
   out
 }
 
+view_col_vars <- function(v) {
+  if (!inherits(v, "shard_view_block")) {
+    stop("v must be a shard_view_block", call. = FALSE)
+  }
+  base <- v$base
+  d <- v$dim
+  if (length(d) != 2L) stop("View base must be a matrix", call. = FALSE)
+
+  rs <- if (is.null(v$rows)) c(1L, d[1]) else c(v$rows$start, v$rows$end)
+  cs <- if (is.null(v$cols)) c(1L, d[2]) else c(v$cols$start, v$cols$end)
+
+  out <- .Call(
+    "C_shard_mat_block_col_vars",
+    base,
+    as.integer(rs[1]),
+    as.integer(rs[2]),
+    as.integer(cs[1]),
+    as.integer(cs[2]),
+    PACKAGE = "shard"
+  )
+
+  dns <- dimnames(base)
+  if (!is.null(dns) && length(dns) == 2L && !is.null(dns[[2]])) {
+    nms <- dns[[2]][cs[1]:cs[2]]
+    if (!is.null(nms)) names(out) <- nms
+  }
+
+  out
+}
+
 view_xTy <- function(x, y_view, x_cols = NULL) {
   if (!inherits(y_view, "shard_view")) {
     stop("y_view must be a shard view", call. = FALSE)

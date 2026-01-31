@@ -91,3 +91,43 @@ register_kernel(
   supports_views = TRUE,
   description = "Compute a crossprod tile using block views and BLAS-3."
 )
+
+.kernel_col_means <- function(shard, X, out) {
+  if (is.null(shard$start) || is.null(shard$end)) {
+    stop("col_means kernel requires contiguous shard descriptors (start/end)", call. = FALSE)
+  }
+  cs <- as.integer(shard$start)
+  ce <- as.integer(shard$end)
+  if (is.na(cs) || is.na(ce) || cs < 1L || ce < cs) stop("Invalid shard start/end", call. = FALSE)
+  v <- view_block(X, cols = idx_range(cs, ce))
+  out[cs:ce] <- view_col_sums(v) / as.double(nrow(X))
+  NULL
+}
+
+register_kernel(
+  name = "col_means",
+  impl = .kernel_col_means,
+  signature = "(shard, X, out) -> NULL",
+  supports_views = TRUE,
+  description = "Compute column means for a contiguous shard using view_col_sums()."
+)
+
+.kernel_col_vars <- function(shard, X, out) {
+  if (is.null(shard$start) || is.null(shard$end)) {
+    stop("col_vars kernel requires contiguous shard descriptors (start/end)", call. = FALSE)
+  }
+  cs <- as.integer(shard$start)
+  ce <- as.integer(shard$end)
+  if (is.na(cs) || is.na(ce) || cs < 1L || ce < cs) stop("Invalid shard start/end", call. = FALSE)
+  v <- view_block(X, cols = idx_range(cs, ce))
+  out[cs:ce] <- view_col_vars(v)
+  NULL
+}
+
+register_kernel(
+  name = "col_vars",
+  impl = .kernel_col_vars,
+  signature = "(shard, X, out) -> NULL",
+  supports_views = TRUE,
+  description = "Compute sample column variances for a contiguous shard using view_col_vars()."
+)
