@@ -126,6 +126,7 @@ results$test1 <- run_test("1", "Column means (2000x500 matrix)",
 set.seed(456)
 mat_list <- lapply(1:100, function(i) matrix(rnorm(50*50), 50, 50))
 expected2 <- sapply(mat_list, function(m) sqrt(sum(m^2)))
+mat_list_shard <- lapply(mat_list, function(m) share(m, backing = "mmap"))
 
 results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
   mem_fn = function(cl, ns) {
@@ -149,10 +150,9 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
   },
   shard_fn = function() {
     out <- buffer("double", dim = 100)
-    mats_shared <- share(mat_list, deep = TRUE)
     shard_map(
       100,
-      borrow = list(mats = mats_shared),
+      borrow = list(mats = mat_list_shard),
       out = list(out = out),
       fun = function(sh, mats, out) {
         for (i in sh$idx) {
@@ -187,6 +187,7 @@ tile_spec <- matrix(
   byrow = TRUE
 )
 colnames(tile_spec) <- c("i_start", "i_end", "j_start", "j_end")
+tile_list <- lapply(seq_len(nrow(tile_spec)), function(k) as.double(tile_spec[k, ]))
 
 results$test3 <- run_test("3", "Crossprod X'Y (2000x64) x (2000x128)",
   mem_fn = function(cl, ns) {
@@ -199,16 +200,15 @@ results$test3 <- run_test("3", "Crossprod X'Y (2000x64) x (2000x128)",
       tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
     }, add = TRUE)
 
-    registerVariables(ns, list(X = X3, Y = Y3, tile_spec = tile_spec))
+    registerVariables(ns, list(X = X3, Y = Y3))
     res_tiles <- memLapply(
-      X = as.list(seq_len(nrow(tile_spec))),
-      FUN = function(k, tile_spec, X, Y) {
-        tile <- tile_spec[k, ]
-        i <- tile[1]:tile[2]
-        j <- tile[3]:tile[4]
+      X = tile_list,
+      FUN = function(tile, X, Y) {
+        i <- as.integer(tile[1]):as.integer(tile[2])
+        j <- as.integer(tile[3]):as.integer(tile[4])
         crossprod(X[, i, drop = FALSE], Y[, j, drop = FALSE])
       },
-      CLUSTER = cl, NAMESPACE = ns, VARS = c("X", "Y", "tile_spec"), MAX.CORES = n_workers
+      CLUSTER = cl, NAMESPACE = ns, VARS = c("X", "Y"), MAX.CORES = n_workers
     )
     out_mem <- matrix(0, 64, 128)
     for (k in seq_len(nrow(tile_spec))) {
