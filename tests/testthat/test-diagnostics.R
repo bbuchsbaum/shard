@@ -147,10 +147,12 @@ test_that("task_report() reports failures correctly", {
   on.exit(pool_stop(), add = TRUE)
 
   # Create a task that fails for some shards - use block_size=1 for predictable shards
-  result <- shard_map(shards(5, block_size = 1), function(s) {
-    if (s$id == 3) stop("deliberate failure")
-    sum(s$idx)
-  }, workers = 2, max_retries = 1L)
+  result <- suppressWarnings(
+    shard_map(shards(5, block_size = 1), function(s) {
+      if (s$id == 3) stop("deliberate failure")
+      sum(s$idx)
+    }, workers = 2, max_retries = 1L)
+  )
 
   rpt <- task_report(result)
   expect_true(rpt$shards_failed >= 1)  # At least one failure

@@ -61,17 +61,19 @@ test_that("dispatch handles worker death", {
     list(id = 5, action = "normal")
   )
 
-  result <- dispatch_chunks(
-    chunks,
-    fun = function(chunk) {
-      if (chunk$action == "kill") {
-        # Simulate worker death by quitting
-        # In practice, we'll just throw an error to test retry
-        stop("simulated_failure")
-      }
-      chunk$id
-    },
-    health_check_interval = 2
+  result <- suppressWarnings(
+    dispatch_chunks(
+      chunks,
+      fun = function(chunk) {
+        if (chunk$action == "kill") {
+          # Simulate worker death by quitting
+          # In practice, we'll just throw an error to test retry
+          stop("simulated_failure")
+        }
+        chunk$id
+      },
+      health_check_interval = 2
+    )
   )
 
   # Some chunks should complete
@@ -87,10 +89,12 @@ test_that("dispatch respects max_retries", {
   # Chunk that always fails
   chunks <- list(list(id = 1))
 
-  result <- dispatch_chunks(
-    chunks,
-    fun = function(chunk) stop("always_fails"),
-    max_retries = 2
+  result <- suppressWarnings(
+    dispatch_chunks(
+      chunks,
+      fun = function(chunk) stop("always_fails"),
+      max_retries = 2
+    )
   )
 
   # Should be marked as failed after retries exhausted
