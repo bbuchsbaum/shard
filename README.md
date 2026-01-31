@@ -116,6 +116,42 @@ shard::copy_report(run)
 
 ---
 
+## Apply-style wrappers (memshare-like ergonomics)
+
+If your workload is basically “apply a function over columns” or “lapply over a list”,
+`shard` provides thin convenience wrappers that still run through the supervised runtime.
+
+### Column-wise apply (scalar return)
+
+```r
+X <- matrix(rnorm(1e6), nrow = 1000)
+
+scores <- shard::shard_apply_matrix(
+  X,
+  MARGIN = 2,
+  FUN = function(v, y) cor(v, y),
+  VARS = list(y = rnorm(nrow(X))),
+  workers = 8
+)
+```
+
+### List lapply (guarded gather)
+
+```r
+xs <- lapply(1:1000, function(i) rnorm(100))
+
+out <- shard::shard_lapply_shared(
+  xs,
+  FUN = function(el) mean(el),
+  workers = 8
+)
+```
+
+For large outputs (big vectors/data.frames per element), prefer `buffer()`, `table_sink()`,
+or `shard_reduce()` instead of gathering everything to the master.
+
+---
+
 ## Integration with foreach (optional)
 
 `shard` can be used directly via `shard_map()`. For compatibility with existing

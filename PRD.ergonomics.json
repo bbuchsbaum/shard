@@ -1,0 +1,170 @@
+{
+  "metadata": {
+    "document_type": "PRD",
+    "version": "1.0.0",
+    "product_name": "shard",
+    "title": "Ergonomic Apply/Lapply Layer (memshare-style workflows, shard guarantees)",
+    "created": "2026-01-31",
+    "status": "draft",
+    "owners": ["shard core"]
+  },
+  "elevator_pitch": "Make shard the easiest way to do shared-input parallelism in R by adding a thin, memshare-style apply/lapply layer that compiles to shard’s existing contract (shared immutable inputs, explicit outputs when large, supervision, and diagnostics). The goal is to remove adoption friction without weakening shard’s core guarantees.",
+  "problem_statement": {
+    "summary": "shard is powerful, but the on-ramp is steeper than memshare",
+    "pain_points": [
+      "For common patterns (per-column apply, per-element list map), shard_map(borrow=..., out=...) has more ceremony than memshare::memApply/memLapply",
+      "Users migrating from PSOCK/apply-style workflows expect 'return a vector/list' semantics and lifecycle helpers",
+      "List workloads and mixed-object graphs are harder to reason about than numeric matrices/vectors",
+      "Without explicit guardrails, users can accidentally reintroduce gather/memory blowups by returning large objects per shard"
+    ],
+    "shard_assumption": "We can provide convenience APIs as long as they are honest wrappers over shard’s primitives and preserve deterministic memory behavior by default."
+  },
+  "goals": {
+    "functional": [
+      "Provide memshare-style apply/lapply convenience APIs that are shard-native under the hood",
+      "Preserve shard’s default immutability contract and diagnostics (copies/materializations are surfaced, not hidden)",
+      "Provide clear, minimal-migration documentation for memshare users",
+      "Make list workloads first-class via deep sharing + explicit policies (what shares, what serializes, what is rejected)"
+    ],
+    "non_functional": [
+      "Keep the core API surface small: wrappers should map cleanly to shard_map/shard_reduce/buffers/views",
+      "Default behavior must be safe and bounded (avoid accidental giant gathers)",
+      "CRAN-compatible implementation and documentation"
+    ],
+    "success_metrics": [
+      "A memshare user can migrate a typical memApply/memLapply script to shard with ≤ 3 conceptual changes",
+      "For shared-matrix apply workloads, copy_report() shows near-zero view materialization in the ideal contiguous-block path",
+      "For small-return apply workloads (scalar per column), the convenience layer matches shard_map performance within a small constant factor",
+      "For large-return workloads, the convenience layer fails fast with actionable guidance unless the user opts into buffers/sinks"
+    ]
+  },
+  "target_users": {
+    "primary": [
+      "Users currently using memshare::memApply/memLapply",
+      "Users using parallel::parApply/parLapply/clusterApply with large shared inputs",
+      "Users doing per-column feature screening / per-element list computations who want predictable memory"
+    ],
+    "secondary": [
+      "Package authors who want a safe parallel apply primitive with diagnostics",
+      "Users who want shared-input parallelism but do not want to learn a new runtime model up front"
+    ]
+  },
+  "user_stories": [
+    {
+      "id": "US-E-001",
+      "story": "I want a drop-in-ish replacement for memshare::memApply on a numeric matrix.",
+      "acceptance_criteria": [
+        "Provide shard_apply_matrix(X, MARGIN, FUN, VARS, workers, ...) (exact name TBD) with memshare-like argument order",
+        "X can be a plain numeric matrix or a share()d object; if plain, the wrapper shares it once (respecting size thresholds)",
+        "VARS can be a named list of small copied values or share()d values; large VARS are shared automatically (policy-driven)",
+        "Default behavior uses view_block() for contiguous blocks when possible (avoid Y[, idx] materialization)",
+        "For scalar-return FUN (one number per column), results are returned as a plain vector of length ncol(X) without per-shard gather blowups",
+        "copy_report() and report() reflect view/materialization/cow stats for runs initiated through the wrapper"
+      ]
+    },
+    {
+      "id": "US-E-002",
+      "story": "I want a memshare-like list parallel map (memLapply) with shared inputs and predictable memory.",
+      "acceptance_criteria": [
+        "Provide shard_lapply_shared(x, FUN, VARS, workers, ...) (exact name TBD)",
+        "x can be a list of atomic matrices/vectors or nested objects; sharing uses deep-sharing policies (with clear diagnostics of what was shared vs serialized)",
+        "If x contains unsupported elements (closures, externalptr, connections), the wrapper errors with a path-localized message (reusing existing validation)",
+        "Default result semantics: return a list of length length(x) only when per-element results are below a configurable size threshold; otherwise require out= sink/buffer",
+        "Worker recycling/retry semantics are identical to shard_map"
+      ]
+    },
+    {
+      "id": "US-E-003",
+      "story": "I want explicit lifecycle helpers similar to register/retrieve/release that map to shard’s segment model.",
+      "acceptance_criteria": [
+        "Provide a lightweight 'bundle' object that groups shared inputs by name (e.g., shard_bundle(list(X=X, y=y)))",
+        "Bundles must serialize to workers via segment paths (not external pointers) and reopen in workers successfully",
+        "Provide explicit close/release helpers that free segments deterministically on the master",
+        "Diagnostics include per-bundle segment counts and sizes (reusing segment_report())"
+      ]
+    },
+    {
+      "id": "US-E-004",
+      "story": "I want a migration guide from memshare that is honest about differences (immutability, output buffers, large results).",
+      "acceptance_criteria": [
+        "Add docs page: 'memshare -> shard' showing 3 concrete ports (memApply scalar-return, memApply vector-return, memLapply)",
+        "Docs explicitly explain shard’s immutability default and how to opt into cow='allow' when needed",
+        "Docs include a decision tree: return-values vs buffers/sinks vs shard_reduce",
+        "Docs include a small benchmark harness pointer (inst/bench) and a template for reporting peak/end RSS"
+      ]
+    }
+  ],
+  "scope": {
+    "v1_in_scope": [
+      "Matrix apply wrapper for common scalar-return and small-return cases",
+      "List apply wrapper with deep-sharing policies and guardrails",
+      "A bundle/grouping abstraction for share()d inputs with explicit close/release",
+      "Documentation: memshare migration guide + examples",
+      "Tests covering wrapper semantics and guardrails (especially 'fails fast on huge gather')"
+    ],
+    "v1_out_of_scope": [
+      "A promise of full memshare API compatibility (namespaces/pages semantics)",
+      "Mutable shared data as the default (must remain opt-in)",
+      "Auto-magic support for arbitrary base R functions on views without copying"
+    ],
+    "v1_1_in_scope": [
+      "Optional fast-path dispatch defaults for 'tiny task' wrapper modes (profile='speed' integration)",
+      "More ergonomic result sinks: auto_table for data.frame outputs and shard_reduce recipes",
+      "Better list support via explicit list-of-shared-views conventions and more diagnostics"
+    ]
+  },
+  "api": {
+    "matrix_apply_wrapper": {
+      "signature": "shard_apply_matrix(X, MARGIN, FUN, VARS = NULL, workers = NULL, ..., policy = shard_apply_policy())",
+      "description": "Memshare-style apply over a matrix/array where X is shared once and workers operate on views/blocks.",
+      "notes": [
+        "Exact naming TBD; prioritize clarity over perfect drop-in compatibility",
+        "Policy object controls: auto-share thresholds, chunking, view/block sizing, result-size guardrails"
+      ]
+    },
+    "list_apply_wrapper": {
+      "signature": "shard_lapply_shared(x, FUN, VARS = NULL, workers = NULL, ..., policy = shard_apply_policy())",
+      "description": "Memshare-style lapply over lists using deep sharing and bounded result collection."
+    },
+    "policy": {
+      "signature": "shard_apply_policy(auto_share_min_bytes = '1MB', max_gather_bytes = '256MB', return_mode = c('auto','buffer','sink'), cow = c('deny','audit','allow'), profile = c('default','memory','speed'))",
+      "description": "Centralizes safe defaults and guardrails for ergonomic wrappers."
+    },
+    "bundle": {
+      "signature": "shard_bundle(x, backing = c('auto','mmap','shm'), readonly = TRUE, deep = TRUE, policy = shard_share_policy())",
+      "description": "Groups one or more shared objects with names, plus explicit close/release operations."
+    }
+  },
+  "risks_and_mitigations": [
+    {
+      "risk": "Wrappers reintroduce 'gather everything' anti-patterns that shard was designed to avoid.",
+      "mitigation": "Default guardrails: refuse large per-task returns; steer users to buffers/sinks/shard_reduce with actionable errors."
+    },
+    {
+      "risk": "Over-promising compatibility with memshare semantics (namespaces, lifecycle expectations).",
+      "mitigation": "Position as 'memshare-style ergonomics' not 'drop-in replacement'; document conceptual mapping explicitly."
+    },
+    {
+      "risk": "List workloads are too heterogeneous; deep sharing may surprise users.",
+      "mitigation": "Make deep sharing policies explicit, surface a share plan report, and provide predictable failure modes with paths."
+    },
+    {
+      "risk": "API surface creep.",
+      "mitigation": "One policy object, few wrapper entry points; keep shard_map the 'real' API and wrappers thin."
+    }
+  ],
+  "acceptance_test_plan": {
+    "unit_tests": [
+      "Matrix wrapper returns identical results to base apply() for scalar-return FUN on small matrices",
+      "Matrix wrapper shares X once (no per-worker duplication) and diagnostics show near-zero view materialization in ideal block cases",
+      "List wrapper errors with path-localized messages for unsupported objects (closures/externalptr/connections)",
+      "Guardrails: wrapper errors when estimated gathered result bytes exceed policy$max_gather_bytes (unless return_mode='buffer' or 'sink')",
+      "Bundle objects reopen in workers after PSOCK serialization (path-based reopening works)"
+    ],
+    "integration_tests": [
+      "Wrapper-driven run produces report(), copy_report(), mem_report() and includes run metadata indicating wrapper entrypoint",
+      "Worker recycling and retries behave identically when invoked through wrappers"
+    ]
+  }
+}
+

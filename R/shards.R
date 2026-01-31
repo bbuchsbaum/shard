@@ -56,9 +56,16 @@ shards <- function(n,
   # Determine worker count for autotuning
   if (is.null(workers)) {
     pool <- pool_get()
-    workers <- if (!is.null(pool)) pool$n else (parallel::detectCores() - 1L)
+    if (!is.null(pool)) {
+      workers <- pool$n
+    } else {
+      dc <- parallel::detectCores()
+      if (is.na(dc) || dc < 1L) dc <- 1L
+      workers <- dc - 1L
+    }
   }
-  workers <- max(as.integer(workers), 1L)
+  workers <- as.integer(workers)
+  if (is.na(workers) || workers < 1L) workers <- 1L
 
   # Parse block_size
   if (identical(block_size, "auto")) {
