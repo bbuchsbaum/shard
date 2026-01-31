@@ -53,14 +53,13 @@ test_that("deep share handles lists with shareable and non-shareable components"
 
 test_that("deep share detects cycles with environments and errors by default", {
     # R lists copy on assignment, so we need environments for true cycles
-    # Skip this test if we can't create a proper cycle
-    skip("R lists don't create true cycles - environments needed but not supported for deep sharing yet")
-
-    # This would be the test if we supported environments:
-    # env <- new.env()
-    # env$data <- 1:10
-    # env$self <- env  # True self-reference in environment
-    # expect_error(share_env_deep(env), "Cycle detected")
+    env <- new.env()
+    env$data <- 1:10
+    env$self <- env  # True self-reference in environment
+    expect_error(
+        share(env, deep = TRUE, min_bytes = 100, cycle = "error"),
+        "Cycle detected"
+    )
 })
 
 test_that("deep share with cycle='skip' - list self-assignment creates copy not cycle", {

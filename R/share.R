@@ -29,7 +29,22 @@ NULL
 
 # Internal helper: check for non-serializable objects
 # Returns NULL on success, stops with error on failure
-validate_serializable <- function(x, path = "x") {
+validate_serializable <- function(x, path = "x", seen = NULL) {
+    # Guard against cycles/aliases during validation (environments can be truly
+    # cyclic; lists can alias). We only need to ensure we don't recurse forever.
+    if (is.null(seen)) {
+        seen <- new.env(parent = emptyenv())
+    }
+
+    # Use address token for memoization; if this fails, fall back to best-effort.
+    id <- tryCatch(object_identity(x), error = function(e) NULL)
+    if (!is.null(id) && exists(id, envir = seen, inherits = FALSE)) {
+        return(invisible(NULL))
+    }
+    if (!is.null(id)) {
+        assign(id, TRUE, envir = seen)
+    }
+
     # Check for functions (closures)
     if (is.function(x)) {
         stop("Cannot share functions (closures).\n",
@@ -65,7 +80,7 @@ validate_serializable <- function(x, path = "x") {
 
         # Check contents of user environments
         for (nm in names(x)) {
-            validate_serializable(x[[nm]], paste0(path, "$", nm))
+            validate_serializable(x[[nm]], paste0(path, "$", nm), seen = seen)
         }
     }
 
@@ -78,7 +93,7 @@ validate_serializable <- function(x, path = "x") {
             } else {
                 paste0(path, "[[", i, "]]")
             }
-            validate_serializable(x[[i]], item_path)
+            validate_serializable(x[[i]], item_path, seen = seen)
         }
     }
 
@@ -86,7 +101,7 @@ validate_serializable <- function(x, path = "x") {
     if (isS4(x)) {
         slot_names <- methods::slotNames(x)
         for (sn in slot_names) {
-            validate_serializable(methods::slot(x, sn), paste0(path, "@", sn))
+            validate_serializable(methods::slot(x, sn), paste0(path, "@", sn), seen = seen)
         }
     }
 
@@ -251,6 +266,21 @@ share_deep_traverse <- function(x,
                                 mode = "balanced",
                                 types = c("double", "integer", "logical", "raw", "complex"),
                                 hook_result = NULL) {
+    env_has_self_cycle_ <- function(e) {
+        # R lists don't form true cycles, but environments can via bindings or
+        # parent.env(e) == e. We don't deep-traverse environments yet, but we
+        # should fail fast on obvious self-cycles to avoid pathological cases.
+        if (!is.environment(e)) return(FALSE)
+        if (identical(parent.env(e), e)) return(TRUE)
+        nms <- ls(envir = e, all.names = TRUE)
+        if (length(nms) == 0) return(FALSE)
+        vals <- mget(nms, envir = e, inherits = FALSE)
+        for (v in vals) {
+            if (is.environment(v) && identical(v, e)) return(TRUE)
+        }
+        FALSE
+    }
+
     # Handle environment objects based on mode
     if (is.environment(x) && !identical(x, baseenv()) &&
         !identical(x, globalenv()) && !identical(x, emptyenv())) {
@@ -258,6 +288,13 @@ share_deep_traverse <- function(x,
             stop("Cannot share: contains environment.\n",
                  "  Found at: ", path, "\n",
                  "  Hint: Use mode='balanced' to skip environment slots.",
+                 call. = FALSE)
+        }
+        if (cycle_policy == "error" && env_has_self_cycle_(x)) {
+            stop("Cycle detected during deep sharing.\n",
+                 "  Path: ", path, "\n",
+                 "  Cause: environment self-reference.\n",
+                 "  Hint: Use cycle='skip' to skip cyclic references instead.",
                  call. = FALSE)
         }
         # In balanced mode, keep environments as-is

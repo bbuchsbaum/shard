@@ -12,6 +12,8 @@
 ^src/.*\.(o|so|dll)$
 ^src/symbols\.rds$
 ^src/.*\.rs$
+^src/.*\.(gcda|gcno)$
 ^Cargo\.toml$
 ^Cargo\.lock$
 ^doShard$
+^vendor$

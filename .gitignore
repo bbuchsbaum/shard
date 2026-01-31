@@ -26,6 +26,8 @@ doc/
 tests/testthat/_snaps/
 coverage.html
 *.gcov
+*.gcda
+*.gcno
 
 # IDE
 .vscode/
@@ -45,3 +47,6 @@ Thumbs.db
 .claude/
 .beads/
 .logs/
+
+# Local vendor checkouts (not part of the shard package source)
+vendor/
