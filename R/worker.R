@@ -43,9 +43,16 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL, dev_path = NULL)
       try(unloadNamespace("shard"), silent = TRUE)
     }
 
-    if (!is.null(dev_path) && nzchar(dev_path) && requireNamespace("pkgload", quietly = TRUE)) {
+    if (!is.null(dev_path) && nzchar(dev_path)) {
       # In dev/test runs, ensure workers run the same in-tree code as the master.
-      pkgload::load_all(dev_path, quiet = TRUE)
+      #
+      # compile = FALSE avoids requiring system build tools as long as an
+      # up-to-date `src/shard.so` is present (e.g. from a prior build).
+      if (requireNamespace("pkgload", quietly = TRUE)) {
+        pkgload::load_all(dev_path, quiet = TRUE, compile = FALSE, recompile = FALSE)
+      } else {
+        suppressPackageStartupMessages(library(shard))
+      }
     } else {
       suppressPackageStartupMessages(library(shard))
     }

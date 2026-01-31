@@ -20,6 +20,21 @@ NULL
   x
 }
 
+.shard_strip_shared_attrs <- function(x) {
+  # Some operations can accidentally propagate shard bookkeeping attributes
+  # (e.g., when arithmetic uses a shared scalar as the longer operand).
+  # For ergonomic wrappers, we return plain R objects by default.
+  if (is.null(x)) return(x)
+  for (nm in c("shard_cow", "shard_readonly")) {
+    if (!is.null(attr(x, nm, exact = TRUE))) attr(x, nm) <- NULL
+  }
+  if (inherits(x, "shard_shared_vector")) {
+    class(x) <- setdiff(class(x), "shard_shared_vector")
+    if (length(class(x)) == 0) class(x) <- NULL
+  }
+  x
+}
+
 .shard_auto_share_one <- function(x, min_bytes, readonly = TRUE, backing = "auto") {
   # Keep existing shared objects.
   if (is_shared(x) || is_shared_vector(x)) return(x)
@@ -183,7 +198,15 @@ shard_apply_matrix <- function(X,
 
   # If failures exist, surface them.
   if (length(run$failures %||% list()) > 0) {
-    stop("shard_apply_matrix() failed for some shards; see report(run) / task_report(run).", call. = FALSE)
+    fails <- run$failures %||% list()
+    # Best-effort to surface the original worker error message for usability.
+    first <- fails[[1]]
+    msg <- NULL
+    if (is.list(first)) {
+      msg <- first$last_error %||% first$error %||% first$message %||% NULL
+    }
+    msg <- as.character(msg %||% "shard_apply_matrix() failed for some shards")
+    stop(msg, call. = FALSE)
   }
 
   as.double(out[])
@@ -306,5 +329,18 @@ shard_lapply_shared <- function(x,
       }
     }
   }
+
+  # Ergonomics: return plain R objects, not shard shared wrappers.
+  for (i in seq_along(res)) {
+    v <- res[[i]]
+    if (is_shared_vector(v)) {
+      res[[i]] <- .shard_strip_shared_attrs(materialize(v))
+    } else if (inherits(v, c("shard_shared", "shard_deep_shared"))) {
+      res[[i]] <- .shard_strip_shared_attrs(fetch(v))
+    } else {
+      res[[i]] <- .shard_strip_shared_attrs(v)
+    }
+  }
+
   res
 }

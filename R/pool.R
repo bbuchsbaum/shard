@@ -38,6 +38,7 @@ pool_create <- function(n = parallel::detectCores() - 1L,
                         packages = NULL) {
   # Validate inputs
   n <- as.integer(n)
+  if (is.na(n)) n <- 1L
   if (n < 1L) {
     stop("pool_create: n must be >= 1", call. = FALSE)
   }
@@ -54,8 +55,28 @@ pool_create <- function(n = parallel::detectCores() - 1L,
   if (!is.null(dev_path) && isTRUE(dir.exists(file.path(dev_path, ".git")))) {
     .pool_env$dev_path <- dev_path
   } else {
-    .pool_env$dev_path <- NULL
-    dev_path <- NULL
+    # Best-effort dev mode: if we're in the *shard* repo root, use it as
+    # dev_path so workers can load the in-tree R code without requiring build
+    # tools.
+    repo_root <- tryCatch(normalizePath(".", winslash = "/", mustWork = TRUE), error = function(e) NULL)
+    if (!is.null(repo_root) &&
+        isTRUE(dir.exists(file.path(repo_root, ".git"))) &&
+        isTRUE(file.exists(file.path(repo_root, "DESCRIPTION")))) {
+      desc <- tryCatch(readLines(file.path(repo_root, "DESCRIPTION"), warn = FALSE), error = function(e) character())
+      is_shard_pkg <- any(grepl("^Package:\\s*shard\\s*$", desc))
+      looks_like_shard_repo <- isTRUE(file.exists(file.path(repo_root, "R", "pool.R"))) &&
+        isTRUE(file.exists(file.path(repo_root, "R", "worker.R")))
+      if (!isTRUE(is_shard_pkg && looks_like_shard_repo)) {
+        .pool_env$dev_path <- NULL
+        dev_path <- NULL
+      } else {
+        .pool_env$dev_path <- repo_root
+        dev_path <- repo_root
+      }
+    } else {
+      .pool_env$dev_path <- NULL
+      dev_path <- NULL
+    }
   }
 
   pool <- structure(
