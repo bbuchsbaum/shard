@@ -149,9 +149,10 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
   },
   shard_fn = function() {
     out <- buffer("double", dim = 100)
+    mats_shared <- share(mat_list, deep = TRUE)
     shard_map(
-      shards(100, workers = n_workers),
-      borrow = list(mats = mat_list),
+      100,
+      borrow = list(mats = mats_shared),
       out = list(out = out),
       fun = function(sh, mats, out) {
         for (i in sh$idx) {
@@ -160,6 +161,7 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
         NULL
       },
       workers = n_workers,
+      profile = "speed",
       diagnostics = FALSE
     )
     stopifnot(all.equal(as.numeric(out[]), expected2, tolerance = 1e-10))
@@ -199,7 +201,7 @@ results$test3 <- run_test("3", "Crossprod X'Y (2000x64) x (2000x128)",
 
     registerVariables(ns, list(X = X3, Y = Y3, tile_spec = tile_spec))
     res_tiles <- memLapply(
-      X = seq_len(nrow(tile_spec)),
+      X = as.list(seq_len(nrow(tile_spec))),
       FUN = function(k, tile_spec, X, Y) {
         tile <- tile_spec[k, ]
         i <- tile[1]:tile[2]
