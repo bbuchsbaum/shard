@@ -11,11 +11,16 @@ test_that("rss_self returns current process RSS", {
 
 test_that("rss_get_pid returns NA for invalid PID", {
   expect_true(is.na(rss_get_pid(NA)))
-  expect_true(is.na(rss_get_pid(999999999)))  # Unlikely to exist
+  expect_silent({
+    rss <- rss_get_pid(999999999) # Unlikely to exist
+  })
+  expect_true(is.na(rss))
 })
 
 test_that("rss_get_pid works for current process", {
-  rss <- rss_get_pid(Sys.getpid())
+  expect_silent({
+    rss <- rss_get_pid(Sys.getpid())
+  })
 
   # Should match rss_self
   rss_self_val <- rss_self()

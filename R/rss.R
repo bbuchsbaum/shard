@@ -102,7 +102,7 @@ rss_via_ps_cmd <- function(pid) {
         "ps",
         args = c("-o", "rss=", "-p", as.character(pid)),
         stdout = TRUE,
-        stderr = NULL
+        stderr = FALSE
       ),
       warning = function(w) invokeRestart("muffleWarning")
     )
