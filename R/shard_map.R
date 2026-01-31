@@ -42,6 +42,19 @@ NULL
 #'   not gathered).
 #' @param dispatch_opts Optional list of dispatch-mode specific knobs (advanced).
 #'   Currently:
+#'   - For `dispatch_mode="rpc_chunked"`:
+#'     - `auto_table`: logical. If TRUE, shard_map treats data.frame/tibble return
+#'       values as row-group outputs and writes them to a table sink
+#'       automatically (one partition per shard id). This avoids building a large
+#'       list of tibbles and calling bind_rows() on the master. Requires `out=`
+#'       to be empty (use explicit `out=list(sink=table_sink(...))` otherwise).
+#'     - `auto_table_materialize`: `"never"`, `"auto"`, or `"always"` (default `"auto"`).
+#'     - `auto_table_max_bytes`: numeric/integer. For `"auto"`, materialize only
+#'       if estimated output size <= this threshold (default 256MB).
+#'     - `auto_table_mode`: `"row_groups"` (default) or `"partitioned"`.
+#'     - `auto_table_path`: optional output directory (default tempdir()).
+#'     - `auto_table_format`: `"auto"`, `"rds"` (default), or `"native"`.
+#'     - `auto_table_schema`: optional `shard_schema` for validation/native encoding.
 #'   - For `dispatch_mode="shm_queue"`:
 #'     - `block_size`: integer. If provided, overrides the default heuristic for
 #'       contiguous shard block sizing.
@@ -197,6 +210,38 @@ shard_map <- function(shards,
   # Validate output buffers
   out <- validate_out(out)
 
+  auto_table <- isTRUE(dispatch_opts$auto_table %||% FALSE)
+  auto_table_sink <- NULL
+  if (auto_table) {
+    if (length(out) > 0) {
+      stop("dispatch_opts$auto_table=TRUE requires out= to be empty; use out=list(sink=table_sink(...)) for explicit table outputs.", call. = FALSE)
+    }
+
+    auto_table_mode <- as.character(dispatch_opts$auto_table_mode %||% "row_groups")
+    if (!auto_table_mode %in% c("row_groups", "partitioned")) {
+      stop("dispatch_opts$auto_table_mode must be 'row_groups' or 'partitioned'", call. = FALSE)
+    }
+    auto_table_path <- dispatch_opts$auto_table_path %||% NULL
+    auto_table_format <- as.character(dispatch_opts$auto_table_format %||% "rds")
+    if (!auto_table_format %in% c("auto", "rds", "native")) {
+      stop("dispatch_opts$auto_table_format must be 'auto', 'rds', or 'native'", call. = FALSE)
+    }
+
+    # Schema-less by default to keep ceremony low; users can supply a shard_schema
+    # via dispatch_opts$auto_table_schema for native encoding + strict validation.
+    auto_table_schema <- dispatch_opts$auto_table_schema %||% NULL
+    if (!is.null(auto_table_schema) && !inherits(auto_table_schema, "shard_schema")) {
+      stop("dispatch_opts$auto_table_schema must be a shard_schema (or NULL)", call. = FALSE)
+    }
+
+    auto_table_sink <- table_sink(
+      schema = auto_table_schema,
+      mode = auto_table_mode,
+      path = auto_table_path,
+      format = auto_table_format
+    )
+  }
+
   # Low-ceremony fast path: profile="speed" will automatically use shm_queue
   # for scalar-N, chunk_size=1 out-buffer workflows unless dispatch_mode was
   # explicitly set by the user.
@@ -225,12 +270,24 @@ shard_map <- function(shards,
     export_out_to_workers(pool, out)
   }
 
+  # Optional: auto table sink for tibble/data.frame return values.
+  if (!is.null(auto_table_sink)) {
+    export_auto_table_sink_to_workers(pool, auto_table_sink)
+  }
+
+  if (isTRUE(diagnostics)) {
+    reset_worker_diagnostics_(pool)
+  }
+
   # shm_queue fast mode: scalar N only, chunk_size=1, fire-and-forget.
   if (identical(dispatch_mode, "shm_queue")) {
     if (!taskq_supported()) {
       warning("dispatch_mode='shm_queue' not supported on this platform; falling back to rpc_chunked", call. = FALSE)
       dispatch_mode <- "rpc_chunked"
     } else {
+    if (isTRUE(auto_table)) {
+      stop("dispatch_opts$auto_table is not supported in dispatch_mode='shm_queue' (use rpc_chunked or explicit out=table_sink())", call. = FALSE)
+    }
     if (!shards_is_scalar_n) {
       stop("dispatch_mode='shm_queue' currently requires shard_map(N, ...) with scalar N", call. = FALSE)
     }
@@ -300,7 +357,7 @@ shard_map <- function(shards,
   }
 
   # Create self-contained executor function for workers
-  chunk_executor <- make_chunk_executor()
+  chunk_executor <- make_chunk_executor(auto_table = auto_table)
 
   # Optional: online shard sizing autotune for scalar-N sharding. This is opt-in
   # by default for shard_map(N, ...) (low ceremony), and off for precomputed
@@ -327,6 +384,10 @@ shard_map <- function(shards,
       out = out,
       kernel_meta = kernel_meta,
       chunk_executor = chunk_executor,
+      auto_table = auto_table,
+      auto_table_sink = auto_table_sink,
+      auto_table_materialize = dispatch_opts$auto_table_materialize %||% "auto",
+      auto_table_max_bytes = dispatch_opts$auto_table_max_bytes %||% (256 * 1024^2),
       pool = pool,
       workers = workers,
       mem_cap = mem_cap,
@@ -359,14 +420,21 @@ shard_map <- function(shards,
       health_check_interval = health_check_interval,
       max_retries = max_retries,
       timeout = timeout,
-      scheduler_policy = scheduler_policy
+      scheduler_policy = scheduler_policy,
+      store_results = !auto_table
     )
 
-    # Flatten results if chunk_size > 1
-    results <- if (chunk_size > 1L) {
-      unlist(dispatch_result$results, recursive = FALSE)
+    if (auto_table) {
+      mat <- dispatch_opts$auto_table_materialize %||% "auto"
+      mx <- dispatch_opts$auto_table_max_bytes %||% (256 * 1024^2)
+      results <- table_finalize(auto_table_sink, materialize = mat, max_bytes = mx)
     } else {
-      dispatch_result$results
+      # Flatten results if chunk_size > 1
+      results <- if (chunk_size > 1L) {
+        unlist(dispatch_result$results, recursive = FALSE)
+      } else {
+        dispatch_result$results
+      }
     }
 
     # Collect diagnostics
@@ -378,6 +446,7 @@ shard_map <- function(shards,
       diag$chunks_dispatched <- length(chunks)
       diag$pool_stats <- dispatch_result$pool_stats
       diag$view_stats <- dispatch_result$diagnostics$view_stats %||% NULL
+      diag$view_hotspots <- dispatch_result$diagnostics$view_hotspots %||% list()
       diag$copy_stats <- dispatch_result$diagnostics$copy_stats %||% NULL
       diag$table_stats <- dispatch_result$diagnostics$table_stats %||% NULL
       diag$scratch_stats <- dispatch_result$diagnostics$scratch_stats %||% NULL
@@ -411,6 +480,10 @@ shard_map_online_ <- function(n,
                               out,
                               kernel_meta,
                               chunk_executor,
+                              auto_table = FALSE,
+                              auto_table_sink = NULL,
+                              auto_table_materialize = "auto",
+                              auto_table_max_bytes = 256 * 1024^2,
                               pool,
                               workers,
                               mem_cap,
@@ -462,6 +535,7 @@ shard_map_online_ <- function(n,
   agg_diag <- list(
     health_checks = list(),
     view_stats = list(created = 0L, materialized = 0L, materialized_bytes = 0, packed = 0L, packed_bytes = 0),
+    view_hotspots = list(),
     copy_stats = list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0),
     table_stats = list(writes = 0L, rows = 0L, bytes = 0),
     scratch_stats = list(hits = 0L, misses = 0L, high_water = 0),
@@ -517,14 +591,17 @@ shard_map_online_ <- function(n,
       health_check_interval = health_check_interval,
       max_retries = max_retries,
       timeout = timeout,
-      scheduler_policy = scheduler_policy
+      scheduler_policy = scheduler_policy,
+      store_results = !isTRUE(auto_table)
     )
     t1 <- proc.time()[["elapsed"]]
     rss_after <- tryCatch(mem_report(pool)$peak_rss, error = function(e) NA_real_)
 
-    # Flatten phase results into per-shard results and append.
-    phase_res <- if (use_chunk_size > 1L) unlist(dr$results, recursive = FALSE) else dr$results
-    all_results <- c(all_results, phase_res)
+    if (!isTRUE(auto_table)) {
+      # Flatten phase results into per-shard results and append.
+      phase_res <- if (use_chunk_size > 1L) unlist(dr$results, recursive = FALSE) else dr$results
+      all_results <- c(all_results, phase_res)
+    }
     if (length(dr$failures)) all_failures <- c(all_failures, dr$failures)
 
     # Update aggregate diagnostics.
@@ -532,6 +609,14 @@ shard_map_online_ <- function(n,
     agg_diag$chunks_dispatched <- agg_diag$chunks_dispatched + length(chunks)
     if (is.list(dr$diagnostics$view_stats)) {
       for (k in names(agg_diag$view_stats)) agg_diag$view_stats[[k]] <- (agg_diag$view_stats[[k]] %||% 0) + (dr$diagnostics$view_stats[[k]] %||% 0)
+    }
+    if (is.list(dr$diagnostics$view_hotspots) && length(dr$diagnostics$view_hotspots) > 0) {
+      for (k in names(dr$diagnostics$view_hotspots)) {
+        cur <- agg_diag$view_hotspots[[k]] %||% list(bytes = 0, count = 0L)
+        cur$bytes <- (cur$bytes %||% 0) + (dr$diagnostics$view_hotspots[[k]]$bytes %||% 0)
+        cur$count <- as.integer((cur$count %||% 0L) + (dr$diagnostics$view_hotspots[[k]]$count %||% 0L))
+        agg_diag$view_hotspots[[k]] <- cur
+      }
     }
     if (is.list(dr$diagnostics$copy_stats)) {
       for (k in names(agg_diag$copy_stats)) agg_diag$copy_stats[[k]] <- (agg_diag$copy_stats[[k]] %||% 0) + (dr$diagnostics$copy_stats[[k]] %||% 0)
@@ -616,6 +701,13 @@ shard_map_online_ <- function(n,
   )
 
   # Produce a unified dispatch_result-like payload.
+  vh <- agg_diag$view_hotspots %||% list()
+  if (length(vh) > 0) {
+    ord <- order(vapply(vh, function(x) as.double(x$bytes %||% 0), numeric(1)), decreasing = TRUE)
+    vh <- vh[ord]
+    if (length(vh) > 20) vh <- vh[seq_len(20)]
+  }
+
   dispatch_result <- structure(
     list(
       results = all_results,
@@ -631,6 +723,7 @@ shard_map_online_ <- function(n,
       diagnostics = list(
         health_checks = agg_diag$health_checks,
         view_stats = agg_diag$view_stats,
+        view_hotspots = vh,
         copy_stats = agg_diag$copy_stats,
         table_stats = agg_diag$table_stats,
         scratch_stats = agg_diag$scratch_stats,
@@ -649,6 +742,7 @@ shard_map_online_ <- function(n,
     diag$chunks_dispatched <- agg_diag$chunks_dispatched
     diag$pool_stats <- dispatch_result$pool_stats
     diag$view_stats <- agg_diag$view_stats
+    diag$view_hotspots <- vh
     diag$copy_stats <- agg_diag$copy_stats
     diag$table_stats <- agg_diag$table_stats
     diag$scratch_stats <- agg_diag$scratch_stats
@@ -658,7 +752,12 @@ shard_map_online_ <- function(n,
 
   list(
     shards = full_desc,
-    results = all_results,
+    results = if (isTRUE(auto_table)) {
+      if (is.null(auto_table_sink)) stop("auto_table enabled but auto_table_sink is NULL", call. = FALSE)
+      table_finalize(auto_table_sink, materialize = auto_table_materialize, max_bytes = auto_table_max_bytes)
+    } else {
+      all_results
+    },
     dispatch_result = dispatch_result,
     diag = diag
   )
@@ -947,6 +1046,61 @@ export_out_to_workers <- function(pool, out) {
   invisible(NULL)
 }
 
+export_auto_table_sink_to_workers <- function(pool, sink) {
+  if (is.null(sink)) return(invisible(NULL))
+  if (!inherits(sink, "shard_table_sink")) {
+    stop("sink must be a shard_table_sink", call. = FALSE)
+  }
+
+  export_env <- new.env(parent = emptyenv())
+  export_env$.shard_auto_table_sink <- list(
+    schema = sink$schema,
+    mode = sink$mode,
+    path = sink$path,
+    format = sink$format
+  )
+
+  for (i in seq_len(pool$n)) {
+    w <- pool$workers[[i]]
+    if (!is.null(w) && worker_is_alive(w)) {
+      tryCatch({
+        parallel::clusterExport(w$cluster, ".shard_auto_table_sink", envir = export_env)
+      }, error = function(e) {
+        warning("Failed to export auto table sink to worker ", i, ": ", conditionMessage(e))
+      })
+    }
+  }
+
+  invisible(NULL)
+}
+
+reset_worker_diagnostics_ <- function(pool) {
+  # Best-effort: reset per-process counters so run telemetry is clean and
+  # attribution (e.g. view materialization hotspots) isn't polluted by previous runs.
+  for (i in seq_len(pool$n)) {
+    w <- pool$workers[[i]]
+    if (!is.null(w) && worker_is_alive(w)) {
+      tryCatch({
+        parallel::clusterCall(w$cluster, function() {
+          f1 <- tryCatch(get("view_reset_diagnostics", asNamespace("shard")), error = function(e) NULL)
+          f2 <- tryCatch(get("buffer_reset_diagnostics", asNamespace("shard")), error = function(e) NULL)
+          f3 <- tryCatch(get("table_reset_diagnostics", asNamespace("shard")), error = function(e) NULL)
+          f4 <- tryCatch(get("scratch_reset_diagnostics", asNamespace("shard")), error = function(e) NULL)
+          if (is.function(f1)) tryCatch(f1(), error = function(e) NULL)
+          if (is.function(f2)) tryCatch(f2(), error = function(e) NULL)
+          if (is.function(f3)) tryCatch(f3(), error = function(e) NULL)
+          if (is.function(f4)) tryCatch(f4(), error = function(e) NULL)
+          if (exists(".shard_view_hotspot_snapshot", envir = globalenv(), inherits = FALSE)) {
+            rm(".shard_view_hotspot_snapshot", envir = globalenv())
+          }
+          NULL
+        })
+      }, error = function(e) NULL)
+    }
+  }
+  invisible(NULL)
+}
+
 #' Create Shard Chunks
 #'
 #' Groups shards into chunks for dispatch. Each chunk contains a self-contained
@@ -1034,7 +1188,7 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_met
 #'
 #' @return A function that executes chunks.
 #' @keywords internal
-make_chunk_executor <- function() {
+make_chunk_executor <- function(auto_table = FALSE) {
   # This function runs inside workers
   function(chunk) {
     # Get borrowed inputs and outputs from worker environment
@@ -1103,28 +1257,47 @@ make_chunk_executor <- function() {
     borrow_names <- chunk$borrow_names
     out_names <- chunk$out_names
 
-    # Execute for each shard in the chunk
-    results <- lapply(chunk$shards, function(shard) {
-      # Build args: shard first, then borrowed, then output
+    if (isTRUE(auto_table)) {
+      # Low-ceremony table outputs: if the user function returns a data.frame,
+      # write it as a row-group partition (one file per shard id). This avoids
+      # building a giant list + bind_rows() on the master.
+      if (!exists(".shard_auto_table_sink", envir = globalenv(), inherits = FALSE)) {
+        stop("auto_table is enabled but no auto table sink is available in the worker", call. = FALSE)
+      }
+      d <- get(".shard_auto_table_sink", envir = globalenv(), inherits = FALSE)
+      sink <- structure(
+        list(schema = d$schema, mode = d$mode, path = d$path, format = d$format),
+        class = "shard_table_sink"
+      )
+
+      for (shard in chunk$shards) {
+        args <- list(shard)
+        for (name in borrow_names) args[[name]] <- borrow[[name]]
+        for (name in out_names) args[[name]] <- out[[name]]
+
+        val <- do.call(fun, args, quote = TRUE)
+        if (is.null(val)) next
+        if (!is.data.frame(val)) {
+          stop("auto_table requires fun() to return a data.frame/tibble (or NULL) for all shards", call. = FALSE)
+        }
+        sid <- as.integer(shard$id %||% NA_integer_)
+        if (is.na(sid) || sid < 1L) stop("Invalid shard id for table_write()", call. = FALSE)
+        table_write(sink, sid, val)
+      }
+      return(NULL)
+    }
+
+    # Execute for each shard in the chunk (return values gathered to master).
+    lapply(chunk$shards, function(shard) {
       args <- list(shard)
-
-      for (name in borrow_names) {
-        args[[name]] <- borrow[[name]]
-      }
-
-      for (name in out_names) {
-        args[[name]] <- out[[name]]
-      }
-
-      # Execute user function
+      for (name in borrow_names) args[[name]] <- borrow[[name]]
+      for (name in out_names) args[[name]] <- out[[name]]
       # `do.call()` has a sharp edge: if an argument value is a language object,
       # it will be spliced into the call and evaluated (surprising for "data"
       # being passed through borrow/out). Using quote=TRUE ensures language
       # objects are passed as values, not executed as code.
       do.call(fun, args, quote = TRUE)
     })
-
-    results
   }
 }
 
@@ -1175,8 +1348,20 @@ results <- function(x, flatten = TRUE) {
 
   res <- x$results
 
+  if (inherits(res, c("shard_row_groups", "shard_dataset", "shard_table_handle"))) {
+    return(res)
+  }
+  if (is.data.frame(res)) {
+    return(res)
+  }
+
   if (inherits(res, "shard_results_placeholder")) {
     # Avoid unlist() on a placeholder (would allocate enormous objects).
+    return(res)
+  }
+
+  if (!is.list(res)) {
+    # Unusual but allowed (e.g., auto-materialized scalar results).
     return(res)
   }
 

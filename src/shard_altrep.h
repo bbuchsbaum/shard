@@ -105,4 +105,11 @@ attribute_visible SEXP C_shard_mat_crossprod_gather(SEXP x, SEXP y,
                                                     SEXP x_col_start, SEXP x_col_end,
                                                     SEXP y_cols);
 
+/* Same as C_shard_mat_crossprod_gather(), but uses caller-provided scratch B (nr x ky). */
+attribute_visible SEXP C_shard_mat_crossprod_gather_scratch(SEXP x, SEXP y,
+                                                            SEXP row_start, SEXP row_end,
+                                                            SEXP x_col_start, SEXP x_col_end,
+                                                            SEXP y_cols,
+                                                            SEXP scratch_B);
+
 #endif /* SHARD_ALTREP_H */

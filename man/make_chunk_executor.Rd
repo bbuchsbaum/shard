@@ -4,7 +4,7 @@
 \alias{make_chunk_executor}
 \title{Create Chunk Executor Function}
 \usage{
-make_chunk_executor()
+make_chunk_executor(auto_table = FALSE)
 }
 \value{
 A function that executes chunks.

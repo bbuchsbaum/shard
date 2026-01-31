@@ -41,6 +41,11 @@ test_that("shard_map gather views use a BLAS-3 packed path with zero view materi
   expect_equal(cr$view_materialized_bytes %||% 0, 0)
   expect_gt(cr$view_packed_bytes %||% 0, 0)
 
+  # Gather packing reuses worker-local scratch buffers.
+  expect_true(is.list(res$diagnostics$scratch_stats))
+  expect_gt(res$diagnostics$scratch_stats$misses %||% 0L, 0L)
+  expect_gt(res$diagnostics$scratch_stats$hits %||% 0L, 0L)
+
   mats <- results(res)
   for (i in seq_along(mats)) {
     idx <- idxs[[i]]

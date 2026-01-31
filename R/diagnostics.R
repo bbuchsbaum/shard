@@ -152,6 +152,16 @@ recommendations <- function(result) {
         "Views were materialized (%.1f MB). Prefer view_block()/view_gather() and shard-aware kernels to avoid slice copies.",
         mb / 1024^2
       ))
+      hs <- result$diagnostics$view_hotspots %||% list()
+      if (is.list(hs) && length(hs) > 0) {
+        keys <- names(hs)
+        if (length(keys) > 3) keys <- keys[seq_len(3)]
+        parts <- vapply(keys, function(k) {
+          b <- as.double(hs[[k]]$bytes %||% 0)
+          paste0(format_bytes(b), " @ ", k)
+        }, character(1))
+        recs <- c(recs, paste0("Top view materialization hotspots: ", paste(parts, collapse = " ; ")))
+      }
     }
     if (pb > 0) {
       recs <- c(recs, sprintf(
@@ -414,6 +424,7 @@ copy_report <- function(result = NULL) {
     view_created = 0L,
     view_materialized = 0L,
     view_materialized_bytes = 0,
+    view_materialize_hotspots = list(),
     view_packed = 0L,
     view_packed_bytes = 0
   )
@@ -423,7 +434,7 @@ copy_report <- function(result = NULL) {
 
     # Count results
     if (!is.null(result$results)) {
-      if (inherits(result$results, "shard_results_placeholder")) {
+      if (inherits(result$results, c("shard_results_placeholder", "shard_row_groups", "shard_dataset", "shard_table_handle"))) {
         # shm_queue results are not gathered; avoid reporting placeholder size.
         rpt$result_imports <- 0L
         rpt$result_bytes <- 0
@@ -464,6 +475,9 @@ copy_report <- function(result = NULL) {
       rpt$view_materialized_bytes <- vs$materialized_bytes %||% 0
       rpt$view_packed <- vs$packed %||% 0L
       rpt$view_packed_bytes <- vs$packed_bytes %||% 0
+    }
+    if (!is.null(diag) && is.list(diag$view_hotspots)) {
+      rpt$view_materialize_hotspots <- diag$view_hotspots %||% list()
     }
   }
 

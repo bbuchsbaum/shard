@@ -17,6 +17,7 @@ NULL
 .views_env$materialized_bytes <- 0
 .views_env$packed <- 0L
 .views_env$packed_bytes <- 0
+.views_env$materialize_hotspots <- new.env(parent = emptyenv())
 
 elem_size_bytes <- function(x) {
   switch(
@@ -94,6 +95,60 @@ idx_print <- function(x) {
   if (is_idx_range(x)) return(idx_range_print(x))
   if (is.integer(x)) return(paste0("[gather n=", length(x), "]"))
   "(unknown)"
+}
+
+.view_hotspot_key_ <- function() {
+  # Best-effort attribution: try to find the first non-materialize call above
+  # materialize() in the stack. Keep strings short/stable for reporting.
+  calls <- sys.calls()
+  if (length(calls) == 0) return("(unknown)")
+
+  skip <- c(
+    "materialize",
+    "UseMethod",
+    "materialize.shard_view_block",
+    "materialize.shard_view_gather",
+    "materialize.default"
+  )
+
+  for (i in rev(seq_along(calls))) {
+    cl <- calls[[i]]
+    if (!is.call(cl)) next
+    fn <- tryCatch(as.character(cl[[1]]), error = function(e) "")
+    if (!nzchar(fn) || fn %in% skip) next
+    txt <- paste(deparse(cl, nlines = 1L, width.cutoff = 200L), collapse = " ")
+    if (nzchar(txt)) return(txt)
+  }
+
+  txt <- paste(deparse(calls[[length(calls)]], nlines = 1L, width.cutoff = 200L), collapse = " ")
+  if (nzchar(txt)) return(txt)
+  "(unknown)"
+}
+
+.view_record_materialization_ <- function(nbytes) {
+  nbytes <- as.double(nbytes)
+  if (!is.finite(nbytes) || is.na(nbytes) || nbytes <= 0) return(invisible(NULL))
+
+  key <- .view_hotspot_key_()
+  if (!exists(key, envir = .views_env$materialize_hotspots, inherits = FALSE)) {
+    .views_env$materialize_hotspots[[key]] <- list(bytes = 0, count = 0L)
+  }
+  cur <- .views_env$materialize_hotspots[[key]]
+  cur$bytes <- (cur$bytes %||% 0) + nbytes
+  cur$count <- as.integer((cur$count %||% 0L) + 1L)
+  .views_env$materialize_hotspots[[key]] <- cur
+  invisible(NULL)
+}
+
+view_materialize_hotspots_snapshot_ <- function() {
+  keys <- ls(.views_env$materialize_hotspots, all.names = TRUE)
+  if (length(keys) == 0) return(list())
+  out <- list()
+  for (k in keys) {
+    v <- get(k, envir = .views_env$materialize_hotspots, inherits = FALSE)
+    out[[k]] <- list(bytes = as.double(v$bytes %||% 0), count = as.integer(v$count %||% 0L))
+  }
+  out
 }
 
 view_layout <- function(x_dim, rows, cols) {
@@ -361,6 +416,7 @@ materialize.shard_view_block <- function(x) {
   .views_env$materialized <- .views_env$materialized + 1L
   if (!is.null(x$nbytes_est) && is.finite(x$nbytes_est)) {
     .views_env$materialized_bytes <- .views_env$materialized_bytes + x$nbytes_est
+    .view_record_materialization_(x$nbytes_est)
   }
 
   if (is.null(rows)) rows <- seq_len(d[1])
@@ -379,6 +435,7 @@ materialize.shard_view_gather <- function(x) {
   .views_env$materialized <- .views_env$materialized + 1L
   if (!is.null(x$nbytes_est) && is.finite(x$nbytes_est)) {
     .views_env$materialized_bytes <- .views_env$materialized_bytes + x$nbytes_est
+    .view_record_materialization_(x$nbytes_est)
   }
 
   if (is.null(rows)) rows <- seq_len(d[1])
@@ -409,6 +466,7 @@ view_reset_diagnostics <- function() {
   .views_env$materialized_bytes <- 0
   .views_env$packed <- 0L
   .views_env$packed_bytes <- 0
+  rm(list = ls(.views_env$materialize_hotspots, all.names = TRUE), envir = .views_env$materialize_hotspots)
   invisible(NULL)
 }
 
@@ -512,8 +570,12 @@ view_xTy <- function(x, y_view, x_cols = NULL) {
   }
 
   y_cols <- y_view$cols
+  nr <- as.integer(rs[2] - rs[1] + 1L)
+  ky <- length(y_cols)
+  # Reuse worker-local packing buffers to avoid repeated allocation churn.
+  B <- scratch_matrix(nr, ky, key = paste0("gather_pack_", nr, "x", ky))
   out <- .Call(
-    "C_shard_mat_crossprod_gather",
+    "C_shard_mat_crossprod_gather_scratch",
     x,
     y_base,
     as.integer(rs[1]),
@@ -521,11 +583,11 @@ view_xTy <- function(x, y_view, x_cols = NULL) {
     as.integer(xcs),
     as.integer(xce),
     as.integer(y_cols),
+    B,
     PACKAGE = "shard"
   )
 
   # Record controlled packing volume (scratch), distinct from view materialization.
-  nr <- as.integer(rs[2] - rs[1] + 1L)
   .views_env$packed <- .views_env$packed + 1L
   .views_env$packed_bytes <- .views_env$packed_bytes + (as.double(nr) * as.double(length(y_cols)) * 8)
 

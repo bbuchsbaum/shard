@@ -103,6 +103,37 @@ dispatch_chunks <- function(chunks, fun, ...,
       )
     }
 
+    # Best-effort attribution: only compute hotspot deltas when materialization occurred.
+    if (is.list(res$view_delta) && (res$view_delta$materialized %||% 0L) > 0L) {
+      hs1 <- tryCatch(view_materialize_hotspots_snapshot_(), error = function(e) NULL)
+      if (is.list(hs1)) {
+        hs0 <- if (exists(".shard_view_hotspot_snapshot", envir = globalenv(), inherits = FALSE)) {
+          get(".shard_view_hotspot_snapshot", envir = globalenv())
+        } else {
+          list()
+        }
+
+        delta <- list()
+        keys <- unique(c(names(hs0), names(hs1)))
+        for (k in keys) {
+          v1 <- hs1[[k]] %||% list()
+          v0 <- hs0[[k]] %||% list()
+          b1 <- v1$bytes %||% 0
+          c1 <- v1$count %||% 0L
+          b0 <- v0$bytes %||% 0
+          c0 <- v0$count %||% 0L
+          db <- as.double(b1) - as.double(b0)
+          dc <- as.integer(c1) - as.integer(c0)
+          if (is.finite(db) && db > 0) {
+            delta[[k]] <- list(bytes = db, count = dc)
+          }
+        }
+
+        assign(".shard_view_hotspot_snapshot", hs1, envir = globalenv())
+        if (length(delta) > 0) res$view_hotspots_delta <- delta
+      }
+    }
+
     if (is.list(cd0) && is.list(cd1)) {
       res$copy_delta <- list(
         buffer_writes = (cd1$writes %||% 0L) - (cd0$writes %||% 0L),
@@ -138,6 +169,7 @@ dispatch_chunks <- function(chunks, fun, ...,
   chunks_processed <- 0L
   view_stats <- list(created = 0L, materialized = 0L, materialized_bytes = 0,
                      packed = 0L, packed_bytes = 0)
+  view_hotspots <- list()
   copy_stats <- list(borrow_exports = 0L, borrow_bytes = 0, buffer_writes = 0L, buffer_bytes = 0)
   table_stats <- list(writes = 0L, rows = 0L, bytes = 0)
   scratch_stats <- list(hits = 0L, misses = 0L, high_water = 0)
@@ -445,6 +477,16 @@ dispatch_chunks <- function(chunks, fun, ...,
       view_stats$packed_bytes <- view_stats$packed_bytes + (vd$packed_bytes %||% 0)
     }
 
+    if (is.list(payload) && is.list(payload$view_hotspots_delta)) {
+      hsd <- payload$view_hotspots_delta
+      for (k in names(hsd)) {
+        cur <- view_hotspots[[k]] %||% list(bytes = 0, count = 0L)
+        cur$bytes <- (cur$bytes %||% 0) + (hsd[[k]]$bytes %||% 0)
+        cur$count <- as.integer((cur$count %||% 0L) + (hsd[[k]]$count %||% 0L))
+        view_hotspots[[k]] <- cur
+      }
+    }
+
     if (is.list(payload) && is.list(payload$copy_delta)) {
       cd <- payload$copy_delta
       copy_stats$buffer_writes <- copy_stats$buffer_writes + (cd$buffer_writes %||% 0L)
@@ -481,6 +523,14 @@ dispatch_chunks <- function(chunks, fun, ...,
   diag$end_time <- Sys.time()
   diag$duration <- as.numeric(difftime(diag$end_time, diag$start_time, units = "secs"))
   diag$view_stats <- view_stats
+  if (length(view_hotspots) > 0) {
+    ord <- order(vapply(view_hotspots, function(x) as.double(x$bytes %||% 0), numeric(1)), decreasing = TRUE)
+    view_hotspots <- view_hotspots[ord]
+    if (length(view_hotspots) > 20) view_hotspots <- view_hotspots[seq_len(20)]
+    diag$view_hotspots <- view_hotspots
+  } else {
+    diag$view_hotspots <- list()
+  }
   diag$copy_stats <- copy_stats
   diag$table_stats <- table_stats
   diag$scratch_stats <- scratch_stats

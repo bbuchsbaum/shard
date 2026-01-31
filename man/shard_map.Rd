@@ -76,6 +76,21 @@ not gathered).}
 \item{dispatch_opts}{Optional list of dispatch-mode specific knobs (advanced).
 Currently:
 \itemize{
+\item For \code{dispatch_mode="rpc_chunked"}:
+\itemize{
+\item \code{auto_table}: logical. If TRUE, shard_map treats data.frame/tibble return
+values as row-group outputs and writes them to a table sink
+automatically (one partition per shard id). This avoids building a large
+list of tibbles and calling bind_rows() on the master. Requires \verb{out=}
+to be empty (use explicit \code{out=list(sink=table_sink(...))} otherwise).
+\item \code{auto_table_materialize}: \code{"never"}, \code{"auto"}, or \code{"always"} (default \code{"auto"}).
+\item \code{auto_table_max_bytes}: numeric/integer. For \code{"auto"}, materialize only
+if estimated output size <= this threshold (default 256MB).
+\item \code{auto_table_mode}: \code{"row_groups"} (default) or \code{"partitioned"}.
+\item \code{auto_table_path}: optional output directory (default tempdir()).
+\item \code{auto_table_format}: \code{"auto"}, \code{"rds"} (default), or \code{"native"}.
+\item \code{auto_table_schema}: optional \code{shard_schema} for validation/native encoding.
+}
 \item For \code{dispatch_mode="shm_queue"}:
 \itemize{
 \item \code{block_size}: integer. If provided, overrides the default heuristic for
