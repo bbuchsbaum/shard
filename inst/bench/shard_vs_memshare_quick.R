@@ -72,6 +72,22 @@ frobenius_norm <- function(m) {
   sqrt(drop(crossprod(as.vector(m))))
 }
 
+auto_chunk_size <- function(n, workers, target_chunks_per_worker = 4L, min = 1L, max = 32L) {
+  n <- as.integer(n)
+  workers <- as.integer(workers)
+  target_chunks_per_worker <- as.integer(target_chunks_per_worker)
+
+  if (is.na(n) || n <= 0L) return(min)
+  if (is.na(workers) || workers <= 0L) return(min)
+  if (is.na(target_chunks_per_worker) || target_chunks_per_worker <= 0L) return(min)
+
+  # Heuristic: make each worker handle a few chunks to amortize dispatch overhead,
+  # but keep chunk sizes bounded so work still load-balances well.
+  chunk <- as.integer(ceiling(n / (workers * target_chunks_per_worker)))
+  chunk <- max(min, min(max, chunk))
+  chunk
+}
+
 # =============================================================================
 # Test 1: Column means
 # =============================================================================
@@ -111,6 +127,7 @@ set.seed(456)
 mat_list <- lapply(1:100, function(i) matrix(rnorm(50*50), 50, 50))
 expected2 <- vapply(mat_list, frobenius_norm, numeric(1))
 mat_list_shard <- lapply(mat_list, function(m) share(m, backing = "mmap"))
+n2 <- length(mat_list)
 
 results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
   mem_fn = function(cl, ns) {
@@ -131,7 +148,7 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
   shard_fn = function() {
     out <- buffer("double", dim = 100)
     shard_map(
-      100,
+      n2,
       borrow = list(mats = mat_list_shard),
       out = list(out = out),
       fun = function(sh, mats, out) {
@@ -141,8 +158,8 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
         NULL
       },
       workers = n_workers,
-      # General lever: amortize per-task dispatch overhead for many-small-items workloads.
-      chunk_size = 8L,
+      # General lever: amortize per-item dispatch overhead for many-small-items workloads.
+      chunk_size = auto_chunk_size(n2, n_workers),
       profile = "speed",
       diagnostics = FALSE
     )
