@@ -117,6 +117,7 @@ open_out_from_desc_ <- function(out_desc) {
 
 worker_shm_queue_loop_ <- function(queue_desc,
                                   worker_id,
+                                  mode,
                                   n,
                                   block_size,
                                   fun,
@@ -143,6 +144,7 @@ worker_shm_queue_loop_ <- function(queue_desc,
   }
   out <- open_out_from_desc_(out_desc)
 
+  mode <- as.character(mode %||% "scalar_n")
   block_size <- as.integer(block_size)
   n <- as.integer(n)
 
@@ -172,9 +174,48 @@ worker_shm_queue_loop_ <- function(queue_desc,
       next
     }
 
-    start <- (task_id - 1L) * block_size + 1L
-    end <- min(task_id * block_size, n)
-    shard <- list(id = task_id, start = start, end = end, idx = start:end, len = end - start + 1L)
+    shard <- NULL
+    if (identical(mode, "scalar_n")) {
+      start <- (task_id - 1L) * block_size + 1L
+      end <- min(task_id * block_size, n)
+      shard <- list(id = task_id, start = start, end = end, idx = start:end, len = end - start + 1L)
+    } else if (identical(mode, "descriptor")) {
+      # Fetch shard descriptors once per worker process.
+      shards_key <- if (exists(".shard_shm_queue_shards_key", envir = globalenv(), inherits = FALSE)) {
+        get(".shard_shm_queue_shards_key", envir = globalenv())
+      } else {
+        NULL
+      }
+      fetched_key <- if (exists(".shard_shm_queue_shards_fetched_key", envir = globalenv(), inherits = FALSE)) {
+        get(".shard_shm_queue_shards_fetched_key", envir = globalenv())
+      } else {
+        NULL
+      }
+      if (!exists(".shard_shm_queue_shards_fetched", envir = globalenv(), inherits = FALSE) ||
+          !identical(fetched_key, shards_key)) {
+        shards_handle <- if (exists(".shard_shm_queue_shards", envir = globalenv(), inherits = FALSE)) {
+          get(".shard_shm_queue_shards", envir = globalenv())
+        } else {
+          NULL
+        }
+        if (is.null(shards_handle)) stop("shm_queue descriptor mode missing .shard_shm_queue_shards", call. = FALSE)
+        assign(".shard_shm_queue_shards_fetched", fetch(shards_handle), envir = globalenv())
+        assign(".shard_shm_queue_shards_fetched_key", shards_key, envir = globalenv())
+      }
+
+      shards_list <- get(".shard_shm_queue_shards_fetched", envir = globalenv())
+      shard <- shards_list[[task_id]]
+      if (is.null(shard$id)) shard$id <- task_id
+      if (is.null(shard$len)) {
+        if (!is.null(shard$idx)) shard$len <- length(shard$idx)
+        else if (!is.null(shard$start) && !is.null(shard$end)) shard$len <- as.integer(shard$end - shard$start + 1L)
+      }
+      if (is.null(shard$idx) && !is.null(shard$start) && !is.null(shard$end)) {
+        shard$idx <- as.integer(shard$start):as.integer(shard$end)
+      }
+    } else {
+      stop("Unsupported shm_queue mode: ", mode, call. = FALSE)
+    }
 
     args <- list(shard)
     for (nm in borrow_names) args[[nm]] <- borrow[[nm]]
@@ -210,6 +251,7 @@ worker_shm_queue_loop_ <- function(queue_desc,
 
 dispatch_shards_shm_queue_ <- function(n,
                                       block_size,
+                                      shards = NULL,
                                       fun,
                                       borrow,
                                       out,
@@ -228,7 +270,17 @@ dispatch_shards_shm_queue_ <- function(n,
   error_log_max_lines <- as.integer(error_log_max_lines)
   if (is.na(error_log_max_lines) || error_log_max_lines < 0L) error_log_max_lines <- 0L
 
-  n_tasks <- as.integer(ceiling(n / block_size))
+  mode <- if (is.null(shards)) "scalar_n" else "descriptor"
+  if (!is.null(shards) && !inherits(shards, "shard_descriptor")) {
+    stop("shards must be a shard_descriptor (or NULL)", call. = FALSE)
+  }
+
+  n_tasks <- if (identical(mode, "scalar_n")) {
+    as.integer(ceiling(n / block_size))
+  } else {
+    as.integer(shards$num_shards %||% length(shards$shards))
+  }
+
   q <- taskq_create(n_tasks, backing = queue_backing)
   qdesc <- q$desc
   seg_master <- q$owner
@@ -236,6 +288,13 @@ dispatch_shards_shm_queue_ <- function(n,
 
   borrow_names <- names(borrow)
   out_names <- names(out)
+
+  shards_shared <- NULL
+  shards_key <- NULL
+  if (identical(mode, "descriptor")) {
+    shards_shared <- share(shards$shards, backing = queue_backing)
+    shards_key <- shards_shared$path %||% NULL
+  }
 
   # Start one long-lived loop per worker. If a worker dies, requeue its claims
   # and restart the loop on a fresh worker.
@@ -262,12 +321,27 @@ dispatch_shards_shm_queue_ <- function(n,
       # Re-export borrow/out to the restarted worker.
       export_borrow_to_workers(pool, borrow)
       if (length(out) > 0) export_out_to_workers(pool, out)
+      if (identical(mode, "descriptor")) {
+        export_env <- new.env(parent = emptyenv())
+        export_env$.shard_shm_queue_shards <- shards_shared
+        export_env$.shard_shm_queue_shards_key <- shards_key
+        tryCatch(parallel::clusterExport(w$cluster, c(".shard_shm_queue_shards", ".shard_shm_queue_shards_key"), envir = export_env),
+                 error = function(e) NULL)
+      }
+    }
+
+    if (identical(mode, "descriptor")) {
+      export_env <- new.env(parent = emptyenv())
+      export_env$.shard_shm_queue_shards <- shards_shared
+      export_env$.shard_shm_queue_shards_key <- shards_key
+      tryCatch(parallel::clusterExport(w$cluster, c(".shard_shm_queue_shards", ".shard_shm_queue_shards_key"), envir = export_env),
+               error = function(e) NULL)
     }
 
     parallel_sendCall(
       w$cluster[[1]],
       fun = worker_shm_queue_loop_,
-      args = list(qdesc, worker_id, n, block_size, fun, borrow_names, out_names, max_retries, error_log, error_log_max_lines),
+      args = list(qdesc, worker_id, mode, n, block_size, fun, borrow_names, out_names, max_retries, error_log, error_log_max_lines),
       return = TRUE,
       tag = paste0("shm_queue_", worker_id)
     )

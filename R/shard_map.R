@@ -286,7 +286,7 @@ shard_map <- function(shards,
     reset_worker_diagnostics_(pool)
   }
 
-  # shm_queue fast mode: scalar N only, chunk_size=1, fire-and-forget.
+  # shm_queue fast mode: chunk_size=1, fire-and-forget (no gathered results).
   if (identical(dispatch_mode, "shm_queue")) {
     if (!taskq_supported()) {
       warning("dispatch_mode='shm_queue' not supported on this platform; falling back to rpc_chunked", call. = FALSE)
@@ -295,9 +295,6 @@ shard_map <- function(shards,
     if (isTRUE(auto_table)) {
       stop("dispatch_opts$auto_table is not supported in dispatch_mode='shm_queue' (use rpc_chunked or explicit out=table_sink())", call. = FALSE)
     }
-    if (!shards_is_scalar_n) {
-      stop("dispatch_mode='shm_queue' currently requires shard_map(N, ...) with scalar N", call. = FALSE)
-    }
     if (as.integer(chunk_size) != 1L) {
       stop("dispatch_mode='shm_queue' currently requires chunk_size=1", call. = FALSE)
     }
@@ -305,30 +302,54 @@ shard_map <- function(shards,
       warning("dispatch_mode='shm_queue' does not gather results; prefer using out= buffers/sinks.", call. = FALSE)
     }
 
-    block_size <- dispatch_opts$block_size %||% autotune_block_size(
+    queue_backing <- dispatch_opts$queue_backing %||% "mmap"
+
+    if (shards_is_scalar_n) {
+      block_size <- dispatch_opts$block_size %||% autotune_block_size(
+          n = n_items,
+          workers = workers,
+          min_shards_per_worker = 4L,
+          max_shards_per_worker = 64L
+        )
+      block_size <- as.integer(block_size)
+      if (is.na(block_size) || block_size < 1L) stop("dispatch_opts$block_size must be >= 1", call. = FALSE)
+
+      shards <- shards_lazy(n_items, block_size = block_size)
+
+      dispatch_result <- dispatch_shards_shm_queue_(
         n = n_items,
-        workers = workers,
-        min_shards_per_worker = 4L,
-        max_shards_per_worker = 64L
+        block_size = block_size,
+        shards = NULL,
+        fun = fun,
+        borrow = borrow,
+        out = out,
+        pool = pool,
+        max_retries = max_retries,
+        timeout = timeout,
+        queue_backing = queue_backing,
+        error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
+        error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L
       )
-    block_size <- as.integer(block_size)
-    if (is.na(block_size) || block_size < 1L) stop("dispatch_opts$block_size must be >= 1", call. = FALSE)
+    } else {
+      if (!inherits(shards, "shard_descriptor")) {
+        stop("dispatch_mode='shm_queue' requires shard_map(N, ...) or a shard_descriptor", call. = FALSE)
+      }
 
-    shards <- shards_lazy(n_items, block_size = block_size)
-
-    dispatch_result <- dispatch_shards_shm_queue_(
-      n = n_items,
-      block_size = block_size,
-      fun = fun,
-      borrow = borrow,
-      out = out,
-      pool = pool,
-      max_retries = max_retries,
-      timeout = timeout,
-      queue_backing = dispatch_opts$queue_backing %||% "mmap",
-      error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
-      error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L
-    )
+      dispatch_result <- dispatch_shards_shm_queue_(
+        n = as.integer(shards$num_shards %||% length(shards$shards)),
+        block_size = 1L,
+        shards = shards,
+        fun = fun,
+        borrow = borrow,
+        out = out,
+        pool = pool,
+        max_retries = max_retries,
+        timeout = timeout,
+        queue_backing = queue_backing,
+        error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
+        error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L
+      )
+    }
 
     results <- dispatch_result$results
 
