@@ -218,8 +218,9 @@ bench2_run <- function(n_items, mat_size) {
   ns <- unique_ns("b2")
   memshare_result <- tryCatch(
     run_bench("memshare::memLapply", {
+      registerVariables(ns, list(mats = mat_list))
       res <- memLapply(
-        X = mat_list,
+        X = "mats",
         FUN = function(m) sqrt(sum(m * m)),
         CLUSTER = cl,
         NAMESPACE = ns,
@@ -235,6 +236,7 @@ bench2_run <- function(n_items, mat_size) {
       NULL
     },
     finally = {
+      tryCatch(releaseVariables(ns, c("mats")), error = function(e) NULL)
       tryCatch(memshare_gc(ns, cluster = cl), error = function(e) NULL)
     }
   )
@@ -245,23 +247,28 @@ bench2_run <- function(n_items, mat_size) {
   # --- shard ---
   cleanup()
 
-  shard_result <- run_bench("shard::shard_map (shards_list)", {
-    mat_list_shared <- lapply(mat_list, function(m) share(m, backing = "mmap"))
+  shard_result <- run_bench("shard::shard_map", {
+    # Sharing each matrix as an ALTREP-backed segment does not scale: with many
+    # matrices it can exhaust worker file descriptors / segment handles during
+    # unserialization (macOS often fails with "Failed to open ... ALTREP
+    # unserialize"). For this benchmark we share the list container as ONE
+    # serialized object and fetch it once per shard.
+    mat_list_shared <- share(mat_list, backing = "mmap")
     out <- buffer("double", dim = n_items)
 
     res <- shard_map(
-      shards_list(as.list(seq_len(n_items))),
+      shards(n_items, block_size = ceiling(n_items / n_workers), workers = n_workers),
       borrow = list(mats = mat_list_shared),
       out = list(out = out),
       fun = function(sh, mats, out) {
+        mats0 <- fetch(mats)
         for (i in sh$idx) {
-          m <- fetch(mats[[i]])
+          m <- mats0[[i]]
           out[i] <- sqrt(sum(m * m))
         }
         NULL
       },
       workers = n_workers,
-      chunk_size = max(1L, as.integer(floor(n_items / (n_workers * 2L)))),
       profile = "speed",
       diagnostics = FALSE
     )
@@ -480,18 +487,18 @@ bench4_run <- function(n_rows, n_cols, n_subsets) {
     X_shared <- share(X)
     out <- buffer("double", dim = n_subsets)
 
-    # Also share the subsets list
-    subsets_shared <- share(subsets, deep = TRUE)
+    # Share the subsets list as a single serialized object (one segment). Deep
+    # sharing turns this into many components and is unnecessary here.
+    subsets_shared <- share(subsets, backing = "mmap")
 
     res <- shard_map(
-      shards(n_subsets, workers = n_workers),
+      shards(n_subsets, block_size = ceiling(n_subsets / n_workers), workers = n_workers),
       borrow = list(X = X_shared, subsets = subsets_shared),
       out = list(out = out),
       fun = function(sh, X, subsets, out) {
-        X_mat <- fetch(X)
         subs <- fetch(subsets)
         for (i in sh$idx) {
-          out[i] <- sum(X_mat[subs[[i]], ])
+          out[i] <- sum(X[subs[[i]], ])
         }
         NULL
       },
@@ -542,16 +549,7 @@ bench5_run <- function(n, p, v) {
   # Ground truth
   expected <- crossprod(X, Y)
 
-  # --- memshare: Manual tiled crossprod ---
-  memshare_result <- NULL
-  cleanup()
-  ns <- unique_ns("b5")
-  cl <- NULL
-  memshare_result <- tryCatch({
-    cl <- makeCluster(n_workers)
-    registerVariables(ns, list(X = X, Y = Y))
-
-  # Create tile indices
+  # Tile sizes (used by both implementations)
   block_p <- ceiling(p / 2)
   block_v <- ceiling(v / 2)
 
@@ -563,6 +561,15 @@ bench5_run <- function(n, p, v) {
       tiles <- c(tiles, list(as.double(c(i, i_end, j, j_end))))
     }
   }
+
+  # --- memshare: Manual tiled crossprod ---
+  memshare_result <- NULL
+  cleanup()
+  ns <- unique_ns("b5")
+  cl <- NULL
+  memshare_result <- tryCatch({
+    cl <- makeCluster(n_workers)
+    registerVariables(ns, list(X = X, Y = Y))
 
     run_bench("memshare (manual tiles)", {
       res <- memLapply(
@@ -617,13 +624,20 @@ bench5_run <- function(n, p, v) {
   })
 
   # --- Validate ---
-  stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-8))
+  if (memshare_result_ok(memshare_result, p * v)) {
+    stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-8))
+  }
   stopifnot(all.equal(shard_result$result, expected, tolerance = 1e-8))
 
   cat("\n  Results:\n")
-  cat("    memshare: ", sprintf("%.3f", memshare_result$median), "s (median)\n")
-  cat("    shard:    ", sprintf("%.3f", shard_result$median), "s (median)\n")
-  cat("    Speedup:  ", sprintf("%.2fx", memshare_result$median / shard_result$median), "\n")
+  if (memshare_result_ok(memshare_result, p * v)) {
+    cat("    memshare:  ", fmt_s(memshare_result$median), "s (median)\n", sep = "")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+    cat("    Speedup:   ", fmt_speedup(memshare_result$median, shard_result$median), "\n", sep = "")
+  } else {
+    cat("    memshare:  FAILED\n")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+  }
 
   list(memshare = memshare_result, shard = shard_result)
 }
@@ -654,41 +668,50 @@ bench6_run <- function(n_rows, n_cols) {
 
   cat("\n  Running shard with diagnostics...\n")
 
-  X_shared <- share(X)
-  out <- buffer("double", dim = n_cols)
+  tryCatch({
+    X_shared <- share(X)
+    out <- buffer("double", dim = n_cols)
 
-  res <- shard_map(
-    shards(n_cols, workers = n_workers),
-    borrow = list(X = X_shared),
-    out = list(out = out),
-    fun = function(sh, X, out) {
-      X_mat <- fetch(X)
-      for (j in sh$idx) {
-        out[j] <- sum(X_mat[, j]^2)
-      }
-      NULL
-    },
-    workers = n_workers,
-    diagnostics = TRUE
-  )
+    res <- shard_map(
+      shards(n_cols, workers = n_workers),
+      borrow = list(X = X_shared),
+      out = list(out = out),
+      fun = function(sh, X, out) {
+        for (j in sh$idx) {
+          out[j] <- sum(X[, j]^2)
+        }
+        NULL
+      },
+      workers = n_workers,
+      diagnostics = TRUE
+    )
 
-  mem <- mem_report(res)
-  copy <- copy_report(res)
+    mem <- tryCatch(mem_report(res), error = function(e) NULL)
+    copy <- tryCatch(copy_report(res), error = function(e) NULL)
 
-  cat("\n  shard Memory Report:\n")
-  cat("    Main process peak RSS:  ", round(mem$main$peak_mb, 1), "MB\n")
-  cat("    Worker peak RSS (mean): ", round(mean(sapply(mem$workers, function(w) w$peak_mb)), 1), "MB\n")
-  cat("    View materialized bytes:", copy$view_materialized_bytes, "\n")
-  cat("    Buffer write bytes:     ", copy$buffer_write_bytes, "\n")
+    if (!is.null(mem) && !is.null(copy)) {
+      cat("\n  shard Memory Report:\n")
+      cat("    Main process peak RSS:  ", round(mem$main$peak_mb, 1), "MB\n")
+      cat("    Worker peak RSS (mean): ", round(mean(sapply(mem$workers, function(w) w$peak_mb)), 1), "MB\n")
+      cat("    View materialized bytes:", copy$view_materialized_bytes, "\n")
+      cat("    Buffer write bytes:     ", copy$buffer_write_bytes, "\n")
+    } else {
+      cat("\n  NOTE: Memory diagnostics unavailable for this run.\n")
+    }
 
-  cat("\n  Note: memshare doesn't provide equivalent memory diagnostics.\n")
-  cat("  shard's explicit buffer approach avoids result gathering overhead.\n")
+    cat("\n  Note: memshare doesn't provide equivalent memory diagnostics.\n")
+    cat("  shard's explicit buffer approach avoids result gathering overhead.\n")
 
-  list(
-    shard_main_peak_mb = mem$main$peak_mb,
-    shard_worker_peak_mb = mean(sapply(mem$workers, function(w) w$peak_mb)),
-    matrix_size_mb = mat_size_mb
-  )
+    list(
+      shard_main_peak_mb = if (!is.null(mem)) mem$main$peak_mb else NA_real_,
+      shard_worker_peak_mb = if (!is.null(mem)) mean(sapply(mem$workers, function(w) w$peak_mb)) else NA_real_,
+      matrix_size_mb = mat_size_mb
+    )
+  }, error = function(e) {
+    cat("\n  NOTE: shard diagnostics run failed.\n")
+    cat("    ", conditionMessage(e), "\n", sep = "")
+    NULL
+  })
 }
 
 bench6_result <- bench6_run(5000, 500)
@@ -705,10 +728,8 @@ cat("===========================================================================
 cat("Benchmark results show relative performance (speedup > 1 means shard is faster):\n\n")
 
 cat("1. Column-wise Apply:\n")
-cat("   - Small matrix: shard ",
-    sprintf("%.2fx", bench1_small$memshare$median / bench1_small$shard$median), "\n")
-cat("   - Large matrix: shard ",
-    sprintf("%.2fx", bench1_large$memshare$median / bench1_large$shard$median), "\n")
+cat("   - Small matrix: shard ", fmt_speedup(bench1_small$memshare$median, bench1_small$shard$median), "\n", sep = "")
+cat("   - Large matrix: shard ", fmt_speedup(bench1_large$memshare$median, bench1_large$shard$median), "\n", sep = "")
 
 cat("\n2. Lapply Over List:\n")
 cat("   - Small list:   shard ",
