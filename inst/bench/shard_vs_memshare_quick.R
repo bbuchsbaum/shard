@@ -69,7 +69,9 @@ run_test <- function(name, desc, mem_fn, shard_fn) {
 }
 
 frobenius_norm <- function(m) {
-  sqrt(drop(crossprod(as.vector(m))))
+  # Fast, generic Frobenius norm (allocates, but typically cheaper than BLAS
+  # call overhead for small matrices in this benchmark).
+  sqrt(sum(m * m))
 }
 
 auto_chunk_size <- function(n, workers, target_chunks_per_worker = 4L, min = 1L, max = 32L) {
@@ -153,13 +155,14 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
       out = list(out = out),
       fun = function(sh, mats, out) {
         for (i in sh$idx) {
-          out[i] <- sqrt(drop(crossprod(as.vector(mats[[i]]))))
+          m <- mats[[i]]
+          out[i] <- sqrt(sum(m * m))
         }
         NULL
       },
       workers = n_workers,
       # General lever: amortize per-item dispatch overhead for many-small-items workloads.
-      chunk_size = auto_chunk_size(n2, n_workers),
+      chunk_size = auto_chunk_size(n2, n_workers, target_chunks_per_worker = 1L),
       profile = "speed",
       diagnostics = FALSE
     )
