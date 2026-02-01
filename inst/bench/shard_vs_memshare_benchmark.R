@@ -74,6 +74,28 @@ run_bench <- function(name, expr, times = 3) {
   )
 }
 
+fmt_s <- function(x) sprintf("%.4f", x)
+
+fmt_speedup <- function(mem, shard) {
+  if (is.null(mem) || is.null(shard)) return("NA")
+  if (!is.finite(mem) || !is.finite(shard) || shard <= 0) return("NA")
+  sprintf("%.2fx", mem / shard)
+}
+
+unique_ns <- function(prefix) {
+  suffix <- paste(sample(c(letters, 0:9), 6, replace = TRUE), collapse = "")
+  paste0(prefix, "_", Sys.getpid(), "_", suffix)
+}
+
+memshare_result_ok <- function(x, expected_len) {
+  if (is.null(x)) return(FALSE)
+  if (is.null(x$result)) return(FALSE)
+  if (!is.numeric(x$result)) return(FALSE)
+  if (length(x$result) != expected_len) return(FALSE)
+  if (anyNA(x$result)) return(FALSE)
+  TRUE
+}
+
 # =============================================================================
 # BENCHMARK 1: Parallel Column-wise Apply (Column Means)
 # =============================================================================
@@ -93,39 +115,36 @@ bench1_run <- function(n_rows, n_cols) {
   # Ground truth
   expected <- colMeans(X)
 
-  memshare_ok <- tryCatch({
-    ns0 <- "bench"
-    registerVariables(ns0, list(x = as.double(1:8)))
-    releaseVariables(ns0, "x")
-    TRUE
-  }, error = function(e) {
-    cat("  NOTE: memshare self-test failed; skipping memshare timings.\n")
-    cat("    ", conditionMessage(e), "\n", sep = "")
-    FALSE
-  })
-
   # --- memshare ---
   memshare_result <- NULL
-  if (isTRUE(memshare_ok)) {
-    cleanup()
-    cl <- makeCluster(n_workers)
-    on.exit(stopCluster(cl), add = TRUE)
-
-    memshare_result <- run_bench("memshare::memApply", {
+  cleanup()
+  cl <- makeCluster(n_workers)
+  on.exit(tryCatch(stopCluster(cl), error = function(e) NULL), add = TRUE)
+  ns <- unique_ns("b1")
+  memshare_result <- tryCatch(
+    run_bench("memshare::memApply", {
       res <- memApply(
         X = X,
         MARGIN = 2,
         FUN = function(x) mean(x),
         CLUSTER = cl,
-        NAMESPACE = "bench",
+        NAMESPACE = ns,
         MAX.CORES = n_workers
       )
-      unlist(res)
-    })
-
-    stopCluster(cl)
-    tryCatch(releaseVariables(NAMESPACE = "bench"), error = function(e) NULL)
-  }
+      out <- unlist(res)
+      if (length(out) != n_cols || anyNA(out)) stop("memshare::memApply returned invalid result", call. = FALSE)
+      out
+    }, times = 1),
+    error = function(e) {
+      cat("  NOTE: memshare failed; skipping memshare timings.\n")
+      cat("    ", conditionMessage(e), "\n", sep = "")
+      NULL
+    },
+    finally = {
+      tryCatch(memshare_gc(ns, cluster = cl), error = function(e) NULL)
+      tryCatch(stopCluster(cl), error = function(e) NULL)
+    }
+  )
 
   # --- shard (shard_map with column iteration) ---
   cleanup()
@@ -147,19 +166,19 @@ bench1_run <- function(n_rows, n_cols) {
   })
 
   # --- Validate ---
-  if (!is.null(memshare_result)) {
+  if (memshare_result_ok(memshare_result, n_cols)) {
     stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
   }
   stopifnot(all.equal(shard_result$result, expected, tolerance = 1e-10))
 
   cat("\n  Results:\n")
-  if (!is.null(memshare_result)) {
-    cat("    memshare: ", sprintf("%.3f", memshare_result$median), "s (median)\n")
-    cat("    shard:    ", sprintf("%.3f", shard_result$median), "s (median)\n")
-    cat("    Speedup:  ", sprintf("%.2fx", memshare_result$median / shard_result$median), "\n")
+  if (memshare_result_ok(memshare_result, n_cols)) {
+    cat("    memshare:  ", fmt_s(memshare_result$median), "s (median)\n", sep = "")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+    cat("    Speedup:   ", fmt_speedup(memshare_result$median, shard_result$median), "\n", sep = "")
   } else {
     cat("    memshare:  SKIPPED\n")
-    cat("    shard:     ", sprintf("%.3f", shard_result$median), "s (median)\n")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
   }
 
   list(memshare = memshare_result, shard = shard_result)
@@ -190,58 +209,80 @@ bench2_run <- function(n_items, mat_size) {
   })
 
   # Ground truth: Frobenius norm of each matrix
-  expected <- sapply(mat_list, function(m) sqrt(sum(m^2)))
+  expected <- vapply(mat_list, function(m) sqrt(sum(m * m)), numeric(1))
 
   # --- memshare ---
   cleanup()
   cl <- makeCluster(n_workers)
 
-  memshare_result <- run_bench("memshare::memLapply", {
-    res <- memLapply(
-      X = mat_list,
-      FUN = function(m) sqrt(sum(m^2)),
-      CLUSTER = cl,
-      NAMESPACE = "bench2",
-      MAX.CORES = n_workers
-    )
-    unlist(res)
-  })
+  ns <- unique_ns("b2")
+  memshare_result <- tryCatch(
+    run_bench("memshare::memLapply", {
+      res <- memLapply(
+        X = mat_list,
+        FUN = function(m) sqrt(sum(m * m)),
+        CLUSTER = cl,
+        NAMESPACE = ns,
+        MAX.CORES = n_workers
+      )
+      out <- unlist(res)
+      if (length(out) != n_items || anyNA(out)) stop("memshare::memLapply returned invalid result", call. = FALSE)
+      out
+    }, times = 1),
+    error = function(e) {
+      cat("  NOTE: memshare failed; skipping memshare timings.\n")
+      cat("    ", conditionMessage(e), "\n", sep = "")
+      NULL
+    },
+    finally = {
+      tryCatch(memshare_gc(ns, cluster = cl), error = function(e) NULL)
+    }
+  )
 
   stopCluster(cl)
-  tryCatch(releaseVariables(NAMESPACE = "bench2"), error = function(e) NULL)
+  tryCatch(memshare_gc(ns, cluster = NULL), error = function(e) NULL)
 
   # --- shard ---
   cleanup()
 
   shard_result <- run_bench("shard::shard_map (shards_list)", {
-    mat_list_shared <- share(mat_list, deep = TRUE)
+    mat_list_shared <- lapply(mat_list, function(m) share(m, backing = "mmap"))
     out <- buffer("double", dim = n_items)
 
     res <- shard_map(
-      shards_list(seq_len(n_items)),
+      shards_list(as.list(seq_len(n_items))),
       borrow = list(mats = mat_list_shared),
       out = list(out = out),
       fun = function(sh, mats, out) {
         for (i in sh$idx) {
-          m <- fetch(mats)[[i]]
-          out[i] <- sqrt(sum(m^2))
+          m <- fetch(mats[[i]])
+          out[i] <- sqrt(sum(m * m))
         }
         NULL
       },
       workers = n_workers,
+      chunk_size = max(1L, as.integer(floor(n_items / (n_workers * 2L)))),
+      profile = "speed",
       diagnostics = FALSE
     )
     as.numeric(out[])
   })
 
   # --- Validate ---
-  stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
+  if (memshare_result_ok(memshare_result, n_items)) {
+    stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
+  }
   stopifnot(all.equal(shard_result$result, expected, tolerance = 1e-10))
 
   cat("\n  Results:\n")
-  cat("    memshare: ", sprintf("%.3f", memshare_result$median), "s (median)\n")
-  cat("    shard:    ", sprintf("%.3f", shard_result$median), "s (median)\n")
-  cat("    Speedup:  ", sprintf("%.2fx", memshare_result$median / shard_result$median), "\n")
+  if (memshare_result_ok(memshare_result, n_items)) {
+    cat("    memshare:  ", fmt_s(memshare_result$median), "s (median)\n", sep = "")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+    cat("    Speedup:   ", fmt_speedup(memshare_result$median, shard_result$median), "\n", sep = "")
+  } else {
+    cat("    memshare:  FAILED\n")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+  }
 
   list(memshare = memshare_result, shard = shard_result)
 }
@@ -270,19 +311,32 @@ bench3_run <- function(n_tasks) {
   cleanup()
   cl <- makeCluster(n_workers)
 
-  memshare_result <- run_bench("memshare::memLapply", {
-    res <- memLapply(
-      X = as.list(seq_len(n_tasks)),
-      FUN = function(x) x^2,
-      CLUSTER = cl,
-      NAMESPACE = "bench3",
-      MAX.CORES = n_workers
-    )
-    unlist(res)
-  })
+  ns <- unique_ns("b3")
+  memshare_result <- tryCatch(
+    run_bench("memshare::memLapply", {
+      res <- memLapply(
+        X = as.list(as.double(seq_len(n_tasks))),
+        FUN = function(x) x^2,
+        CLUSTER = cl,
+        NAMESPACE = ns,
+        MAX.CORES = n_workers
+      )
+      out <- unlist(res)
+      if (length(out) != n_tasks || anyNA(out)) stop("memshare::memLapply returned invalid result", call. = FALSE)
+      out
+    }, times = 1),
+    error = function(e) {
+      cat("  NOTE: memshare failed; skipping memshare timings.\n")
+      cat("    ", conditionMessage(e), "\n", sep = "")
+      NULL
+    },
+    finally = {
+      tryCatch(memshare_gc(ns, cluster = cl), error = function(e) NULL)
+    }
+  )
 
   stopCluster(cl)
-  tryCatch(releaseVariables(NAMESPACE = "bench3"), error = function(e) NULL)
+  tryCatch(memshare_gc(ns, cluster = NULL), error = function(e) NULL)
 
   # --- shard (rpc_chunked mode) ---
   cleanup()
@@ -331,18 +385,26 @@ bench3_run <- function(n_tasks) {
   }
 
   # --- Validate ---
-  stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
+  if (memshare_result_ok(memshare_result, n_tasks)) {
+    stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
+  }
   stopifnot(all.equal(shard_rpc_result$result, expected, tolerance = 1e-10))
   if (!is.null(shard_shm_result)) {
     stopifnot(all.equal(shard_shm_result$result, expected, tolerance = 1e-10))
   }
 
   cat("\n  Results:\n")
-  cat("    memshare:           ", sprintf("%.3f", memshare_result$median), "s (median)\n")
-  cat("    shard (rpc):        ", sprintf("%.3f", shard_rpc_result$median), "s (median)\n")
+  if (memshare_result_ok(memshare_result, n_tasks)) {
+    cat("    memshare:           ", fmt_s(memshare_result$median), "s (median)\n", sep = "")
+  } else {
+    cat("    memshare:           FAILED\n")
+  }
+  cat("    shard (rpc):        ", fmt_s(shard_rpc_result$median), "s (median)\n", sep = "")
   if (!is.null(shard_shm_result)) {
-    cat("    shard (shm_queue):  ", sprintf("%.3f", shard_shm_result$median), "s (median)\n")
-    cat("    Speedup vs memshare:", sprintf("%.2fx", memshare_result$median / shard_shm_result$median), "\n")
+    cat("    shard (shm_queue):  ", fmt_s(shard_shm_result$median), "s (median)\n", sep = "")
+    if (memshare_result_ok(memshare_result, n_tasks)) {
+      cat("    Speedup vs memshare:", fmt_speedup(memshare_result$median, shard_shm_result$median), "\n")
+    }
   }
 
   list(memshare = memshare_result, shard_rpc = shard_rpc_result, shard_shm = shard_shm_result)
@@ -377,28 +439,39 @@ bench4_run <- function(n_rows, n_cols, n_subsets) {
   expected <- sapply(subsets, function(idx) sum(X[idx, ]))
 
   # --- memshare ---
+  memshare_result <- NULL
   cleanup()
-  cl <- makeCluster(n_workers)
-
-  # Register X in shared memory
-  registerVariables(list(X = X), NAMESPACE = "bench4")
-
-  memshare_result <- run_bench("memshare (registered)", {
-    res <- memLapply(
-      X = subsets,
-      FUN = function(idx, X) {
-        sum(X[idx, ])
-      },
-      CLUSTER = cl,
-      NAMESPACE = "bench4",
-      VARS = "X",
-      MAX.CORES = n_workers
-    )
-    unlist(res)
+  ns <- unique_ns("b4")
+  cl <- NULL
+  memshare_result <- tryCatch({
+    cl <- makeCluster(n_workers)
+    registerVariables(ns, list(X = X))
+    run_bench("memshare (registered)", {
+      res <- memLapply(
+        X = lapply(subsets, as.double),
+        FUN = function(idx, X) {
+          sum(X[as.integer(idx), ])
+        },
+        CLUSTER = cl,
+        NAMESPACE = ns,
+        VARS = "X",
+        MAX.CORES = n_workers
+      )
+      out <- unlist(res)
+      if (length(out) != n_subsets || anyNA(out)) stop("memshare::memLapply returned invalid result", call. = FALSE)
+      out
+    }, times = 1)
+  }, error = function(e) {
+    cat("  NOTE: memshare failed; skipping memshare timings.\n")
+    cat("    ", conditionMessage(e), "\n", sep = "")
+    NULL
+  }, finally = {
+    if (!is.null(cl)) {
+      tryCatch(memshare_gc(ns, cluster = cl), error = function(e) NULL)
+      tryCatch(stopCluster(cl), error = function(e) NULL)
+    }
+    tryCatch(memshare_gc(ns, cluster = NULL), error = function(e) NULL)
   })
-
-  stopCluster(cl)
-  tryCatch(releaseVariables(NAMESPACE = "bench4"), error = function(e) NULL)
 
   # --- shard ---
   cleanup()
@@ -429,13 +502,20 @@ bench4_run <- function(n_rows, n_cols, n_subsets) {
   })
 
   # --- Validate ---
-  stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
+  if (memshare_result_ok(memshare_result, n_subsets)) {
+    stopifnot(all.equal(memshare_result$result, expected, tolerance = 1e-10))
+  }
   stopifnot(all.equal(shard_result$result, expected, tolerance = 1e-10))
 
   cat("\n  Results:\n")
-  cat("    memshare: ", sprintf("%.3f", memshare_result$median), "s (median)\n")
-  cat("    shard:    ", sprintf("%.3f", shard_result$median), "s (median)\n")
-  cat("    Speedup:  ", sprintf("%.2fx", memshare_result$median / shard_result$median), "\n")
+  if (memshare_result_ok(memshare_result, n_subsets)) {
+    cat("    memshare:  ", fmt_s(memshare_result$median), "s (median)\n", sep = "")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+    cat("    Speedup:   ", fmt_speedup(memshare_result$median, shard_result$median), "\n", sep = "")
+  } else {
+    cat("    memshare:  FAILED\n")
+    cat("    shard:     ", fmt_s(shard_result$median), "s (median)\n", sep = "")
+  }
 
   list(memshare = memshare_result, shard = shard_result)
 }
@@ -463,11 +543,13 @@ bench5_run <- function(n, p, v) {
   expected <- crossprod(X, Y)
 
   # --- memshare: Manual tiled crossprod ---
+  memshare_result <- NULL
   cleanup()
-  cl <- makeCluster(n_workers)
-
-  # Register matrices
-  registerVariables(list(X = X, Y = Y), NAMESPACE = "bench5")
+  ns <- unique_ns("b5")
+  cl <- NULL
+  memshare_result <- tryCatch({
+    cl <- makeCluster(n_workers)
+    registerVariables(ns, list(X = X, Y = Y))
 
   # Create tile indices
   block_p <- ceiling(p / 2)
@@ -478,37 +560,45 @@ bench5_run <- function(n, p, v) {
     for (j in seq(1, v, by = block_v)) {
       i_end <- min(i + block_p - 1, p)
       j_end <- min(j + block_v - 1, v)
-      tiles <- c(tiles, list(list(i_start = i, i_end = i_end, j_start = j, j_end = j_end)))
+      tiles <- c(tiles, list(as.double(c(i, i_end, j, j_end))))
     }
   }
 
-  memshare_result <- run_bench("memshare (manual tiles)", {
-    res <- memLapply(
-      X = tiles,
-      FUN = function(tile, X, Y) {
-        i_idx <- tile$i_start:tile$i_end
-        j_idx <- tile$j_start:tile$j_end
-        crossprod(X[, i_idx, drop = FALSE], Y[, j_idx, drop = FALSE])
-      },
-      CLUSTER = cl,
-      NAMESPACE = "bench5",
-      VARS = c("X", "Y"),
-      MAX.CORES = n_workers
-    )
+    run_bench("memshare (manual tiles)", {
+      res <- memLapply(
+        X = tiles,
+        FUN = function(tile, X, Y) {
+          i_idx <- as.integer(tile[1]):as.integer(tile[2])
+          j_idx <- as.integer(tile[3]):as.integer(tile[4])
+          crossprod(X[, i_idx, drop = FALSE], Y[, j_idx, drop = FALSE])
+        },
+        CLUSTER = cl,
+        NAMESPACE = ns,
+        VARS = c("X", "Y"),
+        MAX.CORES = n_workers
+      )
 
     # Assemble result
     out <- matrix(0, nrow = p, ncol = v)
     for (k in seq_along(tiles)) {
       tile <- tiles[[k]]
-      i_idx <- tile$i_start:tile$i_end
-      j_idx <- tile$j_start:tile$j_end
+      i_idx <- as.integer(tile[1]):as.integer(tile[2])
+      j_idx <- as.integer(tile[3]):as.integer(tile[4])
       out[i_idx, j_idx] <- res[[k]]
     }
-    out
+      out
+    }, times = 1)
+  }, error = function(e) {
+    cat("  NOTE: memshare failed; skipping memshare timings.\n")
+    cat("    ", conditionMessage(e), "\n", sep = "")
+    NULL
+  }, finally = {
+    if (!is.null(cl)) {
+      tryCatch(memshare_gc(ns, cluster = cl), error = function(e) NULL)
+      tryCatch(stopCluster(cl), error = function(e) NULL)
+    }
+    tryCatch(memshare_gc(ns, cluster = NULL), error = function(e) NULL)
   })
-
-  stopCluster(cl)
-  tryCatch(releaseVariables(NAMESPACE = "bench5"), error = function(e) NULL)
 
   # --- shard: shard_crossprod ---
   cleanup()
