@@ -36,6 +36,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_mat_block_col_sums",       (DL_FUNC) &C_shard_mat_block_col_sums,       5},
     {"C_shard_mat_block_col_vars",       (DL_FUNC) &C_shard_mat_block_col_vars,       5},
     {"C_shard_mat_crossprod_block",      (DL_FUNC) &C_shard_mat_crossprod_block,      8},
+    {"C_shard_mat_crossprod_block_into", (DL_FUNC) &C_shard_mat_crossprod_block_into, 9},
     {"C_shard_mat_crossprod_gather",     (DL_FUNC) &C_shard_mat_crossprod_gather,     7},
     {"C_shard_mat_crossprod_gather_scratch",(DL_FUNC) &C_shard_mat_crossprod_gather_scratch, 8},
     {"C_shard_obj_address",              (DL_FUNC) &C_shard_obj_address,              1},

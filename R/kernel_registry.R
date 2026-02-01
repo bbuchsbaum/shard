@@ -70,10 +70,31 @@ get_kernel <- function(name) {
 
 # Built-in kernel: crossprod tile (t(X_block) %*% Y_block) into an output buffer.
 .kernel_crossprod_tile <- function(tile, X, Y, Z) {
-  vX <- view_block(X, cols = idx_range(tile$x_start, tile$x_end))
-  vY <- view_block(Y, cols = idx_range(tile$y_start, tile$y_end))
-  blk <- view_crossprod(vX, vY)
-  Z[tile$x_start:tile$x_end, tile$y_start:tile$y_end] <- blk
+  # Fast path: call into BLAS and write directly into the output buffer segment.
+  # This avoids allocating a temporary (kx x ky) R matrix per tile and then
+  # copying it into Z.
+  .Call(
+    "C_shard_mat_crossprod_block_into",
+    X,
+    Y,
+    1L,
+    as.integer(nrow(X)),
+    as.integer(tile$x_start),
+    as.integer(tile$x_end),
+    as.integer(tile$y_start),
+    as.integer(tile$y_end),
+    Z$segment$ptr,
+    PACKAGE = "shard"
+  )
+
+  # Maintain per-process buffer write diagnostics for copy_report().
+  # This matches the semantics of writing exactly once per output element.
+  kx <- as.integer(tile$x_end - tile$x_start + 1L)
+  ky <- as.integer(tile$y_end - tile$y_start + 1L)
+  if (!is.na(kx) && !is.na(ky) && kx > 0L && ky > 0L) {
+    .buffer_diag_env$writes <- .buffer_diag_env$writes + 1L
+    .buffer_diag_env$bytes <- .buffer_diag_env$bytes + (as.double(kx) * as.double(ky) * 8)
+  }
   NULL
 }
 

@@ -1280,6 +1280,86 @@ SEXP C_shard_mat_crossprod_block(SEXP x, SEXP y,
     return out;
 }
 
+SEXP C_shard_mat_crossprod_block_into(SEXP x, SEXP y,
+                                      SEXP row_start, SEXP row_end,
+                                      SEXP x_col_start, SEXP x_col_end,
+                                      SEXP y_col_start, SEXP y_col_end,
+                                      SEXP z_seg_ptr) {
+    if (TYPEOF(z_seg_ptr) != EXTPTRSXP) {
+        error("Invalid segment pointer");
+    }
+
+    shard_segment_t *zseg = (shard_segment_t *)R_ExternalPtrAddr(z_seg_ptr);
+    if (!zseg) error("Invalid segment");
+    if (zseg->readonly) error("Output segment is read-only");
+    if (!zseg->addr) error("Output segment has no address");
+
+    int x_nrow = 0, x_ncol = 0, y_nrow = 0, y_ncol = 0;
+    shard_altrep_info_t *xinfo = NULL, *yinfo = NULL;
+
+    double *xp = mat_double_ptr(x, &xinfo, &x_nrow, &x_ncol);
+    double *yp = mat_double_ptr(y, &yinfo, &y_nrow, &y_ncol);
+
+    int rs = asInteger(row_start);
+    int re = asInteger(row_end);
+    int xcs = asInteger(x_col_start);
+    int xce = asInteger(x_col_end);
+    int ycs = asInteger(y_col_start);
+    int yce = asInteger(y_col_end);
+
+    if (rs == NA_INTEGER || re == NA_INTEGER || xcs == NA_INTEGER || xce == NA_INTEGER ||
+        ycs == NA_INTEGER || yce == NA_INTEGER) {
+        error("bounds must be non-NA integers");
+    }
+
+    if (rs < 1 || re < rs) error("row bounds out of range");
+    if (rs > x_nrow || re > x_nrow) error("row bounds exceed x nrow");
+    if (rs > y_nrow || re > y_nrow) error("row bounds exceed y nrow");
+
+    if (xcs < 1 || xce < xcs || xce > x_ncol) error("x col bounds out of range");
+    if (ycs < 1 || yce < ycs || yce > y_ncol) error("y col bounds out of range");
+
+    int nr = re - rs + 1;        /* rows participating in product */
+    int kx = xce - xcs + 1;      /* x columns */
+    int ky = yce - ycs + 1;      /* y columns */
+
+    /* BLAS expects column-major with leading dimension = full nrow */
+    int lda = x_nrow;
+    int ldb = y_nrow;
+
+    /* Offset pointers to the requested (row_start, col_start) */
+    double *A = xp + (R_xlen_t)(xcs - 1) * (R_xlen_t)x_nrow + (R_xlen_t)(rs - 1);
+    double *B = yp + (R_xlen_t)(ycs - 1) * (R_xlen_t)y_nrow + (R_xlen_t)(rs - 1);
+
+    /* Output buffer Z is (p x v) == (ncol(X) x ncol(Y)) in row-major notation,
+       but stored column-major with leading dimension p (ncol(X)). */
+    int p = x_ncol;
+    int v = y_ncol;
+
+    if (zseg->size < (size_t)p * (size_t)v * sizeof(double)) {
+        error("Output segment too small for declared dimensions");
+    }
+
+    double *Z = (double *)zseg->addr;
+    /* Pointer to Z[xcs:xce, ycs:yce] (column-major) */
+    double *C = Z + (R_xlen_t)(ycs - 1) * (R_xlen_t)p + (R_xlen_t)(xcs - 1);
+
+    const char transa = 'T';
+    const char transb = 'N';
+    const double alpha = 1.0;
+    const double beta = 0.0;
+    int m = kx;
+    int n = ky;
+    int k = nr;
+    int ldc = p;
+
+    F77_CALL(dgemm)(&transa, &transb, &m, &n, &k,
+                    &alpha, A, &lda, B, &ldb,
+                    &beta, C, &ldc FCONE FCONE);
+
+    return R_NilValue;
+}
+
 SEXP C_shard_mat_crossprod_gather(SEXP x, SEXP y,
                                   SEXP row_start, SEXP row_end,
                                   SEXP x_col_start, SEXP x_col_end,

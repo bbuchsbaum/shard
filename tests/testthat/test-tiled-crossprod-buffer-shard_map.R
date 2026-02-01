@@ -1,4 +1,4 @@
-test_that("tiled crossprod writes into an output buffer with zero view materialization", {
+test_that("tiled crossprod writes into an output buffer without view materialization", {
   skip_on_cran()
 
   pool_stop()
@@ -38,7 +38,8 @@ test_that("tiled crossprod writes into an output buffer with zero view materiali
   expect_true(succeeded(res))
 
   cr <- copy_report(res)
-  expect_gt(cr$view_created %||% 0L, 0L)
+  # This kernel writes tiles directly into the output buffer; it should not
+  # materialize any view.
   expect_equal(cr$view_materialized %||% 0L, 0L)
   expect_equal(cr$view_materialized_bytes %||% 0, 0)
 
