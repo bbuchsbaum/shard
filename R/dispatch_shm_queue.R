@@ -10,48 +10,106 @@ open_out_from_desc_ <- function(out_desc) {
   out <- list()
   if (length(out_desc) == 0) return(out)
 
+  out_desc_key_ <- function(d) {
+    kind <- d$kind %||% "buffer"
+    if (identical(kind, "buffer")) {
+      return(paste0("buffer|", d$path, "|", d$backing, "|", d$type, "|", paste(d$dim, collapse = "x")))
+    }
+    if (identical(kind, "table_buffer")) {
+      col_keys <- vapply(d$columns, function(cd) {
+        paste0(cd$path, "|", cd$backing, "|", cd$type, "|", paste(cd$dim, collapse = "x"))
+      }, character(1))
+      return(paste0("table_buffer|", paste(names(col_keys), col_keys, sep = "=", collapse = ";")))
+    }
+    if (identical(kind, "table_sink")) {
+      return(paste0("table_sink|", d$path, "|", d$format, "|", d$mode))
+    }
+    paste0("unknown|", kind)
+  }
+
+  open_one_ <- function(d) {
+    kind <- d$kind %||% "buffer"
+    if (identical(kind, "buffer")) {
+      buf <- buffer_open(
+        path = d$path,
+        type = d$type,
+        dim = d$dim,
+        backing = d$backing,
+        readonly = FALSE
+      )
+      return(buf)
+    }
+    if (identical(kind, "table_buffer")) {
+      cols <- list()
+      for (cn in names(d$columns)) {
+        cd <- d$columns[[cn]]
+        cols[[cn]] <- buffer_open(
+          path = cd$path,
+          type = cd$type,
+          dim = cd$dim,
+          backing = cd$backing,
+          readonly = FALSE
+        )
+      }
+      tb <- structure(
+        list(schema = d$schema, nrow = as.integer(d$nrow), backing = d$backing, columns = cols),
+        class = "shard_table_buffer"
+      )
+      return(tb)
+    }
+    if (identical(kind, "table_sink")) {
+      ts <- structure(
+        list(schema = d$schema, mode = d$mode, path = d$path, format = d$format),
+        class = "shard_table_sink"
+      )
+      return(ts)
+    }
+    stop("Unsupported out descriptor kind: ", kind, call. = FALSE)
+  }
+
+  close_one_ <- function(obj) {
+    if (inherits(obj, "shard_buffer")) {
+      tryCatch(buffer_close(obj), error = function(e) NULL)
+      return(invisible(NULL))
+    }
+    if (inherits(obj, "shard_table_buffer")) {
+      if (!is.null(obj$columns) && is.list(obj$columns)) {
+        for (col in obj$columns) {
+          if (inherits(col, "shard_buffer")) {
+            tryCatch(buffer_close(col), error = function(e) NULL)
+          }
+        }
+      }
+      return(invisible(NULL))
+    }
+    invisible(NULL)
+  }
+
   if (!exists(".shard_out_opened", envir = globalenv(), inherits = FALSE)) {
     assign(".shard_out_opened", new.env(parent = emptyenv()), envir = globalenv())
   }
   opened <- get(".shard_out_opened", envir = globalenv())
 
   for (nm in names(out_desc)) {
-    if (!exists(nm, envir = opened, inherits = FALSE)) {
-      d <- out_desc[[nm]]
-      if (is.null(d$kind) || identical(d$kind, "buffer")) {
-        opened[[nm]] <- buffer_open(
-          path = d$path,
-          type = d$type,
-          dim = d$dim,
-          backing = d$backing,
-          readonly = FALSE
-        )
-      } else if (identical(d$kind, "table_buffer")) {
-        cols <- list()
-        for (cn in names(d$columns)) {
-          cd <- d$columns[[cn]]
-          cols[[cn]] <- buffer_open(
-            path = cd$path,
-            type = cd$type,
-            dim = cd$dim,
-            backing = cd$backing,
-            readonly = FALSE
-          )
-        }
-        opened[[nm]] <- structure(
-          list(schema = d$schema, nrow = as.integer(d$nrow), backing = d$backing, columns = cols),
-          class = "shard_table_buffer"
-        )
-      } else if (identical(d$kind, "table_sink")) {
-        opened[[nm]] <- structure(
-          list(schema = d$schema, mode = d$mode, path = d$path, format = d$format),
-          class = "shard_table_sink"
-        )
-      } else {
-        stop("Unsupported out descriptor kind: ", d$kind, call. = FALSE)
-      }
+    d <- out_desc[[nm]]
+    want_key <- out_desc_key_(d)
+    entry <- if (exists(nm, envir = opened, inherits = FALSE)) opened[[nm]] else NULL
+    cur_key <- NULL
+    cur_obj <- NULL
+    if (!is.null(entry) && is.list(entry) && !is.null(entry$key) && !is.null(entry$obj)) {
+      cur_key <- entry$key
+      cur_obj <- entry$obj
+    } else if (!is.null(entry)) {
+      cur_obj <- entry
     }
-    out[[nm]] <- opened[[nm]]
+
+    if (is.null(cur_obj) || !identical(cur_key, want_key)) {
+      if (!is.null(cur_obj)) close_one_(cur_obj)
+      new_obj <- open_one_(d)
+      opened[[nm]] <- list(key = want_key, obj = new_obj)
+    }
+
+    out[[nm]] <- opened[[nm]]$obj
   }
 
   out
