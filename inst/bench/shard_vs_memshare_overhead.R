@@ -172,6 +172,53 @@ results$test2 <- run_test("2", sprintf("Shared big X + row sums (%dx%d, %d queri
 )
 
 # =============================================================================
+# Test 3: Many small objects (list of small numeric vectors)
+# =============================================================================
+set.seed(3)
+n_vecs <- 20000L
+vec_len <- 16L
+vec_list <- replicate(n_vecs, rnorm(vec_len), simplify = FALSE)
+expected3 <- vapply(vec_list, sum, numeric(1))
+
+results$test3 <- run_test("3", sprintf("Many small vectors (list of %d x len=%d)", n_vecs, vec_len),
+  mem_fn = function(cl, ns) {
+    tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
+    on.exit(tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL), add = TRUE)
+
+    res <- memLapply(
+      X = vec_list,
+      FUN = sum,
+      CLUSTER = cl,
+      NAMESPACE = ns,
+      MAX.CORES = n_workers
+    )
+    stopifnot(all.equal(unlist(res, use.names = FALSE), expected3, tolerance = 1e-12))
+  },
+  shard_fn = function() {
+    out <- buffer("double", dim = n_vecs)
+    shard_map(
+      n_vecs,
+      # Intentionally unshared list input: this measures the cost of shipping
+      # many small objects to workers when they can't be represented as one
+      # contiguous shared slab.
+      borrow = list(vecs = vec_list),
+      out = list(out = out),
+      fun = function(sh, vecs, out) {
+        for (j in sh$idx) {
+          out[j] <- sum(vecs[[j]])
+        }
+        NULL
+      },
+      workers = n_workers,
+      chunk_size = auto_chunk_size(n_vecs, n_workers, target_chunks_per_worker = 2L, max = 4096L),
+      profile = "speed",
+      diagnostics = FALSE
+    )
+    stopifnot(all.equal(as.numeric(out[]), expected3, tolerance = 1e-12))
+  }
+)
+
+# =============================================================================
 # Summary
 # =============================================================================
 cat("============================================================\n")
@@ -183,7 +230,8 @@ cat(strrep("-", 74), "\n")
 
 test_names <- c(
   test1 = "1. Dispatch throughput",
-  test2 = "2. Shared big X row sums"
+  test2 = "2. Shared big X row sums",
+  test3 = "3. Many small vectors"
 )
 
 for (name in names(results)) {
