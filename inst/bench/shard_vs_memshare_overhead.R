@@ -36,31 +36,53 @@ auto_chunk_size <- function(n, workers, target_chunks_per_worker = 2L, min = 1L,
   chunk
 }
 
-run_test <- function(name, desc, mem_fn, shard_fn) {
-  cat(sprintf("Test %s: %s\n", name, desc))
-  ns <- paste0(bench_id, "_t", name)
+env_int <- function(name, default) {
+  x <- Sys.getenv(name, unset = "")
+  if (!nzchar(x)) return(as.integer(default))
+  suppressWarnings(as.integer(x))
+}
 
-  cl <- makeCluster(n_workers)
-  pool_stop()
-  pool_create(n_workers)
-  invisible(shard_map(n_workers, function(sh) NULL, workers = n_workers, diagnostics = FALSE))
-
+run_memshare <- function(desc, mem_fn, ns) {
+  cl <- NULL
   t_mem <- tryCatch({
+    cl <- makeCluster(n_workers)
+    on.exit(tryCatch(stopCluster(cl), error = function(e) NULL), add = TRUE)
     system.time(mem_fn(cl, ns))[["elapsed"]]
   }, error = function(e) {
     cat("  memshare error:", conditionMessage(e), "\n")
     NA_real_
   })
 
+  # Ensure workers are torn down even if memshare poisoned the cluster.
+  if (!is.null(cl)) {
+    tryCatch(stopCluster(cl), error = function(e) NULL)
+  }
+  t_mem
+}
+
+run_shard <- function(desc, shard_fn) {
+  pool_stop()
+  pool_create(n_workers)
+  # Warm shard pool
+  invisible(shard_map(n_workers, function(sh) NULL, workers = n_workers, diagnostics = FALSE))
   t_shard <- tryCatch({
     system.time(shard_fn())[["elapsed"]]
   }, error = function(e) {
     cat("  shard error:", conditionMessage(e), "\n")
     NA_real_
   })
-
-  stopCluster(cl)
   pool_stop()
+  t_shard
+}
+
+run_test <- function(name, desc, mem_fn, shard_fn) {
+  cat(sprintf("Test %s: %s\n", name, desc))
+  ns <- paste0(bench_id, "_t", name)
+
+  # Run memshare and shard in separate worker lifecycles so a failure in one
+  # (common when experimenting with memshare namespaces) doesn't corrupt the other.
+  t_mem <- run_memshare(desc, mem_fn, ns)
+  t_shard <- run_shard(desc, shard_fn)
 
   if (!is.na(t_mem) && !is.na(t_shard)) {
     ratio <- t_mem / t_shard
@@ -85,7 +107,7 @@ results <- list()
 # Test 1: Dispatch throughput (many tiny tasks)
 # =============================================================================
 set.seed(1)
-n_tasks1 <- 20000L
+n_tasks1 <- env_int("SHARD_BENCH_N_TASKS1", 10000L)
 idx1 <- seq_len(n_tasks1)
 idx1_d <- as.double(idx1)
 
@@ -131,7 +153,7 @@ n_cols <- 256L
 X2 <- matrix(rnorm(n_rows * n_cols), nrow = n_rows, ncol = n_cols)
 X2_shard <- share(X2, backing = "mmap")
 
-n_tasks2 <- 50000L
+n_tasks2 <- env_int("SHARD_BENCH_N_TASKS2", 50000L)
 rows2 <- sample.int(n_rows, n_tasks2, replace = TRUE)
 rows2_d <- as.double(rows2)
 expected2 <- rowSums(X2[rows2, , drop = FALSE])
@@ -175,8 +197,8 @@ results$test2 <- run_test("2", sprintf("Shared big X + row sums (%dx%d, %d queri
 # Test 3: Many small objects (list of small numeric vectors)
 # =============================================================================
 set.seed(3)
-n_vecs <- 20000L
-vec_len <- 16L
+n_vecs <- env_int("SHARD_BENCH_N_VECS", 20000L)
+vec_len <- env_int("SHARD_BENCH_VEC_LEN", 16L)
 vec_list <- replicate(n_vecs, rnorm(vec_len), simplify = FALSE)
 expected3 <- vapply(vec_list, sum, numeric(1))
 
