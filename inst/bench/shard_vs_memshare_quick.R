@@ -18,18 +18,6 @@ suppressPackageStartupMessages({
 n_workers <- 4L
 # Keep this short: memshare enforces a <32-char UID limit on macOS.
 bench_id <- paste0("sv", paste(sample(c(letters, 0:9), 6, replace = TRUE), collapse = ""))
-memshare_ok <- TRUE
-memshare_selftest <- tryCatch({
-  ns0 <- paste0("svt", paste(sample(c(letters, 0:9), 6, replace = TRUE), collapse = ""))
-  registerVariables(ns0, list(x = as.double(1:8)))
-  releaseVariables(ns0, "x")
-  TRUE
-}, error = function(e) {
-  cat("NOTE: memshare self-test failed; skipping memshare timings.\n")
-  cat("  ", conditionMessage(e), "\n\n", sep = "")
-  FALSE
-})
-if (!isTRUE(memshare_selftest)) memshare_ok <- FALSE
 
 cat("============================================================\n")
 cat("Quick Benchmark: shard vs memshare (", n_workers, "workers)\n")
@@ -52,11 +40,7 @@ run_test <- function(name, desc, mem_fn, shard_fn) {
   invisible(shard_map(n_workers, function(sh) NULL, workers = n_workers, diagnostics = FALSE))
 
   t_mem <- tryCatch({
-    if (!isTRUE(memshare_ok)) {
-      NA_real_
-    } else {
-      system.time(mem_fn(cl, ns))[["elapsed"]]
-    }
+    system.time(mem_fn(cl, ns))[["elapsed"]]
   }, error = function(e) {
     cat("  memshare error:", conditionMessage(e), "\n")
     NA
@@ -94,11 +78,7 @@ expected1 <- colMeans(X1)
 results$test1 <- run_test("1", "Column means (2000x500 matrix)",
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
-    tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
     on.exit({
-      tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
-      tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
       tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
     }, add = TRUE)
 
@@ -131,11 +111,7 @@ mat_list_shard <- lapply(mat_list, function(m) share(m, backing = "mmap"))
 results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
-    tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
     on.exit({
-      tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
-      tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
       tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
     }, add = TRUE)
 
@@ -192,11 +168,7 @@ tile_list <- lapply(seq_len(nrow(tile_spec)), function(k) as.double(tile_spec[k,
 results$test3 <- run_test("3", "Crossprod X'Y (2000x64) x (2000x128)",
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
-    tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
     on.exit({
-      tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
-      tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
       tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
     }, add = TRUE)
 
@@ -234,11 +206,7 @@ expected4 <- apply(X4, 2, var)
 results$test4 <- run_test("4", "Column variance (3000x300 matrix)",
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
-    tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
     on.exit({
-      tryCatch(releaseVariables(NAMESPACE = ns), error = function(e) NULL)
-      tryCatch(releaseViews(NAMESPACE = ns), error = function(e) NULL)
       tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
     }, add = TRUE)
 
