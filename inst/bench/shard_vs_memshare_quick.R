@@ -68,6 +68,10 @@ run_test <- function(name, desc, mem_fn, shard_fn) {
   list(mem = t_mem, shard = t_shard, ratio = ratio)
 }
 
+frobenius_norm <- function(m) {
+  sqrt(drop(crossprod(as.vector(m))))
+}
+
 # =============================================================================
 # Test 1: Column means
 # =============================================================================
@@ -105,7 +109,7 @@ results$test1 <- run_test("1", "Column means (2000x500 matrix)",
 # =============================================================================
 set.seed(456)
 mat_list <- lapply(1:100, function(i) matrix(rnorm(50*50), 50, 50))
-expected2 <- sapply(mat_list, function(m) sqrt(sum(m^2)))
+expected2 <- vapply(mat_list, frobenius_norm, numeric(1))
 mat_list_shard <- lapply(mat_list, function(m) share(m, backing = "mmap"))
 
 results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
@@ -117,7 +121,7 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
 
     res <- memLapply(
       X = mat_list,
-      FUN = function(m) sqrt(sum(m^2)),
+      FUN = frobenius_norm,
       CLUSTER = cl,
       NAMESPACE = ns,
       MAX.CORES = n_workers
@@ -132,11 +136,13 @@ results$test2 <- run_test("2", "Frobenius norms (100 matrices, 50x50)",
       out = list(out = out),
       fun = function(sh, mats, out) {
         for (i in sh$idx) {
-          out[i] <- sqrt(sum(mats[[i]]^2))
+          out[i] <- sqrt(drop(crossprod(as.vector(mats[[i]]))))
         }
         NULL
       },
       workers = n_workers,
+      # General lever: amortize per-task dispatch overhead for many-small-items workloads.
+      chunk_size = 8L,
       profile = "speed",
       diagnostics = FALSE
     )
