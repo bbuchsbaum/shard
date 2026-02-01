@@ -209,7 +209,9 @@ results$test3 <- run_test("3", sprintf("Many small vectors (list of %d x len=%d)
 
     res <- memLapply(
       X = vec_list,
-      FUN = sum,
+      # Avoid primitives here: some parallel/memshare paths end up touching
+      # function environments, and primitives have a NULL environment.
+      FUN = function(v) sum(v),
       CLUSTER = cl,
       NAMESPACE = ns,
       MAX.CORES = n_workers
