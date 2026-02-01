@@ -114,16 +114,21 @@ idx1_d <- as.double(idx1)
 results$test1 <- run_test("1", sprintf("Dispatch throughput (%d tiny tasks)", n_tasks1),
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    on.exit(tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL), add = TRUE)
+    on.exit({
+      tryCatch(releaseVariables(ns, c("idx")), error = function(e) NULL)
+      tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
+    }, add = TRUE)
+
+    registerVariables(ns, list(idx = as.list(idx1_d)))
 
     res <- memLapply(
-      X = as.list(idx1_d),
+      X = "idx",
       FUN = function(i) i,
       CLUSTER = cl,
       NAMESPACE = ns,
       MAX.CORES = n_workers
     )
-    stopifnot(identical(unlist(res, use.names = FALSE), idx1))
+    stopifnot(identical(unlist(res, use.names = FALSE), idx1_d))
   },
   shard_fn = function() {
     out <- buffer("int", dim = n_tasks1)
@@ -161,11 +166,14 @@ expected2 <- rowSums(X2[rows2, , drop = FALSE])
 results$test2 <- run_test("2", sprintf("Shared big X + row sums (%dx%d, %d queries)", n_rows, n_cols, n_tasks2),
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    on.exit(tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL), add = TRUE)
+    on.exit({
+      tryCatch(releaseVariables(ns, c("X", "rows")), error = function(e) NULL)
+      tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
+    }, add = TRUE)
 
-    registerVariables(ns, list(X = X2))
+    registerVariables(ns, list(X = X2, rows = as.list(rows2_d)))
     res <- memLapply(
-      X = as.list(rows2_d),
+      X = "rows",
       FUN = function(r, X) sum(X[as.integer(r), ]),
       CLUSTER = cl,
       NAMESPACE = ns,
@@ -205,10 +213,15 @@ expected3 <- vapply(vec_list, sum, numeric(1))
 results$test3 <- run_test("3", sprintf("Many small vectors (list of %d x len=%d)", n_vecs, vec_len),
   mem_fn = function(cl, ns) {
     tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
-    on.exit(tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL), add = TRUE)
+    on.exit({
+      tryCatch(releaseVariables(ns, c("vecs")), error = function(e) NULL)
+      tryCatch(memshare_gc(namespace = ns, cluster = cl), error = function(e) NULL)
+    }, add = TRUE)
+
+    registerVariables(ns, list(vecs = vec_list))
 
     res <- memLapply(
-      X = vec_list,
+      X = "vecs",
       # Avoid primitives here: some parallel/memshare paths end up touching
       # function environments, and primitives have a NULL environment.
       FUN = function(v) sum(v),
