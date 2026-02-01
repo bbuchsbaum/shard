@@ -677,17 +677,21 @@ bench6_run <- function(n_rows, n_cols) {
       borrow = list(X = X_shared),
       out = list(out = out),
       fun = function(sh, X, out) {
+        # Keep a stable worker set for diagnostics runs: if a worker is recycled
+        # mid-call, it can miss the borrowed inputs and fail chunks.
         for (j in sh$idx) {
           out[j] <- sum(X[, j]^2)
         }
         NULL
       },
       workers = n_workers,
+      profile = "speed",
+      recycle = FALSE,
       diagnostics = TRUE
     )
 
-    mem <- tryCatch(mem_report(res), error = function(e) NULL)
-    copy <- tryCatch(copy_report(res), error = function(e) NULL)
+    mem <- tryCatch(suppressWarnings(mem_report(res)), error = function(e) NULL)
+    copy <- tryCatch(suppressWarnings(copy_report(res)), error = function(e) NULL)
 
     if (!is.null(mem) && !is.null(copy)) {
       cat("\n  shard Memory Report:\n")
@@ -732,26 +736,20 @@ cat("   - Small matrix: shard ", fmt_speedup(bench1_small$memshare$median, bench
 cat("   - Large matrix: shard ", fmt_speedup(bench1_large$memshare$median, bench1_large$shard$median), "\n", sep = "")
 
 cat("\n2. Lapply Over List:\n")
-cat("   - Small list:   shard ",
-    sprintf("%.2fx", bench2_small$memshare$median / bench2_small$shard$median), "\n")
-cat("   - Large list:   shard ",
-    sprintf("%.2fx", bench2_large$memshare$median / bench2_large$shard$median), "\n")
+cat("   - Small list:   shard ", fmt_speedup(bench2_small$memshare$median, bench2_small$shard$median), "\n", sep = "")
+cat("   - Large list:   shard ", fmt_speedup(bench2_large$memshare$median, bench2_large$shard$median), "\n", sep = "")
 
 cat("\n3. Many Small Tasks:\n")
-cat("   - 500 tasks:    shard (rpc) ",
-    sprintf("%.2fx", bench3_small$memshare$median / bench3_small$shard_rpc$median), "\n")
+cat("   - 500 tasks:    shard (rpc) ", fmt_speedup(bench3_small$memshare$median, bench3_small$shard_rpc$median), "\n", sep = "")
 if (!is.null(bench3_large$shard_shm)) {
-  cat("   - 5000 tasks:   shard (shm_queue) ",
-      sprintf("%.2fx", bench3_large$memshare$median / bench3_large$shard_shm$median), "\n")
+  cat("   - 5000 tasks:   shard (shm_queue) ", fmt_speedup(bench3_large$memshare$median, bench3_large$shard_shm$median), "\n", sep = "")
 }
 
 cat("\n4. Large Shared Matrix Access:\n")
-cat("   - shard ",
-    sprintf("%.2fx", bench4_result$memshare$median / bench4_result$shard$median), "\n")
+cat("   - shard ", fmt_speedup(bench4_result$memshare$median, bench4_result$shard$median), "\n", sep = "")
 
 cat("\n5. Cross-product (X'Y):\n")
-cat("   - shard ",
-    sprintf("%.2fx", bench5_result$memshare$median / bench5_result$shard$median), "\n")
+cat("   - shard ", fmt_speedup(bench5_result$memshare$median, bench5_result$shard$median), "\n", sep = "")
 
 cat("\n6. Memory Efficiency:\n")
 cat("   - shard provides detailed diagnostics (mem_report, copy_report)\n")
