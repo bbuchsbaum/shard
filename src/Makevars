@@ -5,4 +5,6 @@
 # On Linux, you may need to add -lrt to PKG_LIBS if you get linking errors.
 
 PKG_CFLAGS = $(C_VISIBILITY)
+# Needed on glibc Linux so CPU affinity APIs from <sched.h> are exposed.
+PKG_CPPFLAGS = -D_GNU_SOURCE
 PKG_LIBS =
