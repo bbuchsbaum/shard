@@ -407,13 +407,13 @@ dispatch_shards_shm_queue_ <- function(n,
           buf = tryCatch(buffer_diagnostics(), error = function(e) NULL),
           table = tryCatch(table_diagnostics(), error = function(e) NULL),
           scratch = tryCatch(scratch_diagnostics(), error = function(e) NULL),
-          err_path = if (exists(".shard_shm_queue_error_log_path", envir = globalenv(), inherits = FALSE)) {
-            get(".shard_shm_queue_error_log_path", envir = globalenv())
+          err_path = if (exists(".shard_shm_queue_error_log_path", envir = .shard_worker_env, inherits = FALSE)) {
+            get(".shard_shm_queue_error_log_path", envir = .shard_worker_env)
           } else {
             NULL
           },
-          err_count = if (exists(".shard_shm_queue_error_count", envir = globalenv(), inherits = FALSE)) {
-            get(".shard_shm_queue_error_count", envir = globalenv())
+          err_count = if (exists(".shard_shm_queue_error_count", envir = .shard_worker_env, inherits = FALSE)) {
+            get(".shard_shm_queue_error_count", envir = .shard_worker_env)
           } else {
             NULL
           }
