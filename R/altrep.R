@@ -172,14 +172,25 @@ is_shared_vector <- function(x) {
 #' Get the underlying segment from a shared vector
 #'
 #' @param x A shard ALTREP vector
-#' @return The external pointer to the underlying segment
+#' @return A `shard_segment` S3 object wrapping the underlying segment
 #' @export
 shared_segment <- function(x) {
     if (!is_shared_vector(x)) {
         stop("x must be a shard ALTREP vector")
     }
 
-    .Call("C_shard_altrep_segment", x, PACKAGE = "shard")
+    ptr <- .Call("C_shard_altrep_segment", x, PACKAGE = "shard")
+    info <- .Call("C_shard_segment_info", ptr, PACKAGE = "shard")
+
+    structure(
+        list(
+            ptr = ptr,
+            size = info$size %||% NA_real_,
+            backing = info$backing %||% "unknown",
+            readonly = info$readonly %||% FALSE
+        ),
+        class = "shard_segment"
+    )
 }
 
 #' Reset diagnostic counters for a shared vector

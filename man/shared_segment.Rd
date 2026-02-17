@@ -10,7 +10,7 @@ shared_segment(x)
 \item{x}{A shard ALTREP vector}
 }
 \value{
-The external pointer to the underlying segment
+A \code{shard_segment} S3 object wrapping the underlying segment
 }
 \description{
 Get the underlying segment from a shared vector

@@ -170,8 +170,9 @@ test_that("shared_segment returns the underlying segment", {
     segment_write(seg, 1:100, offset = 0)
     x <- shared_vector(seg, "integer", length = 100)
 
-    seg_ptr <- shared_segment(x)
-    expect_true(inherits(seg_ptr, "externalptr"))
+    seg <- shared_segment(x)
+    expect_true(inherits(seg, "shard_segment"))
+    expect_true(inherits(seg$ptr, "externalptr"))
 })
 
 test_that("vector operations work on shared vectors", {

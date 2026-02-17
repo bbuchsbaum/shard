@@ -1202,10 +1202,8 @@ close.shard_shared_vector <- function(con, ...) {
         stop("con must be a shard ALTREP vector", call. = FALSE)
     }
 
-    ptr <- shared_segment(con)
-    info <- .Call("C_shard_segment_info", ptr, PACKAGE = "shard")
-    unlink <- isTRUE(info$owns)
-    .Call("C_shard_segment_close", ptr, unlink, PACKAGE = "shard")
+    seg <- shared_segment(con)
+    segment_close(seg)
     invisible(NULL)
 }
 
@@ -1254,8 +1252,8 @@ shared_info <- function(x) {
     }
 
     if (is.atomic(x) && is_shared_vector(x)) {
-        ptr <- shared_segment(x)
-        sinfo <- .Call("C_shard_segment_info", ptr, PACKAGE = "shard")
+        seg <- shared_segment(x)
+        sinfo <- .Call("C_shard_segment_info", seg$ptr, PACKAGE = "shard")
 
         class_info <- if (is.matrix(x)) {
             list(type = "matrix", dim = dim(x), mode = typeof(x))
