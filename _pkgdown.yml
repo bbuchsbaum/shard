@@ -1,0 +1,14 @@
+url: https://bbuchsbaum.github.io/shard/
+
+template:
+  bootstrap: 5
+
+navbar:
+  structure:
+    left:  [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    github:
+      icon: fa-github
+      href: https://github.com/bbuchsbaum/shard
+      aria-label: GitHub

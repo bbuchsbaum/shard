@@ -17,3 +17,15 @@
 ^Cargo\.lock$
 ^doShard$
 ^vendor$
+^_pkgdown\.yml$
+^docs$
+^\.github$
+^\.claude$
+^\.omc$
+^AGENTS\.md$
+^CLAUDE\.md$
+^PRD\..*\.json$
+^PRD\.json$
+^why-shard-is-different\.md$
+^\.rcmdcheck_result\.rds$
+^LICENSE\.md$

@@ -1,5 +1,10 @@
 # shard
 
+<!-- badges: start -->
+[![pkgdown](https://github.com/bbuchsbaum/shard/actions/workflows/pkgdown.yaml/badge.svg)](https://bbuchsbaum.github.io/shard/)
+[![R-CMD-check](https://github.com/bbuchsbaum/shard/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/bbuchsbaum/shard/actions/workflows/R-CMD-check.yaml)
+<!-- badges: end -->
+
 **Deterministic, zero-copy parallel execution for R.**
 
 `shard` is a parallel runtime for workloads that look like:

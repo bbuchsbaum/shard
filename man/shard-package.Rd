@@ -64,6 +64,7 @@ deterministic memory behavior and efficient handling of large shared inputs.
 \seealso{
 Useful links:
 \itemize{
+  \item \url{https://bbuchsbaum.github.io/shard/}
   \item \url{https://github.com/bbuchsbaum/shard}
   \item Report bugs at \url{https://github.com/bbuchsbaum/shard/issues}
 }
@@ -71,6 +72,7 @@ Useful links:
 
 Useful links:
 \itemize{
+  \item \url{https://bbuchsbaum.github.io/shard/}
   \item \url{https://github.com/bbuchsbaum/shard}
   \item Report bugs at \url{https://github.com/bbuchsbaum/shard/issues}
 }

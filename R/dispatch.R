@@ -107,8 +107,8 @@ dispatch_chunks <- function(chunks, fun, ...,
     if (is.list(res$view_delta) && (res$view_delta$materialized %||% 0L) > 0L) {
       hs1 <- tryCatch(view_materialize_hotspots_snapshot_(), error = function(e) NULL)
       if (is.list(hs1)) {
-        hs0 <- if (exists(".shard_view_hotspot_snapshot", envir = globalenv(), inherits = FALSE)) {
-          get(".shard_view_hotspot_snapshot", envir = globalenv())
+        hs0 <- if (exists(".shard_view_hotspot_snapshot", envir = .shard_worker_env, inherits = FALSE)) {
+          get(".shard_view_hotspot_snapshot", envir = .shard_worker_env)
         } else {
           list()
         }
@@ -129,7 +129,7 @@ dispatch_chunks <- function(chunks, fun, ...,
           }
         }
 
-        assign(".shard_view_hotspot_snapshot", hs1, envir = globalenv())
+        assign(".shard_view_hotspot_snapshot", hs1, envir = .shard_worker_env)
         if (length(delta) > 0) res$view_hotspots_delta <- delta
       }
     }

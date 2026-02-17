@@ -85,10 +85,10 @@ open_out_from_desc_ <- function(out_desc) {
     invisible(NULL)
   }
 
-  if (!exists(".shard_out_opened", envir = globalenv(), inherits = FALSE)) {
-    assign(".shard_out_opened", new.env(parent = emptyenv()), envir = globalenv())
+  if (!exists(".shard_out_opened", envir = .shard_worker_env, inherits = FALSE)) {
+    assign(".shard_out_opened", new.env(parent = emptyenv()), envir = .shard_worker_env)
   }
-  opened <- get(".shard_out_opened", envir = globalenv())
+  opened <- get(".shard_out_opened", envir = .shard_worker_env)
 
   for (nm in names(out_desc)) {
     d <- out_desc[[nm]]
@@ -160,8 +160,8 @@ worker_shm_queue_loop_ <- function(queue_desc,
     err_con <- file(err_path, open = "a", encoding = "UTF-8")
     on.exit(try(close(err_con), silent = TRUE), add = TRUE)
 
-    assign(".shard_shm_queue_error_log_path", err_path, envir = globalenv())
-    assign(".shard_shm_queue_error_count", 0L, envir = globalenv())
+    assign(".shard_shm_queue_error_log_path", err_path, envir = .shard_worker_env)
+    assign(".shard_shm_queue_error_count", 0L, envir = .shard_worker_env)
   }
 
   repeat {
@@ -186,12 +186,12 @@ worker_shm_queue_loop_ <- function(queue_desc,
       } else {
         NULL
       }
-      fetched_key <- if (exists(".shard_shm_queue_shards_fetched_key", envir = globalenv(), inherits = FALSE)) {
-        get(".shard_shm_queue_shards_fetched_key", envir = globalenv())
+      fetched_key <- if (exists(".shard_shm_queue_shards_fetched_key", envir = .shard_worker_env, inherits = FALSE)) {
+        get(".shard_shm_queue_shards_fetched_key", envir = .shard_worker_env)
       } else {
         NULL
       }
-      if (!exists(".shard_shm_queue_shards_fetched", envir = globalenv(), inherits = FALSE) ||
+      if (!exists(".shard_shm_queue_shards_fetched", envir = .shard_worker_env, inherits = FALSE) ||
           !identical(fetched_key, shards_key)) {
         shards_handle <- if (exists(".shard_shm_queue_shards", envir = globalenv(), inherits = FALSE)) {
           get(".shard_shm_queue_shards", envir = globalenv())
@@ -199,11 +199,11 @@ worker_shm_queue_loop_ <- function(queue_desc,
           NULL
         }
         if (is.null(shards_handle)) stop("shm_queue descriptor mode missing .shard_shm_queue_shards", call. = FALSE)
-        assign(".shard_shm_queue_shards_fetched", fetch(shards_handle), envir = globalenv())
-        assign(".shard_shm_queue_shards_fetched_key", shards_key, envir = globalenv())
+        assign(".shard_shm_queue_shards_fetched", fetch(shards_handle), envir = .shard_worker_env)
+        assign(".shard_shm_queue_shards_fetched_key", shards_key, envir = .shard_worker_env)
       }
 
-      shards_list <- get(".shard_shm_queue_shards_fetched", envir = globalenv())
+      shards_list <- get(".shard_shm_queue_shards_fetched", envir = .shard_worker_env)
       shard <- shards_list[[task_id]]
       if (is.null(shard$id)) shard$id <- task_id
       if (is.null(shard$len)) {
@@ -239,7 +239,7 @@ worker_shm_queue_loop_ <- function(queue_desc,
         # Keep logs compact and parseable; avoid timestamps to keep tests stable.
         writeLines(paste0(task_id, "\t", err_msg %||% "error"), con = err_con, sep = "\n")
         err_written <- err_written + 1L
-        assign(".shard_shm_queue_error_count", err_written, envir = globalenv())
+        assign(".shard_shm_queue_error_count", err_written, envir = .shard_worker_env)
       }
       taskq_error(seg, task_id, max_retries = max_retries)
     }

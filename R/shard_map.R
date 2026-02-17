@@ -1118,8 +1118,8 @@ reset_worker_diagnostics_ <- function(pool) {
           if (is.function(f2)) tryCatch(f2(), error = function(e) NULL)
           if (is.function(f3)) tryCatch(f3(), error = function(e) NULL)
           if (is.function(f4)) tryCatch(f4(), error = function(e) NULL)
-          if (exists(".shard_view_hotspot_snapshot", envir = globalenv(), inherits = FALSE)) {
-            rm(".shard_view_hotspot_snapshot", envir = globalenv())
+          if (exists(".shard_view_hotspot_snapshot", envir = .shard_worker_env, inherits = FALSE)) {
+            rm(".shard_view_hotspot_snapshot", envir = .shard_worker_env)
           }
           NULL
         })
@@ -1311,10 +1311,10 @@ make_chunk_executor <- function(auto_table = FALSE) {
     # Lazily open output buffers once per worker process and cache them.
     out <- list()
     if (length(out_desc) > 0) {
-      if (!exists(".shard_out_opened", envir = globalenv(), inherits = FALSE)) {
-        assign(".shard_out_opened", new.env(parent = emptyenv()), envir = globalenv())
+      if (!exists(".shard_out_opened", envir = .shard_worker_env, inherits = FALSE)) {
+        assign(".shard_out_opened", new.env(parent = emptyenv()), envir = .shard_worker_env)
       }
-      opened <- get(".shard_out_opened", envir = globalenv())
+      opened <- get(".shard_out_opened", envir = .shard_worker_env)
 
       for (nm in names(out_desc)) {
         d <- out_desc[[nm]]

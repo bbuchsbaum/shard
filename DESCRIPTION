@@ -23,15 +23,17 @@ Suggests:
     doParallel,
     future.apply,
     iterators,
+    pkgdown,
     pkgload,
     testthat (>= 3.0.0),
     ps,
     jsonlite,
-    tibble
+    tibble,
+    withr
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 NeedsCompilation: yes
-URL: https://github.com/bbuchsbaum/shard
+URL: https://bbuchsbaum.github.io/shard/, https://github.com/bbuchsbaum/shard
 BugReports: https://github.com/bbuchsbaum/shard/issues
 SystemRequirements: POSIX shared memory (optional), memory-mapped files
 Config/testthat/edition: 3
