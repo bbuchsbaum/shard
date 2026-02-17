@@ -46,6 +46,16 @@ NULL
   # Initialize pool environment
   .pool_env$pool <- NULL
   .pool_env$dev_path <- NULL
+
+  # Register a finalizer that runs at R exit (onexit = TRUE).
+
+  # .onUnload only fires on explicit unloadNamespace(), NOT on normal R exit.
+  # Without this, parallel's PSOCK cluster finalizers fire first during
+  # shutdown GC and fail with "Error in unserialize(node$con)" because
+  # the worker connections are already being torn down.
+  reg.finalizer(.pool_env, function(e) {
+    tryCatch(pool_stop(), error = function(e2) NULL)
+  }, onexit = TRUE)
 }
 
 # On package unload, stop any running pool
