@@ -16,4 +16,4 @@ shared_segment(x)
 
 ## Value
 
-The external pointer to the underlying segment
+A `shard_segment` S3 object wrapping the underlying segment
