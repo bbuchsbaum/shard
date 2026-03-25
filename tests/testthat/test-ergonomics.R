@@ -144,17 +144,22 @@ test_that("shard_lapply_shared passes VARS through to FUN", {
   expect_equal(res, lapply(x, function(el) length(el) + 7))
 })
 
-test_that("shards() and shard_map() tolerate detectCores() returning NA", {
+test_that("shards() and shard_map() fall back to one worker when detectCores() returns NA", {
   skip_on_cran()
+  skip_if_conn_exhausted()
   pool_stop()
   on.exit(pool_stop(), add = TRUE)
 
-  # On this environment, parallel::detectCores() may return NA. Ensure that the
-  # default workers=NULL path is still safe and chooses a usable fallback.
+  testthat::local_mocked_bindings(
+    detectCores = function(...) NA_integer_,
+    .package = "parallel"
+  )
+
   blocks <- shards(100, block_size = "auto", workers = NULL)
   expect_true(inherits(blocks, "shard_descriptor"))
   expect_true(blocks$num_shards >= 1L)
 
   res <- shard_map(10, fun = function(shard) sum(shard$idx), workers = NULL)
   expect_true(succeeded(res))
+  expect_equal(pool_get()$n, 1L)
 })

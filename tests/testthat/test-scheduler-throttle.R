@@ -30,3 +30,37 @@ test_that("scheduler_policy can throttle 'huge' chunks", {
   pool_stop()
 })
 
+test_that("scheduler throttle clears huge in-flight state after timeouts", {
+  skip_on_cran()
+  skip_if_conn_exhausted()
+
+  pool_stop()
+  on.exit({
+    setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)
+    pool_stop()
+  }, add = TRUE)
+  setTimeLimit(cpu = Inf, elapsed = 5, transient = TRUE)
+
+  pool_create(n = 1)
+  chunks <- list(
+    list(id = 1L, footprint_class = "huge"),
+    list(id = 2L, footprint_class = "huge")
+  )
+
+  res <- suppressWarnings(
+    dispatch_chunks(
+      chunks,
+      fun = function(chunk) {
+        Sys.sleep(0.2)
+        chunk$id
+      },
+      timeout = 0.05,
+      max_retries = 0L,
+      health_check_interval = 1L,
+      scheduler_policy = list(max_huge_concurrency = 1L)
+    )
+  )
+
+  expect_equal(res$queue_status$completed, 0L)
+  expect_equal(res$queue_status$failed, 2L)
+})

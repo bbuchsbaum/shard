@@ -194,3 +194,40 @@ test_that("shm_queue can write bounded per-worker error logs when enabled", {
   lines <- unlist(lapply(paths, function(p) readLines(p, warn = FALSE)), use.names = FALSE)
   expect_true(any(grepl("^3\\tboom$", lines)))
 })
+
+test_that("shm_queue timeout cleans up workers and leaves the pool reusable", {
+  skip_on_cran()
+  skip_if_conn_exhausted()
+  if (!shard:::taskq_supported()) skip("shm_queue not supported (no atomics)")
+
+  pool_stop()
+  pool_create(n = 1)
+  on.exit(pool_stop(), add = TRUE)
+
+  out <- buffer("integer", dim = 2L, init = 0L, backing = "mmap")
+
+  expect_error(
+    shard_map(
+      2L,
+      out = list(out = out),
+      fun = function(sh, out) {
+        Sys.sleep(0.2)
+        out[sh$idx] <- sh$idx
+        NULL
+      },
+      chunk_size = 1L,
+      dispatch_mode = "shm_queue",
+      dispatch_opts = list(block_size = 1L),
+      timeout = 0.05
+    ),
+    "timed out"
+  )
+
+  follow_up <- shard_map(
+    shards(2L, block_size = 1L, workers = 1L),
+    fun = function(shard) shard$id
+  )
+
+  expect_true(succeeded(follow_up))
+  expect_equal(unname(unlist(results(follow_up))), c(1, 2))
+})

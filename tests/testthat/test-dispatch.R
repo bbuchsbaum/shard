@@ -46,11 +46,16 @@ test_that("pool_sapply simplifies results", {
   expect_equal(unname(result), unname(x * 2))
 })
 
-test_that("dispatch handles worker death", {
+test_that("dispatch handles actual worker death by restarting and requeueing work", {
   skip_on_cran()
+  skip_if_conn_exhausted()
+  if (is_windows()) skip("signal-based worker tests require POSIX")
 
   pool <- pool_create(n = 2)
   on.exit(pool_stop())
+
+  kill_flag <- tempfile("shard-dispatch-kill-")
+  on.exit(unlink(kill_flag), add = TRUE)
 
   # Create chunks, one of which will kill the worker
   chunks <- list(
@@ -64,20 +69,24 @@ test_that("dispatch handles worker death", {
   result <- suppressWarnings(
     dispatch_chunks(
       chunks,
-      fun = function(chunk) {
-        if (chunk$action == "kill") {
-          # Simulate worker death by quitting
-          # In practice, we'll just throw an error to test retry
-          stop("simulated_failure")
+      fun = function(chunk, flag) {
+        if (chunk$action == "kill" && !file.exists(flag)) {
+          file.create(flag)
+          tools::pskill(Sys.getpid(), signal = 9L)
         }
         chunk$id
       },
-      health_check_interval = 2
+      flag = kill_flag,
+      health_check_interval = 1L,
+      max_retries = 2L,
+      timeout = 1
     )
   )
 
-  # Some chunks should complete
-  expect_gte(result$queue_status$completed, 2L)
+  expect_equal(result$queue_status$completed, 5L)
+  expect_equal(result$queue_status$failed, 0L)
+  expect_equal(sort(unname(unlist(result$results))), 1:5)
+  expect_gte(pool_get()$stats$total_deaths, 1L)
 })
 
 test_that("dispatch respects max_retries", {

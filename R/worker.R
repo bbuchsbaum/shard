@@ -18,7 +18,22 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL, dev_path = NULL)
   # This creates a socket connection to an R process
   # Use --vanilla to avoid user/site profiles that may pre-load packages and
   # interfere with deterministic worker setup (notably ALTREP class methods).
-  cl <- parallel::makeCluster(1L, type = "PSOCK", outfile = "", rscript_args = "--vanilla")
+  cl <- tryCatch(
+    parallel::makeCluster(1L, type = "PSOCK", outfile = "", rscript_args = "--vanilla"),
+    error = function(e) {
+      msg <- conditionMessage(e)
+      if (grepl("all.*connections are in use", msg, ignore.case = TRUE)) {
+        cnd <- simpleError(
+          paste0("Cannot spawn worker: ", msg,
+                 ". Consider reducing workers or calling pool_stop() to free connections."),
+          call = sys.call(-1L)
+        )
+        class(cnd) <- c("shard_connections_exhausted", class(cnd))
+        stop(cnd)
+      }
+      stop(e)
+    }
+  )
   node <- cl[[1]]
 
   # Get the PID of the worker
@@ -133,6 +148,28 @@ worker_rss <- function(worker) {
   rss_get_pid(worker$pid)
 }
 
+worker_connection_ <- function(worker) {
+  if (is.null(worker) || is.null(worker$cluster) || length(worker$cluster) < 1L) {
+    return(NULL)
+  }
+
+  node <- worker$cluster[[1]]
+  if (is.null(node)) {
+    return(NULL)
+  }
+
+  node$con %||% NULL
+}
+
+worker_close_connection_ <- function(worker) {
+  con <- worker_connection_(worker)
+  if (!is.null(con)) {
+    try(close(con), silent = TRUE)
+  }
+
+  invisible(NULL)
+}
+
 #' Kill a Worker Process
 #'
 #' Terminates the worker process and closes connections.
@@ -140,18 +177,9 @@ worker_rss <- function(worker) {
 #' @param worker A `shard_worker` object.
 #' @return NULL (invisibly).
 #' @keywords internal
-worker_kill <- function(worker) {
+worker_kill <- function(worker, graceful = TRUE) {
   if (is.null(worker)) {
     return(invisible(NULL))
-  }
-
-  close_sock <- function(w) {
-    if (is.null(w$cluster) || length(w$cluster) < 1L) return(invisible(NULL))
-    n <- w$cluster[[1]]
-    if (!is.null(n) && !is.null(n$con)) {
-      try(close(n$con), silent = TRUE)
-    }
-    invisible(NULL)
   }
 
   wait_dead <- function(pid, timeout = 2) {
@@ -165,12 +193,15 @@ worker_kill <- function(worker) {
   }
 
   pid <- worker$pid %||% NA_integer_
+  alive <- !is.na(pid) && isTRUE(pid_is_alive(pid))
 
   # Best-effort shutdown via parallel, but always fall back to PID kill and
   # always close the socket connection.
-  tryCatch(parallel::stopCluster(worker$cluster), error = function(e) NULL)
+  if (alive && isTRUE(graceful)) {
+    tryCatch(parallel::stopCluster(worker$cluster), error = function(e) NULL)
+  }
 
-  if (!is.na(pid) && isTRUE(pid_is_alive(pid))) {
+  if (alive && isTRUE(pid_is_alive(pid))) {
     tryCatch(tools::pskill(pid, signal = 15L), error = function(e) NULL)
     wait_dead(pid, timeout = 1)
     if (isTRUE(pid_is_alive(pid))) {
@@ -179,7 +210,7 @@ worker_kill <- function(worker) {
     }
   }
 
-  close_sock(worker)
+  worker_close_connection_(worker)
 
   invisible(NULL)
 }
@@ -224,6 +255,11 @@ worker_eval <- function(worker, expr, envir = parent.frame(), timeout = 3600) {
     stop("Worker ", worker$id, " is not alive", call. = FALSE)
   }
 
+  timeout <- as.double(timeout)
+  if (is.na(timeout) || timeout < 0) {
+    timeout <- 3600
+  }
+
   # Capture variables from environment that are referenced in expr
   expr_vars <- all.vars(expr)
   export_env <- new.env(parent = emptyenv())
@@ -240,12 +276,49 @@ worker_eval <- function(worker, expr, envir = parent.frame(), timeout = 3600) {
       parallel::clusterExport(worker$cluster, ls(export_env), envir = export_env)
     }
 
-    # Evaluate expression
-    result <- parallel::clusterCall(worker$cluster, function(e) {
-      eval(e, envir = globalenv())
-    }, expr)
+    con <- worker_connection_(worker)
+    if (is.null(con) || !isOpen(con)) {
+      stop("worker connection is not open", call. = FALSE)
+    }
 
-    result[[1]]
+    parallel_sendCall <- utils::getFromNamespace("sendCall", "parallel")
+    parallel_sendCall(
+      worker$cluster[[1]],
+      fun = function(e) {
+        tryCatch(
+          list(ok = TRUE, value = eval(e, envir = globalenv())),
+          error = function(err) list(ok = FALSE, error = conditionMessage(err))
+        )
+      },
+      args = list(expr),
+      return = TRUE,
+      tag = sprintf("worker_eval_%d", worker$id)
+    )
+
+    ready <- tryCatch(socketSelect(list(con), timeout = timeout), error = function(e) FALSE)
+    if (!isTRUE(any(ready))) {
+      worker_kill(worker, graceful = FALSE)
+      stop(
+        sprintf("Worker %d evaluation timed out after %.3f seconds", worker$id, timeout),
+        call. = FALSE
+      )
+    }
+
+    recv_result <- utils::getFromNamespace("recvResult", "parallel")
+    payload <- tryCatch(
+      recv_result(worker$cluster[[1]]),
+      error = function(e) {
+        worker_kill(worker)
+        stop("recv failed: ", conditionMessage(e), call. = FALSE)
+      }
+    )
+
+    if (is.list(payload) && isTRUE(payload$ok)) {
+      return(payload$value)
+    }
+
+    err_msg <- if (is.list(payload)) payload$error %||% "unknown worker error" else "invalid worker response"
+    stop(err_msg, call. = FALSE)
   }, error = function(e) {
     stop("Worker ", worker$id, " evaluation failed: ", conditionMessage(e), call. = FALSE)
   })

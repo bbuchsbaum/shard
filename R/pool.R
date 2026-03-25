@@ -129,6 +129,26 @@ pool_get <- function() {
   .pool_env$pool
 }
 
+pool_restart_worker_ <- function(pool, worker_id, graceful = TRUE) {
+  old_worker <- pool$workers[[worker_id]]
+  if (!is.null(old_worker)) {
+    tryCatch(worker_kill(old_worker, graceful = graceful), error = function(e) NULL)
+  }
+
+  pool$workers[[worker_id]] <- worker_spawn(
+    id = worker_id,
+    init_expr = pool$init_expr,
+    packages = pool$packages,
+    dev_path = pool$dev_path
+  )
+  pool$workers[[worker_id]]$needs_recycle <- FALSE
+  pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
+  pool$stats$total_deaths <- pool$stats$total_deaths + 1L
+  .pool_env$pool <- pool
+
+  pool
+}
+
 #' Stop the Worker Pool
 #'
 #' Terminates all worker processes and releases resources. Waits for workers
@@ -158,6 +178,11 @@ pool_stop <- function(pool = NULL, timeout = 5) {
   if (length(alive_pids) > 0) {
     alive_check <- vapply(alive_pids, pid_is_alive, logical(1))
     if (!any(alive_check)) {
+      for (w in pool$workers) {
+        if (!is.null(w)) {
+          tryCatch(worker_close_connection_(w), error = function(e) NULL)
+        }
+      }
       .pool_env$pool <- NULL
       return(invisible(NULL))
     }
@@ -221,15 +246,7 @@ pool_health_check <- function(pool = NULL, busy_workers = NULL) {
       # Worker died - restart it
       action$action <- "restart"
       action$reason <- "worker_dead"
-      pool$workers[[i]] <- worker_spawn(
-        id = i,
-        init_expr = pool$init_expr,
-        packages = pool$packages,
-        dev_path = pool$dev_path
-      )
-      pool$workers[[i]]$needs_recycle <- FALSE
-      pool$workers[[i]]$rss_baseline <- worker_rss(pool$workers[[i]])
-      pool$stats$total_deaths <- pool$stats$total_deaths + 1L
+      pool <- pool_restart_worker_(pool, i)
     } else {
       # Check RSS drift
       current_rss <- worker_rss(w)
@@ -373,14 +390,7 @@ pool_dispatch <- function(worker_id, expr, envir = parent.frame(),
   w <- pool$workers[[worker_id]]
   if (is.null(w) || !worker_is_alive(w)) {
     # Restart dead worker before dispatch
-    pool$workers[[worker_id]] <- worker_spawn(
-      id = worker_id,
-      init_expr = pool$init_expr,
-      packages = pool$packages
-    )
-    pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
-    pool$stats$total_deaths <- pool$stats$total_deaths + 1L
-    .pool_env$pool <- pool
+    pool <- pool_restart_worker_(pool, worker_id)
     w <- pool$workers[[worker_id]]
   }
 

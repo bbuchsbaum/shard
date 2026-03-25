@@ -258,6 +258,7 @@ dispatch_chunks <- function(chunks, fun, ...,
           }
           idle[action$worker_id] <- TRUE
           inflight[action$worker_id] <- list(NULL)
+          inflight_class[action$worker_id] <- NA_character_
 
           # Ensure the replacement worker has the dispatch globals.
           w_new <- pool$workers[[action$worker_id]]
@@ -294,15 +295,7 @@ dispatch_chunks <- function(chunks, fun, ...,
 
       w <- pool$workers[[worker_id]]
       if (is.null(w) || !worker_is_alive(w)) {
-        pool$workers[[worker_id]] <- worker_spawn(
-          id = worker_id,
-          init_expr = pool$init_expr,
-          packages = pool$packages,
-          dev_path = pool$dev_path
-        )
-        pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
-        pool$stats$total_deaths <- pool$stats$total_deaths + 1L
-        .pool_env$pool <- pool
+        pool <- pool_restart_worker_(pool, worker_id)
         w <- pool$workers[[worker_id]]
 
         # Re-export globals to the restarted worker
@@ -367,16 +360,7 @@ dispatch_chunks <- function(chunks, fun, ...,
                             chunk_id, retry_count, "timeout"))
           }
 
-          worker_kill(pool$workers[[worker_id]])
-          pool$workers[[worker_id]] <- worker_spawn(
-            id = worker_id,
-            init_expr = pool$init_expr,
-            packages = pool$packages,
-            dev_path = pool$dev_path
-          )
-          pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
-          pool$stats$total_deaths <- pool$stats$total_deaths + 1L
-          .pool_env$pool <- pool
+          pool <- pool_restart_worker_(pool, worker_id, graceful = FALSE)
 
           # Re-export globals to the restarted worker
           export_env <- new.env(parent = emptyenv())
@@ -388,6 +372,7 @@ dispatch_chunks <- function(chunks, fun, ...,
 
           idle[worker_id] <- TRUE
           inflight[worker_id] <- list(NULL)
+          inflight_class[worker_id] <- NA_character_
         }
       }
     }
@@ -420,16 +405,7 @@ dispatch_chunks <- function(chunks, fun, ...,
         }
       }
 
-      worker_kill(pool$workers[[worker_id]])
-      pool$workers[[worker_id]] <- worker_spawn(
-        id = worker_id,
-        init_expr = pool$init_expr,
-        packages = pool$packages,
-        dev_path = pool$dev_path
-      )
-      pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
-      pool$stats$total_deaths <- pool$stats$total_deaths + 1L
-      .pool_env$pool <- pool
+      pool <- pool_restart_worker_(pool, worker_id, graceful = FALSE)
 
       export_env <- new.env(parent = emptyenv())
       export_env$.shard_dispatch_fun <- fun
@@ -440,6 +416,7 @@ dispatch_chunks <- function(chunks, fun, ...,
 
       idle[worker_id] <- TRUE
       inflight[worker_id] <- list(NULL)
+      inflight_class[worker_id] <- NA_character_
       next
     }
 

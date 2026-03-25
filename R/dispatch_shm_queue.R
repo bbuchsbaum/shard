@@ -307,15 +307,7 @@ dispatch_shards_shm_queue_ <- function(n,
   start_loop <- function(worker_id) {
     w <- pool$workers[[worker_id]]
     if (is.null(w) || !worker_is_alive(w)) {
-      pool$workers[[worker_id]] <- worker_spawn(
-        id = worker_id,
-        init_expr = pool$init_expr,
-        packages = pool$packages,
-        dev_path = pool$dev_path
-      )
-      pool$workers[[worker_id]]$rss_baseline <- worker_rss(pool$workers[[worker_id]])
-      pool$stats$total_deaths <- pool$stats$total_deaths + 1L
-      .pool_env$pool <- pool
+      pool <<- pool_restart_worker_(pool, worker_id)
       w <- pool$workers[[worker_id]]
 
       # Re-export borrow/out to the restarted worker.
@@ -358,7 +350,22 @@ dispatch_shards_shm_queue_ <- function(n,
   repeat {
     st <- taskq_stats(seg_master)
     if ((st$done %||% 0L) + (st$failed %||% 0L) >= (st$n_tasks %||% 0L)) break
-    if (Sys.time() > deadline) stop("shm_queue dispatch timed out", call. = FALSE)
+    if (Sys.time() > deadline) {
+      for (i in seq_len(pool$n)) {
+        if (isTRUE(started[i])) {
+          tryCatch(taskq_reset_claims(seg_master, i), error = function(e) NULL)
+        }
+        w <- pool$workers[[i]]
+        if (!is.null(w)) {
+          tryCatch(worker_kill(w, graceful = FALSE), error = function(e) NULL)
+        }
+        idle[i] <- TRUE
+        started[i] <- FALSE
+        inflight[[i]] <- NULL
+      }
+      .pool_env$pool <- pool
+      stop("shm_queue dispatch timed out", call. = FALSE)
+    }
 
     # Restart dead workers.
     for (i in seq_len(pool$n)) {

@@ -202,6 +202,10 @@ shard_map <- function(shards,
     }
   }
 
+  # Validate inputs before expensive pool creation
+  borrow <- validate_borrow(borrow, cow)
+  out <- validate_out(out)
+
   # Ensure pool exists with correct worker count
  pool <- ensure_pool(
     workers = workers,
@@ -210,12 +214,6 @@ shard_map <- function(shards,
     packages = packages,
     init_expr = init_expr
   )
-
-  # Validate borrowed inputs
-  borrow <- validate_borrow(borrow, cow)
-
-  # Validate output buffers
-  out <- validate_out(out)
 
   auto_table <- isTRUE(dispatch_opts$auto_table %||% FALSE)
   auto_table_sink <- NULL

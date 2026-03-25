@@ -29,11 +29,12 @@ test_that("stress: 1000+ shards with aggressive mem_cap triggers recycling", {
 
   # Run 1000 shards - each allocates memory to push RSS
   blocks <- shards(1000, block_size = 10, workers = 2)
+  expected_bonus <- sum(matrix(seq_len(1e4), nrow = 100)[1, ])
 
   result <- shard_map(blocks,
     fun = function(shard) {
       # Allocate some memory to push RSS
-      junk <- matrix(rnorm(1e4), nrow = 100)
+      junk <- matrix(seq_len(1e4), nrow = 100)
       sum(shard$idx) + sum(junk[1, ])
     },
     mem_cap = "50MB",
@@ -51,32 +52,36 @@ test_that("stress: 1000+ shards with aggressive mem_cap triggers recycling", {
   expect_gte(pool$stats$total_recycles, 1L)
 
   # Verify results are correct sums (not corrupted by recycling)
-  res <- results(result)
-  # First shard should have sum 1:10 + noise
-  # Just verify it's a reasonable numeric value
-  expect_true(is.numeric(unlist(res)))
-  expect_true(all(!is.na(unlist(res))))
+  res <- unname(unlist(results(result)))
+  expected <- vapply(seq_len(100), function(i) {
+    start <- (i - 1L) * 10L + 1L
+    sum(start:(start + 9L)) + expected_bonus
+  }, numeric(1))
+  expect_equal(res, expected)
 })
 
 test_that("stress: worker crashes mid-task are recovered", {
   skip_on_cran()
   skip_if_not_stress()
+  if (is_windows()) skip("signal-based worker tests require POSIX")
   # Expected runtime: ~20 seconds
 
   pool <- pool_create(n = 2)
   on.exit(pool_stop())
+  kill_flag <- tempfile("shard-stress-kill-")
+  on.exit(unlink(kill_flag), add = TRUE)
 
-  # We'll run shards and one will take longer (simulating slow processing)
   blocks <- shards(100, block_size = 10, workers = 2)
 
   result <- shard_map(blocks,
-    fun = function(shard) {
-      # For the 5th chunk, take a bit longer
-      if (shard$id == 5L) {
-        Sys.sleep(0.1)
+    fun = function(shard, flag) {
+      if (shard$id == 5L && !file.exists(flag)) {
+        file.create(flag)
+        tools::pskill(Sys.getpid(), signal = 9L)
       }
       sum(shard$idx)
     },
+    borrow = list(flag = kill_flag),
     workers = 2,
     max_retries = 5L
   )
@@ -229,8 +234,7 @@ test_that("stress: RSS stays bounded under load", {
 
   # Verify recycling happened to enforce bounds
   pool <- pool_get()
-  # With this much memory allocation, we expect some recycling
-  expect_gte(pool$stats$total_recycles + pool$stats$total_deaths, 0L)
+  expect_gte(pool$stats$total_recycles + pool$stats$total_deaths, 1L)
 })
 
 test_that("stress: high shard count completes correctly", {
