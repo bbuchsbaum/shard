@@ -1,11 +1,4 @@
-#' @keywords internal
-"_PACKAGE"
-
-#' shard: Deterministic, Zero-Copy Parallel Execution for R
-#'
-#' The shard package provides a parallel execution runtime that emphasizes
-#' deterministic memory behavior and efficient handling of large shared inputs.
-#'
+#' @aliases shard-package
 #' @section Core API:
 #' * [shard_map()] - Primary parallel execution entry point
 #' * [shards()] - Create shard descriptors with autotuning
@@ -37,9 +30,8 @@
 #' * [pool_lapply()] - Parallel lapply with supervision
 #' * [pool_sapply()] - Parallel sapply with supervision
 #'
-#' @docType package
-#' @name shard-package
-NULL
+#' @keywords internal
+"_PACKAGE"
 
 # On package load, ensure clean state
 .onLoad <- function(libname, pkgname) {

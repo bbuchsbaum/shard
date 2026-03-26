@@ -175,6 +175,9 @@ worker_close_connection_ <- function(worker) {
 #' Terminates the worker process and closes connections.
 #'
 #' @param worker A `shard_worker` object.
+#' @param graceful Logical scalar. If `TRUE`, request an orderly cluster
+#'   shutdown before falling back to a process kill. If `FALSE`, skip the
+#'   cluster stop step and force termination directly.
 #' @return NULL (invisibly).
 #' @keywords internal
 worker_kill <- function(worker, graceful = TRUE) {

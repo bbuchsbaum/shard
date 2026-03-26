@@ -2,13 +2,11 @@
 % Please edit documentation in R/shard-package.R
 \docType{package}
 \name{shard-package}
+\alias{shard}
 \alias{shard-package}
 \title{shard: Deterministic, Zero-Copy Parallel Execution for R}
 \description{
 Provides a parallel execution runtime for R that emphasizes deterministic memory behavior and efficient handling of large shared inputs. 'shard' enables zero-copy parallel reads via shared/memory-mapped segments, encourages explicit output buffers to avoid large result aggregation, and supervises worker processes to mitigate memory drift via controlled recycling. Diagnostics report peak memory usage, end-of-run memory return, and hidden copy/materialization events to support reproducible performance benchmarking.
-
-The shard package provides a parallel execution runtime that emphasizes
-deterministic memory behavior and efficient handling of large shared inputs.
 }
 \section{Core API}{
 
@@ -62,14 +60,6 @@ deterministic memory behavior and efficient handling of large shared inputs.
 }
 
 \seealso{
-Useful links:
-\itemize{
-  \item \url{https://bbuchsbaum.github.io/shard/}
-  \item \url{https://github.com/bbuchsbaum/shard}
-  \item Report bugs at \url{https://github.com/bbuchsbaum/shard/issues}
-}
-
-
 Useful links:
 \itemize{
   \item \url{https://bbuchsbaum.github.io/shard/}

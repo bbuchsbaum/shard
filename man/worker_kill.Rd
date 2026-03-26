@@ -4,10 +4,14 @@
 \alias{worker_kill}
 \title{Kill a Worker Process}
 \usage{
-worker_kill(worker)
+worker_kill(worker, graceful = TRUE)
 }
 \arguments{
 \item{worker}{A \code{shard_worker} object.}
+
+\item{graceful}{Logical scalar. If \code{TRUE}, request an orderly cluster
+shutdown before falling back to a process kill. If \code{FALSE}, skip the
+cluster stop step and force termination directly.}
 }
 \value{
 NULL (invisibly).
