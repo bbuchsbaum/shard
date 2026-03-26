@@ -9,10 +9,6 @@ mitigate memory drift via controlled recycling. Diagnostics report peak
 memory usage, end-of-run memory return, and hidden copy/materialization
 events to support reproducible performance benchmarking.
 
-The shard package provides a parallel execution runtime that emphasizes
-deterministic memory behavior and efficient handling of large shared
-inputs.
-
 ## Core API
 
 - [`shard_map()`](https://bbuchsbaum.github.io/shard/reference/shard_map.md) -
@@ -87,14 +83,6 @@ inputs.
   Parallel sapply with supervision
 
 ## See also
-
-Useful links:
-
-- <https://bbuchsbaum.github.io/shard/>
-
-- <https://github.com/bbuchsbaum/shard>
-
-- Report bugs at <https://github.com/bbuchsbaum/shard/issues>
 
 Useful links:
 
