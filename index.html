@@ -31,6 +31,7 @@
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto">
+<li class="nav-item"><a class="nav-link" href="articles/shard.html">Get started</a></li>
 <li class="nav-item"><a class="nav-link" href="reference/index.html">Reference</a></li>
       </ul>
 <ul class="navbar-nav">
@@ -137,9 +138,9 @@
 <hr>
 </div>
 <div class="section level2">
-<h2 id="apply-style-wrappers-memshare-like-ergonomics">Apply-style wrappers (memshare-like ergonomics)<a class="anchor" aria-label="anchor" href="#apply-style-wrappers-memshare-like-ergonomics"></a>
+<h2 id="convenience-wrappers">Convenience wrappers<a class="anchor" aria-label="anchor" href="#convenience-wrappers"></a>
 </h2>
-<p>If your workload is basically “apply a function over columns” or “lapply over a list”, <code>shard</code> provides thin convenience wrappers that still run through the supervised runtime.</p>
+<p>If your workload is “apply a function over columns” or “lapply over a list”, <code>shard</code> provides convenience wrappers that handle sharing and buffering automatically while still running through the supervised runtime.</p>
 <div class="section level3">
 <h3 id="column-wise-apply-scalar-return">Column-wise apply (scalar return)<a class="anchor" aria-label="anchor" href="#column-wise-apply-scalar-return"></a>
 </h3>
@@ -167,20 +168,8 @@
 <span><span class="op">)</span></span></code></pre></div>
 <p>For large outputs (big vectors/data.frames per element), prefer <code><a href="reference/buffer.html">buffer()</a></code>, <code><a href="reference/table_sink.html">table_sink()</a></code>, or <code><a href="reference/shard_reduce.html">shard_reduce()</a></code> instead of gathering everything to the master.</p>
 <hr>
-</div>
-</div>
-<div class="section level2">
-<h2 id="integration-with-foreach-optional">Integration with foreach (optional)<a class="anchor" aria-label="anchor" href="#integration-with-foreach-optional"></a>
-</h2>
-<p><code>shard</code> can be used directly via <code><a href="reference/shard_map.html">shard_map()</a></code>. For compatibility with existing <code>foreach</code> code, a companion backend package can register a <code>%dopar%</code> backend.</p>
-<p>(See the <code>doShard</code> package in the project ecosystem.)</p>
 <hr>
 </div>
-<div class="section level2">
-<h2 id="vignettes">Vignettes<a class="anchor" aria-label="anchor" href="#vignettes"></a>
-</h2>
-<p>Vignettes are planned but not yet included in the package source.</p>
-<hr>
 </div>
 <div class="section level2">
 <h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
