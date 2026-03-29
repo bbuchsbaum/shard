@@ -121,10 +121,11 @@ shard::copy_report(run)
 
 ---
 
-## Apply-style wrappers (memshare-like ergonomics)
+## Convenience wrappers
 
-If your workload is basically “apply a function over columns” or “lapply over a list”,
-`shard` provides thin convenience wrappers that still run through the supervised runtime.
+If your workload is “apply a function over columns” or “lapply over a list”,
+`shard` provides convenience wrappers that handle sharing and buffering
+automatically while still running through the supervised runtime.
 
 ### Column-wise apply (scalar return)
 
@@ -156,19 +157,6 @@ For large outputs (big vectors/data.frames per element), prefer `buffer()`, `tab
 or `shard_reduce()` instead of gathering everything to the master.
 
 ---
-
-## Integration with foreach (optional)
-
-`shard` can be used directly via `shard_map()`. For compatibility with existing
-`foreach` code, a companion backend package can register a `%dopar%` backend.
-
-(See the `doShard` package in the project ecosystem.)
-
----
-
-## Vignettes
-
-Vignettes are planned but not yet included in the package source.
 
 ---
 

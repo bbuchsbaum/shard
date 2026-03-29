@@ -23,13 +23,16 @@ Suggests:
     doParallel,
     future.apply,
     iterators,
+    knitr,
     pkgdown,
     pkgload,
+    rmarkdown,
     testthat (>= 3.0.0),
     ps,
     jsonlite,
     tibble,
     withr
+VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 NeedsCompilation: yes
