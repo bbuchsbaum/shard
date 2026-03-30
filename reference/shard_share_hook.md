@@ -26,7 +26,7 @@ shard_share_hook(x, ctx)
 
   path
 
-  :   Current node path string (e.g., "\$data@cache")
+  :   Current node path string (e.g., `"<root>$data@cache"`)
 
   class
 

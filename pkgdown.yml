@@ -3,7 +3,7 @@ pkgdown: 2.2.0
 pkgdown_sha: ~
 articles:
   shard: shard.html
-last_built: 2026-03-29T17:46Z
+last_built: 2026-03-30T02:15Z
 urls:
   reference: https://bbuchsbaum.github.io/shard/reference
   article: https://bbuchsbaum.github.io/shard/articles
