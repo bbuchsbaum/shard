@@ -73,7 +73,7 @@ is_shared(X_shared)
 #> [1] TRUE
 shared_info(X_shared)
 #> $path
-#> [1] "/tmp/shard_10637_1774886060_1774886062"
+#> [1] "/tmp/shard_10583_1774886274_1774886276"
 #> 
 #> $backing
 #> [1] "mmap"
@@ -103,7 +103,7 @@ shared_info(X_shared)
 #> [1] "mmap"
 #> 
 #> $segment_info$path
-#> [1] "/tmp/shard_10637_1774886060_1774886062"
+#> [1] "/tmp/shard_10583_1774886274_1774886276"
 #> 
 #> $segment_info$readonly
 #> [1] TRUE
@@ -288,7 +288,7 @@ inspect them:
 ``` r
 report(result = run)
 #> shard_report (summary)
-#> Generated: 2026-03-30 15:54:22 
+#> Generated: 2026-03-30 15:57:56 
 #> 
 #> Pool:
 #>   Workers: 2 

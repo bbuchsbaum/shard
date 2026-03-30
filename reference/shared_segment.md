@@ -27,7 +27,7 @@ shared_segment(x)
 #> <shard_segment>
 #>   Size: 400 bytes
 #>   Backing: mmap 
-#>   Path: /tmp/shard_7100_1774886049_1774886049 
+#>   Path: /tmp/shard_7047_1774886264_1774886265 
 #>   Read-only: TRUE 
 #>   Owns segment: TRUE 
 # }

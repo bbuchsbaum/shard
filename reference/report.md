@@ -58,7 +58,7 @@ res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
 pool_stop()
 report(result = res)
 #> shard_report (summary)
-#> Generated: 2026-03-30 15:53:54 
+#> Generated: 2026-03-30 15:57:28 
 #> 
 #> Pool: (not active)
 #> 

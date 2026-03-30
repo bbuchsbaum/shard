@@ -32,7 +32,7 @@ segment_info(seg)
 #> [1] "mmap"
 #> 
 #> $path
-#> [1] "/tmp/shard_7100_1774886037_1774886031"
+#> [1] "/tmp/shard_7047_1774886251_1774886247"
 #> 
 #> $readonly
 #> [1] FALSE

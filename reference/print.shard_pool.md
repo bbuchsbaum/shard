@@ -33,7 +33,7 @@ print(p)
 #>   Workers: 2 
 #>   RSS limit: 2.0 GB 
 #>   Drift threshold: 50% 
-#>   Created: 2026-03-30 15:53:41 
+#>   Created: 2026-03-30 15:57:16 
 #>   Stats:
 #>     Total recycles: 0 
 #>     Total deaths: 0 

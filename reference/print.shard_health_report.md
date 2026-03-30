@@ -30,7 +30,7 @@ The input `x`, invisibly.
 p <- pool_create(2)
 r <- pool_health_check(p)
 print(r)
-#> Pool health check at 2026-03-30 15:53:41 
+#> Pool health check at 2026-03-30 15:57:16 
 #> Stats: recycles = 0 , deaths = 0 , tasks = 0 
 #> All workers healthy
 pool_stop(p)
