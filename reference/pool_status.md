@@ -25,8 +25,8 @@ A data frame with worker status information.
 p <- pool_create(2)
 pool_status(p)
 #>   worker_id  pid status rss_bytes rss_baseline rss_drift recycle_count
-#> 1         1 8460     ok  71966720     71966720         0             0
-#> 2         2 8478     ok  71868416     71868416         0             0
+#> 1         1 8540     ok  71987200     71987200         0             0
+#> 2         2 8558     ok  71950336     71950336         0             0
 pool_stop(p)
 # }
 ```
