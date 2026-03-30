@@ -193,6 +193,14 @@ shard_map <- function(shards,
 
   # Validate inputs before expensive pool creation
   borrow <- validate_borrow(borrow, cow)
+  auto_shared_names <- attr(borrow, "auto_shared")
+  if (length(auto_shared_names) > 0) {
+    on.exit({
+      for (nm in auto_shared_names) {
+        tryCatch(close(borrow[[nm]]), error = function(e) NULL)
+      }
+    }, add = TRUE)
+  }
   out <- validate_out(out)
 
   # Ensure pool exists with correct worker count
@@ -869,6 +877,8 @@ validate_borrow <- function(borrow, cow) {
     stop("All borrowed inputs must be named", call. = FALSE)
   }
 
+  auto_shared <- character(0)
+
   # Auto-share large atomic inputs once in the main process so PSOCK workers
   # can receive a small descriptor (via ALTREP serialization) instead of full
   # data copies.
@@ -896,6 +906,7 @@ validate_borrow <- function(borrow, cow) {
 
       borrow[[name]] <- shared
       x <- shared
+      auto_shared <- c(auto_shared, name)
     }
 
     # Best-effort tag for downstream diagnostics.
@@ -912,6 +923,7 @@ validate_borrow <- function(borrow, cow) {
     }
   }
 
+  attr(borrow, "auto_shared") <- auto_shared
   borrow
 }
 

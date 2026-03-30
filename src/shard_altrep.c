@@ -439,8 +439,12 @@ static void *altvec_dataptr(SEXP x, Rboolean writable) {
         SEXP materialized = PROTECT(allocVector(info->sexp_type, n));
 
         void *src = get_data_ptr(x, info);
+        if (!src) {
+            UNPROTECT(1);
+            Rf_error("shard ALTREP: underlying shared memory segment is no longer valid");
+        }
         void *dst = vec_data_ptr(materialized, info->sexp_type);
-        if (src && dst && n > 0) {
+        if (dst && n > 0) {
             memcpy(dst, src, n * info->element_size);
         }
 
@@ -453,7 +457,11 @@ static void *altvec_dataptr(SEXP x, Rboolean writable) {
     }
 
     info->dataptr_calls++;
-    return get_data_ptr(x, info);
+    void *ptr = get_data_ptr(x, info);
+    if (!ptr) {
+        Rf_error("shard ALTREP: underlying shared memory segment is no longer valid");
+    }
+    return ptr;
 }
 
 /* Dataptr_or_null - returns pointer without side effects if possible */

@@ -111,6 +111,14 @@ shard_reduce <- function(shards,
 
   # Validate and export borrow/out
   borrow <- validate_borrow(borrow, cow)
+  auto_shared_names <- attr(borrow, "auto_shared")
+  if (length(auto_shared_names) > 0) {
+    on.exit({
+      for (nm in auto_shared_names) {
+        tryCatch(close(borrow[[nm]]), error = function(e) NULL)
+      }
+    }, add = TRUE)
+  }
   out <- validate_out(out)
   export_borrow_to_workers(pool, borrow)
   export_out_to_workers(pool, out)
