@@ -4,4 +4,4 @@
 # No special libraries needed beyond the standard Windows API.
 
 PKG_CFLAGS = $(C_VISIBILITY)
-PKG_LIBS =
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)

@@ -24,6 +24,8 @@
 #include <io.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <process.h>  /* _getpid() */
+#define getpid _getpid
 
 #else
 /* Unix implementation (Linux, macOS) */
@@ -125,8 +127,8 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
     DWORD protect = PAGE_READWRITE;
     DWORD access = FILE_MAP_ALL_ACCESS;
 
-    if (seg->backing == SHARD_BACKING_SHM || path == NULL) {
-        /* Create anonymous file mapping (named mapping for cross-process) */
+    if (seg->backing == SHARD_BACKING_SHM && path == NULL) {
+        /* Named kernel mapping (no file on disk) */
         char *name = shard_shm_name();
         if (!name) {
             free(seg);
@@ -134,7 +136,6 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
         }
         seg->path = name;
 
-        /* Create named mapping */
         LARGE_INTEGER li;
         li.QuadPart = size;
 
@@ -154,11 +155,23 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
         }
         seg->file_handle = INVALID_HANDLE_VALUE;
     } else {
-        /* File-backed mapping */
-        seg->path = strdup(path);
-        if (!seg->path) {
-            free(seg);
-            return NULL;
+        /* File-backed mapping (MMAP or SHM with explicit path) */
+        seg->backing = SHARD_BACKING_MMAP;
+
+        if (path == NULL) {
+            /* Generate a temp file path, mirroring Unix behavior */
+            char *temp_path = shard_temp_path("shard_");
+            if (!temp_path) {
+                free(seg);
+                return NULL;
+            }
+            seg->path = temp_path;
+        } else {
+            seg->path = strdup(path);
+            if (!seg->path) {
+                free(seg);
+                return NULL;
+            }
         }
 
         /* Create the file with secure permissions */
@@ -173,7 +186,7 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             &sa,
             CREATE_ALWAYS,
-            FILE_ATTRIBUTE_TEMPORARY,
+            FILE_ATTRIBUTE_NORMAL,
             NULL
         );
 

@@ -7,4 +7,4 @@
 PKG_CFLAGS = $(C_VISIBILITY)
 # Needed on glibc Linux so CPU affinity APIs from <sched.h> are exposed.
 PKG_CPPFLAGS = -D_GNU_SOURCE
-PKG_LIBS =
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)

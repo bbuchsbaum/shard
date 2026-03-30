@@ -14,7 +14,7 @@ shard_share_hook(x, ctx)
 
 \item{ctx}{A context list containing:
 \describe{
-\item{path}{Current node path string (e.g., "\if{html}{\out{<root>}}$data@cache")}
+\item{path}{Current node path string (e.g., \code{"<root>$data@cache"})}
 \item{class}{class(x) - the object's class vector}
 \item{mode}{'strict' or 'balanced' - sharing mode}
 \item{min_bytes}{Minimum size threshold for sharing}
