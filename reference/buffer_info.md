@@ -41,7 +41,7 @@ buffer_info(buf)
 #> [1] "mmap"
 #> 
 #> $path
-#> [1] "/tmp/shard_7127_1774894433_1774894443"
+#> [1] "/tmp/shard_7143_1774903629_1774903639"
 #> 
 #> $readonly
 #> [1] FALSE

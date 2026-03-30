@@ -32,7 +32,7 @@ pool_stop()
 rpt <- report(result = res)
 print(rpt)
 #> shard_report (summary)
-#> Generated: 2026-03-30 18:14:18 
+#> Generated: 2026-03-30 20:47:35 
 #> 
 #> Pool: (not active)
 #> 

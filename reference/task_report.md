@@ -48,7 +48,7 @@ res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
 pool_stop()
 task_report(res)
 #> shard task report
-#> Generated: 2026-03-30 18:14:49 
+#> Generated: 2026-03-30 20:48:06 
 #> 
 #> Execution:
 #>   Total shards: 8 
@@ -57,7 +57,7 @@ task_report(res)
 #>   Chunks dispatched: 8 
 #> 
 #> Timing:
-#>   Duration: 2.16 seconds 
-#>   Throughput: 3.7 shards/sec 
+#>   Duration: 2.27 seconds 
+#>   Throughput: 3.5 shards/sec 
 # }
 ```

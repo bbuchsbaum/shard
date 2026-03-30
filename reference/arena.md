@@ -101,16 +101,16 @@ info <- arena({
 }, diagnostics = TRUE)
 info$diagnostics
 #> $arena_id
-#> [1] "arena_1_18135050.528"
+#> [1] "arena_1_20470606.464"
 #> 
 #> $strict
 #> [1] FALSE
 #> 
 #> $rss_before
-#> [1] 166543360
+#> [1] 166739968
 #> 
 #> $rss_after
-#> [1] 166543360
+#> [1] 166739968
 #> 
 #> $rss_delta
 #> [1] 0
@@ -120,13 +120,13 @@ info$diagnostics
 #> 
 #> $gc_before
 #>           used (Mb) gc trigger (Mb) max used (Mb)
-#> Ncells 1022215 54.6    1315775 70.3  1315775 70.3
-#> Vcells 3088237 23.6    8388608 64.0  5590315 42.7
+#> Ncells 1022191 54.6    1315775 70.3  1315775 70.3
+#> Vcells 3088226 23.6    8388608 64.0  5590315 42.7
 #> 
 #> $gc_after
 #>           used (Mb) gc trigger (Mb) max used (Mb)
-#> Ncells 1022252 54.6    1315775 70.3  1315775 70.3
-#> Vcells 3188284 24.4    8388608 64.0  5590315 42.7
+#> Ncells 1022228 54.6    1315775 70.3  1315775 70.3
+#> Vcells 3188273 24.4    8388608 64.0  5590315 42.7
 #> 
 # }
 ```

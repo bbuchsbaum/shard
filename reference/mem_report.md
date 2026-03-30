@@ -43,18 +43,18 @@ An S3 object of class `shard_report` with type `"memory"` containing:
 p <- pool_create(2)
 mem_report(p)
 #> shard memory report
-#> Generated: 2026-03-30 18:14:03 
+#> Generated: 2026-03-30 20:47:19 
 #> 
 #> Pool: 2 workers
 #> RSS limit: 2.0 GB 
 #> 
 #> Aggregate:
-#>   Total: 137.0 MB 
+#>   Total: 137.1 MB 
 #>   Peak: 68.6 MB 
-#>   Mean: 68.5 MB 
+#>   Mean: 68.6 MB 
 #> 
 #> Per-worker:
-#>   [+] 1: rss=68.4 MB, baseline=68.4 MB, drift=0.0%
+#>   [+] 1: rss=68.5 MB, baseline=68.5 MB, drift=0.0%
 #>   [+] 2: rss=68.6 MB, baseline=68.6 MB, drift=0.0%
 pool_stop(p)
 # }

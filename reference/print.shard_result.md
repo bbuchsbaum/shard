@@ -31,7 +31,7 @@ result <- shard_map(4L, function(shard) shard$idx, workers = 2)
 pool_stop()
 print(result)
 #> shard_map result
-#>   Duration: 1.67 seconds 
+#>   Duration: 1.71 seconds 
 #>   Shards: 4 
 #>   Chunks: 4 
 #>   Completed: 4  
