@@ -11,9 +11,8 @@ test_that("rss_self returns current process RSS", {
 
 test_that("rss_get_pid returns NA for invalid PID", {
   expect_true(is.na(rss_get_pid(NA)))
-  expect_silent({
-    rss <- rss_get_pid(999999999) # Unlikely to exist
-  })
+  # On Windows, wmic may be missing and produce a warning
+  rss <- suppressWarnings(rss_get_pid(999999999)) # Unlikely to exist
   expect_true(is.na(rss))
 })
 
