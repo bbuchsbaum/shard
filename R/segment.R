@@ -26,11 +26,10 @@ NULL
 #' @param backing Backing type: "auto", "mmap", or "shm"
 #' @param path Optional file path for mmap backing (NULL for temp file)
 #' @param readonly Create as read-only (after initial write)
-#' @return An S3 object of class "shard_segment"
+#' @return A \code{shard_segment} object backed by shared memory.
 #' @export
 #' @examples
-#' \dontrun{
-#' # Create a 1MB segment
+#' \donttest{
 #' seg <- segment_create(1024 * 1024)
 #' segment_info(seg)
 #' segment_close(seg)
@@ -70,8 +69,16 @@ segment_create <- function(size,
 #' @param path Path or shm name of the segment
 #' @param backing Backing type: "mmap" or "shm"
 #' @param readonly Open as read-only
-#' @return An S3 object of class "shard_segment"
+#' @return A \code{shard_segment} object attached to the existing segment.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024, backing = "mmap")
+#' path <- segment_path(seg)
+#' seg2 <- segment_open(path, backing = "mmap", readonly = TRUE)
+#' segment_close(seg2, unlink = FALSE)
+#' segment_close(seg)
+#' }
 segment_open <- function(path,
                          backing = c("mmap", "shm"),
                          readonly = TRUE) {
@@ -101,8 +108,13 @@ segment_open <- function(path,
 #' @param x A shard_segment object
 #' @param unlink Whether to unlink the underlying file/shm (default: FALSE for
 #'   opened segments, TRUE for owned segments)
-#' @return NULL (invisibly)
+#' @return \code{NULL}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_close(seg)
+#' }
 segment_close <- function(x, unlink = NULL) {
     stopifnot(inherits(x, "shard_segment"))
 
@@ -118,8 +130,15 @@ segment_close <- function(x, unlink = NULL) {
 #' Get segment information
 #'
 #' @param x A shard_segment object
-#' @return A list with segment properties
+#' @return A named list with segment metadata including \code{size}, \code{backing},
+#'   \code{path}, \code{readonly}, and \code{owns}.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_info(seg)
+#' segment_close(seg)
+#' }
 segment_info <- function(x) {
     stopifnot(inherits(x, "shard_segment"))
     .Call("C_shard_segment_info", x$ptr, PACKAGE = "shard")
@@ -128,8 +147,14 @@ segment_info <- function(x) {
 #' Get the path or name of a segment
 #'
 #' @param x A shard_segment object
-#' @return The path string, or NULL for anonymous segments
+#' @return The path string, or \code{NULL} for anonymous segments.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024, backing = "mmap")
+#' segment_path(seg)
+#' segment_close(seg)
+#' }
 segment_path <- function(x) {
     stopifnot(inherits(x, "shard_segment"))
     .Call("C_shard_segment_path", x$ptr, PACKAGE = "shard")
@@ -138,8 +163,14 @@ segment_path <- function(x) {
 #' Get the size of a segment
 #'
 #' @param x A shard_segment object
-#' @return Size in bytes
+#' @return Size in bytes as a numeric scalar.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_size(seg)
+#' segment_close(seg)
+#' }
 segment_size <- function(x) {
     stopifnot(inherits(x, "shard_segment"))
     .Call("C_shard_segment_size", x$ptr, PACKAGE = "shard")
@@ -150,8 +181,14 @@ segment_size <- function(x) {
 #' @param x A shard_segment object
 #' @param data Data to write (raw, numeric, integer, or logical vector)
 #' @param offset Byte offset to start writing (0-based)
-#' @return Number of bytes written (invisibly)
+#' @return Number of bytes written, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_write(seg, as.integer(1:10), offset = 0)
+#' segment_close(seg)
+#' }
 segment_write <- function(x, data, offset = 0) {
     stopifnot(inherits(x, "shard_segment"))
     bytes <- .Call("C_shard_segment_write_raw", x$ptr, data, as.double(offset),
@@ -164,8 +201,15 @@ segment_write <- function(x, data, offset = 0) {
 #' @param x A shard_segment object
 #' @param offset Byte offset to start reading (0-based)
 #' @param size Number of bytes to read
-#' @return A raw vector
+#' @return A raw vector containing the bytes read from the segment.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_write(seg, as.integer(1:4), offset = 0)
+#' segment_read(seg, offset = 0, size = 16)
+#' segment_close(seg)
+#' }
 segment_read <- function(x, offset = 0, size = NULL) {
     stopifnot(inherits(x, "shard_segment"))
 
@@ -180,8 +224,14 @@ segment_read <- function(x, offset = 0, size = NULL) {
 #' Make a segment read-only
 #'
 #' @param x A shard_segment object
-#' @return The segment object (invisibly)
+#' @return The \code{shard_segment} object, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_protect(seg)
+#' segment_close(seg)
+#' }
 segment_protect <- function(x) {
     stopifnot(inherits(x, "shard_segment"))
     .Call("C_shard_segment_protect", x$ptr, PACKAGE = "shard")
@@ -189,7 +239,18 @@ segment_protect <- function(x) {
     invisible(x)
 }
 
+#' Print a Shared Memory Segment
+#'
+#' @param x A \code{shard_segment} object.
+#' @param ... Ignored.
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' print(seg)
+#' segment_close(seg)
+#' }
 print.shard_segment <- function(x, ...) {
     info <- segment_info(x)
     cat("<shard_segment>\n")
@@ -205,16 +266,20 @@ print.shard_segment <- function(x, ...) {
 
 #' Check if running on Windows
 #'
-#' @return TRUE if on Windows, FALSE otherwise
+#' @return A logical scalar: \code{TRUE} if running on Windows, \code{FALSE} otherwise.
 #' @export
+#' @examples
+#' is_windows()
 is_windows <- function() {
     .Call("C_shard_is_windows", PACKAGE = "shard")
 }
 
 #' Get available shared memory backing types
 #'
-#' @return Character vector of available backing types
+#' @return A character vector of available backing types on the current platform.
 #' @export
+#' @examples
+#' available_backings()
 available_backings <- function() {
     .Call("C_shard_available_backings", PACKAGE = "shard")
 }

@@ -53,8 +53,11 @@ idx_range_validate <- function(start, end) {
 #'
 #' @param start Integer. Start index (1-based, inclusive).
 #' @param end Integer. End index (1-based, inclusive).
-#' @return An object of class `shard_idx_range`.
+#' @return An object of class \code{shard_idx_range}.
 #' @export
+#' @examples
+#' r <- idx_range(1, 100)
+#' r
 idx_range <- function(start, end) {
   r <- idx_range_validate(start, end)
   structure(r, class = "shard_idx_range")
@@ -257,8 +260,13 @@ view_block_build <- function(x, rows, cols) {
 #' @param x A shared (share()d) atomic matrix (double/integer/logical/raw).
 #' @param rows Row selector. NULL (all rows) or idx_range().
 #' @param cols Integer vector of column indices (1-based).
-#' @return A view object of class `shard_view_gather`.
+#' @return A \code{shard_view_gather} object describing the indexed column view.
 #' @export
+#' @examples
+#' \donttest{
+#' m <- share(matrix(1:20, nrow = 4))
+#' v <- view_gather(m, cols = c(1L, 3L))
+#' }
 view_gather <- function(x, rows = NULL, cols) {
   view_validate_dims(x)
   d <- dim(x)
@@ -298,9 +306,15 @@ view_gather <- function(x, rows = NULL, cols) {
 #' @param x A shared (share()d) atomic matrix (double/integer/logical/raw).
 #' @param rows Row selector. NULL (all rows) or idx_range().
 #' @param cols Column selector. NULL (all cols) or idx_range().
-#' @param type View type. `"block"` or `"gather"` (or `"auto"`).
-#' @return A view object.
+#' @param type View type. \code{"block"} or \code{"gather"} (or \code{"auto"}).
+#' @return A \code{shard_view_block} or \code{shard_view_gather} object depending
+#'   on the selectors provided.
 #' @export
+#' @examples
+#' \donttest{
+#' m <- share(matrix(1:20, nrow = 4))
+#' v <- view(m, cols = idx_range(1, 2))
+#' }
 view <- function(x, rows = NULL, cols = NULL, type = c("auto", "block", "gather")) {
   type <- match.arg(type)
   view_validate_dims(x)
@@ -328,8 +342,13 @@ view <- function(x, rows = NULL, cols = NULL, type = c("auto", "block", "gather"
 #' @param x A shared (share()d) atomic matrix.
 #' @param rows NULL or idx_range().
 #' @param cols NULL or idx_range().
-#' @return A `shard_view_block` object.
+#' @return A \code{shard_view_block} object representing the contiguous block slice.
 #' @export
+#' @examples
+#' \donttest{
+#' m <- share(matrix(1:20, nrow = 4))
+#' v <- view_block(m, cols = idx_range(1, 2))
+#' }
 view_block <- function(x, rows = NULL, cols = NULL) {
   view_validate_dims(x)
   view_block_build(x, rows = rows, cols = cols)
@@ -340,8 +359,16 @@ view_block <- function(x, rows = NULL, cols = NULL) {
 #' Returns metadata about a view without forcing materialization.
 #'
 #' @param v A shard view.
-#' @return A named list of metadata.
+#' @return A named list with fields: \code{dtype}, \code{dim}, \code{slice_dim},
+#'   \code{rows}, \code{cols}, \code{layout}, \code{fast_path},
+#'   \code{nbytes_est}, and \code{base_is_shared}.
 #' @export
+#' @examples
+#' \donttest{
+#' m <- share(matrix(1:20, nrow = 4))
+#' v <- view_block(m, cols = idx_range(1, 2))
+#' view_info(v)
+#' }
 view_info <- function(v) {
   if (!inherits(v, "shard_view")) stop("v must be a shard view", call. = FALSE)
   base <- v$base
@@ -367,20 +394,40 @@ view_info <- function(v) {
 #' View Predicates
 #'
 #' @param x An object.
-#' @return Logical. TRUE if `x` is a shard view (or block view).
+#' @return Logical. \code{TRUE} if \code{x} is a shard view (or block view).
 #' @export
+#' @examples
+#' \donttest{
+#' m <- share(matrix(1:20, nrow = 4))
+#' v <- view_block(m, cols = idx_range(1, 2))
+#' is_view(v)
+#' is_block_view(v)
+#' }
 is_view <- function(x) inherits(x, "shard_view")
 
 #' @rdname is_view
 #' @export
 is_block_view <- function(x) inherits(x, "shard_view_block")
 
+#' Print a shard_idx_range object
+#'
+#' @param x A \code{shard_idx_range} object.
+#' @param ... Additional arguments (ignored).
+#' @return Returns \code{x} invisibly.
 #' @export
+#' @examples
+#' r <- idx_range(1, 10)
+#' print(r)
 print.shard_idx_range <- function(x, ...) {
   cat("idx_range", idx_range_print(x), "\n")
   invisible(x)
 }
 
+#' Print a shard_view_block object
+#'
+#' @param x A \code{shard_view_block} object.
+#' @param ... Additional arguments (ignored).
+#' @return Returns \code{x} invisibly.
 #' @export
 print.shard_view_block <- function(x, ...) {
   info <- view_info(x)
@@ -393,6 +440,11 @@ print.shard_view_block <- function(x, ...) {
   invisible(x)
 }
 
+#' Print a shard_view_gather object
+#'
+#' @param x A \code{shard_view_gather} object.
+#' @param ... Additional arguments (ignored).
+#' @return Returns \code{x} invisibly.
 #' @export
 print.shard_view_gather <- function(x, ...) {
   info <- view_info(x)
@@ -405,6 +457,10 @@ print.shard_view_gather <- function(x, ...) {
   invisible(x)
 }
 
+#' Materialize a block view into an R matrix
+#'
+#' @param x A \code{shard_view_block} object.
+#' @return A standard R matrix containing the selected rows and columns.
 #' @export
 materialize.shard_view_block <- function(x) {
   # Materialization is explicit and counted.
@@ -425,6 +481,10 @@ materialize.shard_view_block <- function(x) {
   base[rows, cols, drop = FALSE]
 }
 
+#' Materialize a gather view into an R matrix
+#'
+#' @param x A \code{shard_view_gather} object.
+#' @return A standard R matrix containing the gathered columns.
 #' @export
 materialize.shard_view_gather <- function(x) {
   base <- x$base
@@ -747,6 +807,11 @@ tiles2d <- function(n_x, n_y, block_x, block_y) {
   )
 }
 
+#' Print a shard_tiles object
+#'
+#' @param x A \code{shard_tiles} object.
+#' @param ... Additional arguments (ignored).
+#' @return Returns \code{x} invisibly.
 #' @export
 print.shard_tiles <- function(x, ...) {
   cat("shard tiles (2D)\n")

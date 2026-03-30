@@ -21,14 +21,13 @@ segment_create(
 \item{readonly}{Create as read-only (after initial write)}
 }
 \value{
-An S3 object of class "shard_segment"
+A \code{shard_segment} object backed by shared memory.
 }
 \description{
 Create a new shared memory segment
 }
 \examples{
-\dontrun{
-# Create a 1MB segment
+\donttest{
 seg <- segment_create(1024 * 1024)
 segment_info(seg)
 segment_close(seg)

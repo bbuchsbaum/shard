@@ -14,8 +14,16 @@ segment_read(x, offset = 0, size = NULL)
 \item{size}{Number of bytes to read}
 }
 \value{
-A raw vector
+A raw vector containing the bytes read from the segment.
 }
 \description{
 Read raw data from a segment
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_write(seg, as.integer(1:4), offset = 0)
+segment_read(seg, offset = 0, size = 16)
+segment_close(seg)
+}
 }

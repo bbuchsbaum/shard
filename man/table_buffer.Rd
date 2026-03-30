@@ -14,9 +14,15 @@ table_buffer(schema, nrow, backing = c("auto", "mmap", "shm"))
 \item{backing}{Backing type for buffers (\code{"auto"}, \code{"mmap"}, \code{"shm"}).}
 }
 \value{
-A \code{shard_table_buffer}.
+A \code{shard_table_buffer} object with one shared buffer per schema column.
 }
 \description{
 Allocates a columnar table output: one typed buffer per column, each of
 length \code{nrow}. Intended for lock-free disjoint row-range writes in shard_map.
+}
+\examples{
+\donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 100L)
+}
 }

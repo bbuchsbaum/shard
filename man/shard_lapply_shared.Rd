@@ -27,7 +27,7 @@ shard_lapply_shared(
 \item{policy}{A \code{\link[=shard_apply_policy]{shard_apply_policy()}} object.}
 }
 \value{
-A list of results of length \code{length(x)}.
+A list of results, one per element of \code{x}.
 }
 \description{
 A convenience wrapper for list workloads that need supervision and shared
@@ -37,4 +37,11 @@ inputs. Large atomic list elements are auto-shared based on policy.
 This wrapper enforces guardrails to avoid accidental huge gathers: it
 estimates the total gathered result size from a probe call and refuses
 to run if it exceeds \code{policy$max_gather_bytes}.
+}
+\examples{
+\donttest{
+res <- shard_lapply_shared(as.list(1:4), function(x) x^2)
+pool_stop()
+res
+}
 }

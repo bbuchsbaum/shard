@@ -13,6 +13,17 @@ as_tibble(x, max_bytes = 256 * 1024^2, ...)
 
 \item{...}{Reserved for future extensions.}
 }
+\value{
+A data.frame (or tibble if the \code{tibble} package is installed).
+}
 \description{
 Materialize a shard table handle as a data.frame/tibble
+}
+\examples{
+\donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 5L)
+table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+df <- as_tibble(tb)
+}
 }

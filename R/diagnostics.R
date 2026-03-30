@@ -49,19 +49,10 @@ NULL
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Basic summary
-#' report()
-#'
-#' # Include worker details
-#' report("workers")
-#'
-#' # Full report with task and segment details
-#' report("segments")
-#'
-#' # Include diagnostics from a shard_map result
-#' result <- shard_map(shards(100), function(s) sum(s$idx))
-#' report("tasks", result = result)
+#' \donttest{
+#' res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+#' pool_stop()
+#' report(result = res)
 #' }
 report <- function(level = c("summary", "workers", "tasks", "segments"),
                    result = NULL) {
@@ -136,6 +127,12 @@ report <- function(level = c("summary", "workers", "tasks", "segments"),
 #' @param result A `shard_result` from [shard_map()].
 #' @return A character vector of recommendations (possibly empty).
 #' @export
+#' @examples
+#' \donttest{
+#' res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+#' pool_stop()
+#' recommendations(res)
+#' }
 recommendations <- function(result) {
   if (is.null(result) || !inherits(result, "shard_result")) {
     stop("result must be a shard_result", call. = FALSE)
@@ -256,9 +253,10 @@ recommendations <- function(result) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' pool_create(4)
-#' mem_report()
+#' \donttest{
+#' p <- pool_create(2)
+#' mem_report(p)
+#' pool_stop(p)
 #' }
 mem_report <- function(pool = NULL) {
   if (is.null(pool)) {
@@ -351,9 +349,10 @@ mem_report <- function(pool = NULL) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- shard_map(shards(10), function(s) s$idx, cow = "audit")
-#' cow_report(result)
+#' \donttest{
+#' res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+#' pool_stop()
+#' cow_report(res)
 #' }
 cow_report <- function(result = NULL) {
   rpt <- list(
@@ -402,11 +401,10 @@ cow_report <- function(result = NULL) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' X <- matrix(rnorm(1e4), 100, 100)
-#' result <- shard_map(shards(10), function(s, X) sum(X[, s$idx]),
-#'                     borrow = list(X = X))
-#' copy_report(result)
+#' \donttest{
+#' res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+#' pool_stop()
+#' copy_report(res)
 #' }
 copy_report <- function(result = NULL) {
   rpt <- list(
@@ -519,9 +517,10 @@ copy_report <- function(result = NULL) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' result <- shard_map(shards(100), function(s) sum(s$idx))
-#' task_report(result)
+#' \donttest{
+#' res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+#' pool_stop()
+#' task_report(res)
 #' }
 task_report <- function(result = NULL) {
   rpt <- list(
@@ -598,12 +597,7 @@ task_report <- function(result = NULL) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Create some segments
-#' seg1 <- segment_create(1024)
-#' seg2 <- segment_create(2048)
-#' shared <- share(1:1000)
-#'
+#' \donttest{
 #' segment_report()
 #' }
 segment_report <- function() {
@@ -635,6 +629,18 @@ segment_report <- function() {
   structure(rpt, class = "shard_report")
 }
 
+#' Print a shard_report Object
+#'
+#' @param x A \code{shard_report} object.
+#' @param ... Ignored.
+#' @return The input \code{x}, invisibly.
+#' @examples
+#' \donttest{
+#' res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+#' pool_stop()
+#' rpt <- report(result = res)
+#' print(rpt)
+#' }
 #' @export
 print.shard_report <- function(x, ...) {
   # Dispatch based on report type
@@ -657,6 +663,7 @@ print.shard_report <- function(x, ...) {
 #' Print Main Report
 #' @param x A shard_report object.
 #' @keywords internal
+#' @noRd
 print_main_report <- function(x) {
   cat("shard_report (", x$level, ")\n", sep = "")
   cat("Generated:", format(x$timestamp), "\n")
@@ -744,6 +751,7 @@ print_main_report <- function(x) {
 #' Print Memory Report
 #' @param x A shard_report object with type "memory".
 #' @keywords internal
+#' @noRd
 print_mem_report <- function(x) {
   cat("shard memory report\n")
   cat("Generated:", format(x$timestamp), "\n")
@@ -783,6 +791,7 @@ print_mem_report <- function(x) {
 #' Print COW Report
 #' @param x A shard_report object with type "cow".
 #' @keywords internal
+#' @noRd
 print_cow_report <- function(x) {
   cat("shard copy-on-write report\n")
   cat("Generated:", format(x$timestamp), "\n")
@@ -802,6 +811,7 @@ print_cow_report <- function(x) {
 #' Print Copy Report
 #' @param x A shard_report object with type "copy".
 #' @keywords internal
+#' @noRd
 print_copy_report <- function(x) {
   cat("shard data copy report\n")
   cat("Generated:", format(x$timestamp), "\n")
@@ -840,6 +850,7 @@ print_copy_report <- function(x) {
 #' Print Task Report
 #' @param x A shard_report object with type "task".
 #' @keywords internal
+#' @noRd
 print_task_report <- function(x) {
   cat("shard task report\n")
   cat("Generated:", format(x$timestamp), "\n")
@@ -870,6 +881,7 @@ print_task_report <- function(x) {
 #' Print Segment Report
 #' @param x A shard_report object with type "segment".
 #' @keywords internal
+#' @noRd
 print_segment_report <- function(x) {
   cat("shard segment report\n")
   cat("Generated:", format(x$timestamp), "\n")

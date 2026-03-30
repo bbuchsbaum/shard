@@ -16,8 +16,15 @@ view(x, rows = NULL, cols = NULL, type = c("auto", "block", "gather"))
 \item{type}{View type. \code{"block"} or \code{"gather"} (or \code{"auto"}).}
 }
 \value{
-A view object.
+A \code{shard_view_block} or \code{shard_view_gather} object depending
+on the selectors provided.
 }
 \description{
 Create a view over a shared matrix
+}
+\examples{
+\donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view(m, cols = idx_range(1, 2))
+}
 }

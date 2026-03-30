@@ -10,8 +10,16 @@ segment_info(x)
 \item{x}{A shard_segment object}
 }
 \value{
-A list with segment properties
+A named list with segment metadata including \code{size}, \code{backing},
+\code{path}, \code{readonly}, and \code{owns}.
 }
 \description{
 Get segment information
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_info(seg)
+segment_close(seg)
+}
 }

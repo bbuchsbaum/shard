@@ -15,3 +15,10 @@ Logical. TRUE if no failures.
 \description{
 Check if shard_map Succeeded
 }
+\examples{
+\donttest{
+result <- shard_map(4L, function(shard) shard$idx[[1L]], workers = 2)
+pool_stop()
+succeeded(result)
+}
+}

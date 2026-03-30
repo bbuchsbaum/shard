@@ -12,8 +12,12 @@
 \item{i}{Index.}
 }
 \value{
-The selected shard.
+A subset of the object.
 }
 \description{
 Get Single Shard
+}
+\examples{
+sh <- shards(100, block_size = 25)
+sh[[1]]
 }

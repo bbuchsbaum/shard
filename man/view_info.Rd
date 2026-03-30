@@ -10,8 +10,17 @@ view_info(v)
 \item{v}{A shard view.}
 }
 \value{
-A named list of metadata.
+A named list with fields: \code{dtype}, \code{dim}, \code{slice_dim},
+\code{rows}, \code{cols}, \code{layout}, \code{fast_path},
+\code{nbytes_est}, and \code{base_is_shared}.
 }
 \description{
 Returns metadata about a view without forcing materialization.
+}
+\examples{
+\donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view_block(m, cols = idx_range(1, 2))
+view_info(v)
+}
 }

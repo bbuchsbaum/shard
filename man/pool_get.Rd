@@ -12,3 +12,7 @@ A \code{shard_pool} object or NULL.
 \description{
 Returns the active worker pool, or NULL if none exists.
 }
+\examples{
+p <- pool_get()
+is.null(p)
+}

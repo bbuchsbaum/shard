@@ -12,3 +12,6 @@ A list with counters and current pool bytes.
 \description{
 Scratch pool diagnostics
 }
+\examples{
+scratch_diagnostics()
+}

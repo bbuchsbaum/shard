@@ -3,7 +3,7 @@ Type: Package
 Title: Deterministic, Zero-Copy Parallel Execution for R
 Version: 0.1.0
 Authors@R:
-    person("Bradley", "Buchsbaum", email = "brad.buchsbaum@gmail.com", role = c("aut", "cre"))
+    person("Bradley", "Buchsbaum", email = "brad.buchsbaum@gmail.com", role = c("aut", "cre", "cph"))
 Description: Provides a parallel execution runtime for R that emphasizes
     deterministic memory behavior and efficient handling of large shared inputs.
     'shard' enables zero-copy parallel reads via shared/memory-mapped segments,
@@ -13,18 +13,17 @@ Description: Provides a parallel execution runtime for R that emphasizes
     copy/materialization events to support reproducible performance benchmarking.
 License: MIT + file LICENSE
 Encoding: UTF-8
+Language: en-US
 Depends:
     R (>= 4.1.0)
 Imports:
-    methods
+    methods,
+    parallel,
+    stats,
+    tools,
+    utils
 Suggests:
-    bench,
-    foreach,
-    doParallel,
-    future.apply,
-    iterators,
     knitr,
-    pkgdown,
     pkgload,
     rmarkdown,
     testthat (>= 3.0.0),

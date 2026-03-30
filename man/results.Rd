@@ -17,3 +17,10 @@ List or vector of results.
 \description{
 Extract Results from shard_map
 }
+\examples{
+\donttest{
+result <- shard_map(4L, function(shard) shard$idx[[1L]], workers = 2)
+pool_stop()
+results(result)
+}
+}

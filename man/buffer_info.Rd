@@ -10,8 +10,16 @@ buffer_info(x)
 \item{x}{A shard_buffer object.}
 }
 \value{
-A list with buffer properties.
+A named list with buffer properties: \code{type}, \code{dim},
+\code{n}, \code{bytes}, \code{backing}, \code{path}, and \code{readonly}.
 }
 \description{
 Returns information about a buffer.
+}
+\examples{
+\donttest{
+buf <- buffer("integer", dim = c(5, 5))
+buffer_info(buf)
+buffer_close(buf)
+}
 }

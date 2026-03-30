@@ -4,21 +4,30 @@
 
 #' Stream over row-groups/datasets and reduce
 #'
-#' Applies `f()` to each partition (row-group) and combines results with
-#' `combine()` into a single accumulator. This keeps peak memory bounded by the
+#' Applies \code{f()} to each partition (row-group) and combines results with
+#' \code{combine()} into a single accumulator. This keeps peak memory bounded by the
 #' largest single partition (plus your accumulator).
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
-#' @param f Function `(chunk, ...) -> value` producing a per-partition value.
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
+#' @param f Function \code{(chunk, ...) -> value} producing a per-partition value.
 #' @param init Initial accumulator value.
-#' @param combine Function `(acc, value) -> acc` to update the accumulator.
-#' @param ... Passed to `f()`.
-#' @return The final accumulator.
+#' @param combine Function \code{(acc, value) -> acc} to update the accumulator.
+#' @param ... Passed to \code{f()}.
+#' @return The final accumulator value after processing all partitions.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = rnorm(5)))
+#' rg <- table_finalize(sink)
+#' total <- stream_reduce(rg, f = nrow, init = 0L, combine = `+`)
+#' }
 stream_reduce <- function(x, f, init, combine, ...) {
   UseMethod("stream_reduce")
 }
 
+#' @rdname stream_reduce
 #' @export
 stream_reduce.shard_row_groups <- function(x, f, init, combine, ...) {
   if (!is.function(f)) stop("f must be a function", call. = FALSE)
@@ -35,6 +44,7 @@ stream_reduce.shard_row_groups <- function(x, f, init, combine, ...) {
   acc
 }
 
+#' @rdname stream_reduce
 #' @export
 stream_reduce.shard_dataset <- function(x, f, init, combine, ...) {
   stream_reduce.shard_row_groups(structure(unclass(x), class = "shard_row_groups"),
@@ -43,19 +53,28 @@ stream_reduce.shard_dataset <- function(x, f, init, combine, ...) {
 
 #' Stream over row-groups/datasets and map
 #'
-#' Applies `f()` to each partition and returns the list of per-partition results.
-#' This is still much cheaper than collecting the full dataset when `f()` returns
+#' Applies \code{f()} to each partition and returns the list of per-partition results.
+#' This is still much cheaper than collecting the full dataset when \code{f()} returns
 #' a small summary per partition.
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
-#' @param f Function `(chunk, ...) -> value`.
-#' @param ... Passed to `f()`.
-#' @return A list of per-partition values (one per file).
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
+#' @param f Function \code{(chunk, ...) -> value}.
+#' @param ... Passed to \code{f()}.
+#' @return A list of per-partition values, one element per row-group file.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = rnorm(5)))
+#' rg <- table_finalize(sink)
+#' nrows <- stream_map(rg, nrow)
+#' }
 stream_map <- function(x, f, ...) {
   UseMethod("stream_map")
 }
 
+#' @rdname stream_map
 #' @export
 stream_map.shard_row_groups <- function(x, f, ...) {
   if (!is.function(f)) stop("f must be a function", call. = FALSE)
@@ -71,6 +90,7 @@ stream_map.shard_row_groups <- function(x, f, ...) {
   out
 }
 
+#' @rdname stream_map
 #' @export
 stream_map.shard_dataset <- function(x, f, ...) {
   stream_map.shard_row_groups(structure(unclass(x), class = "shard_row_groups"), f = f, ...)
@@ -78,9 +98,17 @@ stream_map.shard_dataset <- function(x, f, ...) {
 
 #' Stream row count
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
-#' @return Total number of rows.
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
+#' @return A single integer giving the total number of rows across all partitions.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = rnorm(5)))
+#' rg <- table_finalize(sink)
+#' stream_count(rg)
+#' }
 stream_count <- function(x) {
   stream_reduce(
     x,
@@ -96,12 +124,20 @@ stream_count <- function(x) {
 #' Output is written as one partition per input partition (empty partitions are
 #' allowed). This avoids materializing all results.
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
-#' @param predicate Function `(chunk, ...) -> logical` row mask (length == nrow(chunk)).
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
+#' @param predicate Function \code{(chunk, ...) -> logical} row mask (length == nrow(chunk)).
 #' @param path Output directory. If NULL, a temp dir is created.
-#' @param ... Passed to `predicate()`.
-#' @return A `shard_dataset` handle.
+#' @param ... Passed to \code{predicate()}.
+#' @return A \code{shard_dataset} handle pointing to the filtered partitions.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = c(1.0, 2.0, 3.0)))
+#' rg <- table_finalize(sink)
+#' filtered <- stream_filter(rg, predicate = function(chunk) chunk$x > 1.5)
+#' }
 stream_filter <- function(x, predicate, path = NULL, ...) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
@@ -139,15 +175,23 @@ stream_filter <- function(x, predicate, path = NULL, ...) {
 
 #' Stream sum of a numeric column
 #'
-#' Computes the sum of `col` across all partitions without collecting the full
+#' Computes the sum of \code{col} across all partitions without collecting the full
 #' dataset. When partitions are native-encoded, this avoids decoding string
 #' columns entirely.
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
 #' @param col Column name to sum.
 #' @param na_rm Logical; drop NAs (default TRUE).
-#' @return A single numeric sum.
+#' @return A single numeric value giving the sum of the column across all partitions.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = c(1.0, 2.0, 3.0)))
+#' rg <- table_finalize(sink)
+#' stream_sum(rg, "x")
+#' }
 stream_sum <- function(x, col, na_rm = TRUE) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
@@ -186,19 +230,28 @@ stream_sum <- function(x, col, na_rm = TRUE) {
 
 #' Stream top-k rows by a numeric column
 #'
-#' Finds the top `k` rows by `col` without collecting the full dataset.
+#' Finds the top \code{k} rows by \code{col} without collecting the full dataset.
 #'
 #' For native-encoded partitions, this selects candidate rows using the numeric
 #' column without decoding strings, then decodes only the chosen rows for the
 #' returned result.
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
 #' @param col Column name to rank by.
 #' @param k Number of rows to keep.
 #' @param decreasing Logical; TRUE for largest values (default TRUE).
-#' @param na_drop Logical; drop rows where `col` is NA (default TRUE).
-#' @return A data.frame (or tibble if installed) with at most `k` rows.
+#' @param na_drop Logical; drop rows where \code{col} is NA (default TRUE).
+#' @return A data.frame (or tibble if the \code{tibble} package is installed)
+#'   with at most \code{k} rows ordered by \code{col}.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = c(3.0, 1.0, 2.0)))
+#' rg <- table_finalize(sink)
+#' stream_top_k(rg, "x", k = 2L)
+#' }
 stream_top_k <- function(x, col, k = 10L, decreasing = TRUE, na_drop = TRUE) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
@@ -288,14 +341,23 @@ stream_top_k <- function(x, col, k = 10L, decreasing = TRUE, na_drop = TRUE) {
 #' Stream group-wise sum
 #'
 #' Computes sum(value) by group across partitions without collecting. This is
-#' optimized for factor groups (factor_col()).
+#' optimized for factor groups (\code{factor_col()}).
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
-#' @param group Group column name (recommended: factor_col()).
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
+#' @param group Group column name (recommended: \code{factor_col()}).
 #' @param value Numeric column name to sum.
 #' @param na_rm Logical; drop rows where value is NA (default TRUE).
-#' @return A data.frame with columns `group` and `sum`.
+#' @return A data.frame with columns \code{group} (factor) and \code{sum} (numeric).
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(g = factor_col(c("a", "b")), x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L,
+#'   data.frame(g = factor(c("a", "b", "a"), levels = c("a", "b")), x = c(1, 2, 3)))
+#' rg <- table_finalize(sink)
+#' stream_group_sum(rg, "g", "x")
+#' }
 stream_group_sum <- function(x, group, value, na_rm = TRUE) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
@@ -348,12 +410,21 @@ stream_group_sum <- function(x, group, value, na_rm = TRUE) {
 #' Stream group-wise count
 #'
 #' Counts rows per group across partitions without collecting. Optimized for
-#' factor groups (factor_col()).
+#' factor groups (\code{factor_col()}).
 #'
-#' @param x A `shard_row_groups` or `shard_dataset` handle.
-#' @param group Group column name (recommended: factor_col()).
-#' @return A data.frame with columns `group` and `n`.
+#' @param x A \code{shard_row_groups} or \code{shard_dataset} handle.
+#' @param group Group column name (recommended: \code{factor_col()}).
+#' @return A data.frame with columns \code{group} (factor) and \code{n} (integer).
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(g = factor_col(c("a", "b")), x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L,
+#'   data.frame(g = factor(c("a", "b", "a"), levels = c("a", "b")), x = c(1, 2, 3)))
+#' rg <- table_finalize(sink)
+#' stream_group_count(rg, "g")
+#' }
 stream_group_count <- function(x, group) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)

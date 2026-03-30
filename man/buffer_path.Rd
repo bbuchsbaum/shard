@@ -10,9 +10,17 @@ buffer_path(x)
 \item{x}{A shard_buffer object.}
 }
 \value{
-Character string with path/name, or NULL if anonymous.
+A character string with the path or name of the segment, or
+\code{NULL} if the segment is anonymous.
 }
 \description{
 Returns the path or name of the buffer's underlying segment.
 Use this to pass buffer location to workers.
+}
+\examples{
+\donttest{
+buf <- buffer("double", dim = 10)
+buffer_path(buf)
+buffer_close(buf)
+}
 }

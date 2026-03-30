@@ -28,6 +28,11 @@ NULL
 #' @return A `shard_pool` object (invisibly). The pool is also stored in the
 #'   package environment for reuse.
 #'
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' pool_stop(p)
+#' }
 #' @export
 pool_create <- function(n = parallel::detectCores() - 1L,
                         rss_limit = "2GB",
@@ -124,6 +129,9 @@ pool_create <- function(n = parallel::detectCores() - 1L,
 #' Returns the active worker pool, or NULL if none exists.
 #'
 #' @return A `shard_pool` object or NULL.
+#' @examples
+#' p <- pool_get()
+#' is.null(p)
 #' @export
 pool_get <- function() {
   .pool_env$pool
@@ -158,6 +166,11 @@ pool_restart_worker_ <- function(pool, worker_id, graceful = TRUE) {
 #' @param timeout Numeric. Seconds to wait for workers to terminate (default 5).
 #'   Returns after timeout even if workers are still alive.
 #' @return NULL (invisibly).
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' pool_stop(p)
+#' }
 #' @export
 pool_stop <- function(pool = NULL, timeout = 5) {
   if (is.null(pool)) {
@@ -220,6 +233,12 @@ pool_stop <- function(pool = NULL, timeout = 5) {
 #'   running tasks (used internally by the dispatcher to avoid recycling a worker
 #'   while a result is in flight).
 #' @return A list with health status per worker and actions taken.
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' pool_health_check(p)
+#' pool_stop(p)
+#' }
 #' @export
 pool_health_check <- function(pool = NULL, busy_workers = NULL) {
   if (is.null(pool)) {
@@ -306,6 +325,12 @@ pool_health_check <- function(pool = NULL, busy_workers = NULL) {
 #'
 #' @param pool A `shard_pool` object. If NULL, uses the current pool.
 #' @return A data frame with worker status information.
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' pool_status(p)
+#' pool_stop(p)
+#' }
 #' @export
 pool_status <- function(pool = NULL) {
   if (is.null(pool)) {
@@ -372,6 +397,12 @@ pool_status <- function(pool = NULL) {
 #' @param timeout Numeric. Seconds to wait for result (default 3600).
 #'
 #' @return The result of evaluating expr in the worker.
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' pool_dispatch(1, quote(1 + 1), pool = p)
+#' pool_stop(p)
+#' }
 #' @export
 pool_dispatch <- function(worker_id, expr, envir = parent.frame(),
                           pool = NULL, timeout = 3600) {
@@ -400,6 +431,17 @@ pool_dispatch <- function(worker_id, expr, envir = parent.frame(),
   worker_eval(w, expr, envir, timeout)
 }
 
+#' Print a shard_pool Object
+#'
+#' @param x A \code{shard_pool} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' print(p)
+#' pool_stop(p)
+#' }
 #' @export
 print.shard_pool <- function(x, ...) {
   cat("shard worker pool\n")
@@ -414,6 +456,18 @@ print.shard_pool <- function(x, ...) {
   invisible(x)
 }
 
+#' Print a shard_health_report Object
+#'
+#' @param x A \code{shard_health_report} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
+#' @examples
+#' \donttest{
+#' p <- pool_create(2)
+#' r <- pool_health_check(p)
+#' print(r)
+#' pool_stop(p)
+#' }
 #' @export
 print.shard_health_report <- function(x, ...) {
   cat("Pool health check at", format(x$timestamp), "\n")

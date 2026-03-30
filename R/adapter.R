@@ -35,6 +35,7 @@ NULL
 #' @param class_name The class name being registered.
 #' @return TRUE if valid, throws error otherwise.
 #' @keywords internal
+#' @noRd
 validate_adapter <- function(adapter, class_name) {
     if (!is.list(adapter)) {
         stop("Adapter must be a list.", call. = FALSE)
@@ -98,23 +99,7 @@ validate_adapter <- function(adapter, class_name) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Register an adapter for a custom S4 class
-#' setClass("MyData", slots = c(data = "matrix", metadata = "list"))
-#'
-#' shard_register_adapter("MyData", list(
-#'   class = "MyData",
-#'   children = function(x) list(data = x@data),  # Only share the data slot
-#'   replace = function(x, children) {
-#'     x@data <- children$data
-#'     x
-#'   }
-#' ))
-#'
-#' # Now deep sharing will only traverse the 'data' slot
-#' obj <- new("MyData", data = matrix(1:1e6, nrow = 1000), metadata = list(a = 1))
-#' shared <- share(obj, deep = TRUE, min_bytes = 1000)
-#' }
+#' shard_list_adapters()
 shard_register_adapter <- function(class, adapter) {
     stopifnot(is.character(class), length(class) == 1, nzchar(class))
 
@@ -146,10 +131,7 @@ shard_register_adapter <- function(class, adapter) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Remove adapter for MyData class
-#' old_adapter <- shard_unregister_adapter("MyData")
-#' }
+#' shard_list_adapters()
 shard_unregister_adapter <- function(class) {
     stopifnot(is.character(class), length(class) == 1, nzchar(class))
 
@@ -177,13 +159,7 @@ shard_unregister_adapter <- function(class) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Check if an adapter is registered for an object
-#' adapter <- shard_get_adapter(my_object)
-#' if (!is.null(adapter)) {
-#'   children <- adapter$children(my_object)
-#' }
-#' }
+#' shard_get_adapter(1:10)
 shard_get_adapter <- function(x) {
     # Check each class in the class hierarchy
     classes <- class(x)
@@ -219,6 +195,7 @@ shard_list_adapters <- function() {
 #' @return Invisibly returns the number of adapters cleared.
 #'
 #' @keywords internal
+#' @noRd
 shard_clear_adapters <- function() {
     n <- length(ls(envir = .adapter_registry))
     rm(list = ls(envir = .adapter_registry), envir = .adapter_registry)

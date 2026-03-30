@@ -11,6 +11,7 @@ NULL
 #' @param chunks List of chunk descriptors. Each chunk should have an `id` field.
 #' @return A `shard_queue` object with queue management methods.
 #' @keywords internal
+#' @noRd
 queue_create <- function(chunks) {
   # Ensure each chunk has an ID
   for (i in seq_along(chunks)) {
@@ -42,6 +43,7 @@ queue_create <- function(chunks) {
 #' @param worker_id Worker requesting the chunk.
 #' @return A chunk descriptor or NULL if queue is empty.
 #' @keywords internal
+#' @noRd
 queue_next <- function(queue, worker_id) {
   env <- queue$env
 
@@ -94,6 +96,7 @@ queue_next_where <- function(queue, worker_id, predicate = NULL) {
 #' @param result The result from processing.
 #' @return NULL (invisibly).
 #' @keywords internal
+#' @noRd
 queue_complete <- function(queue, chunk_id, result = NULL, retain = TRUE) {
   env <- queue$env
   chunk_id <- as.character(chunk_id)
@@ -129,6 +132,7 @@ queue_complete <- function(queue, chunk_id, result = NULL, retain = TRUE) {
 #' @param requeue Logical. Whether to requeue for retry.
 #' @return NULL (invisibly).
 #' @keywords internal
+#' @noRd
 queue_fail <- function(queue, chunk_id, error = NULL, requeue = TRUE) {
   env <- queue$env
   chunk_id <- as.character(chunk_id)
@@ -165,6 +169,7 @@ queue_fail <- function(queue, chunk_id, error = NULL, requeue = TRUE) {
 #' @param worker_id Worker identifier.
 #' @return Integer. Number of chunks requeued.
 #' @keywords internal
+#' @noRd
 queue_requeue_worker <- function(queue, worker_id) {
   env <- queue$env
   requeued <- 0L
@@ -185,6 +190,7 @@ queue_requeue_worker <- function(queue, worker_id) {
 #' @param queue A `shard_queue` object.
 #' @return Logical. TRUE if all chunks are completed or failed.
 #' @keywords internal
+#' @noRd
 queue_is_done <- function(queue) {
   env <- queue$env
   length(env$pending) == 0 && length(env$in_flight) == 0
@@ -195,6 +201,7 @@ queue_is_done <- function(queue) {
 #' @param queue A `shard_queue` object.
 #' @return Logical. TRUE if there are pending chunks.
 #' @keywords internal
+#' @noRd
 queue_has_pending <- function(queue) {
   length(queue$env$pending) > 0
 }
@@ -204,6 +211,7 @@ queue_has_pending <- function(queue) {
 #' @param queue A `shard_queue` object.
 #' @return A list with queue statistics.
 #' @keywords internal
+#' @noRd
 queue_status <- function(queue) {
   env <- queue$env
 
@@ -229,6 +237,7 @@ queue_status <- function(queue) {
 #' @param queue A `shard_queue` object.
 #' @return List of results from completed chunks.
 #' @keywords internal
+#' @noRd
 queue_results <- function(queue) {
   env <- queue$env
   completed <- env$completed
@@ -252,11 +261,16 @@ queue_results <- function(queue) {
 #' @param queue A `shard_queue` object.
 #' @return List of failed chunk descriptors.
 #' @keywords internal
+#' @noRd
 queue_failures <- function(queue) {
   queue$env$failed
 }
 
+#' @param x A \code{shard_queue} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @noRd
 print.shard_queue <- function(x, ...) {
   status <- queue_status(x)
   cat("shard chunk queue\n")

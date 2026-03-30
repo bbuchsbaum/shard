@@ -57,3 +57,12 @@ This is intended as an ergonomic entry point for the "wow" path: users
 shouldn't have to manually call \code{share()}, \code{view_block()}, \code{buffer()},
 \code{tiles2d()}, and \code{shard_map()} for common patterns.
 }
+\examples{
+\donttest{
+X <- matrix(rnorm(2000), 100, 20)
+Y <- matrix(rnorm(2000), 100, 20)
+res <- shard_crossprod(X, Y, block_x = 50, block_y = 10, workers = 2)
+pool_stop()
+res$value
+}
+}

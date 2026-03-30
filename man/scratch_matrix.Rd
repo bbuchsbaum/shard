@@ -11,6 +11,13 @@ scratch_matrix(nrow, ncol, key = NULL)
 
 \item{key}{Optional key to control reuse. Defaults to a shape-derived key.}
 }
+\value{
+A double matrix of dimensions \code{nrow} by \code{ncol}.
+}
 \description{
 Allocates (or reuses) a double matrix in the worker scratch pool.
+}
+\examples{
+m <- scratch_matrix(10, 5)
+dim(m)
 }

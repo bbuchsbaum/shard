@@ -56,8 +56,11 @@ NULL
 #' Returns per-process counters for shard buffer writes. shard_map uses these
 #' internally to report write volume/operations in copy_report().
 #'
-#' @return A list with `writes` and `bytes`.
+#' @return A list with elements \code{writes} (integer count) and \code{bytes}
+#'   (total bytes written) accumulated in the current process.
 #' @export
+#' @examples
+#' buffer_diagnostics()
 buffer_diagnostics <- function() {
     list(
         writes = .buffer_diag_env$writes,
@@ -97,20 +100,10 @@ buffer_reset_diagnostics <- function() {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Create a 1M element double buffer
-#' out <- buffer("double", dim = 1e6)
-#'
-#' # Write to slices (typically done in workers)
-#' out[1:1000] <- rnorm(1000)
-#' out[1001:2000] <- rnorm(1000)
-#'
-#' # Read back results
-#' result <- out[]  # or as.double(out)
-#'
-#' # Matrix buffer
-#' mat <- buffer("double", dim = c(100, 50))
-#' mat[1:10, ] <- matrix(1:500, nrow = 10)
+#' \donttest{
+#' out <- buffer("double", dim = 100)
+#' out[1:10] <- rnorm(10)
+#' result <- out[]
 #' }
 buffer <- function(type = c("double", "integer", "logical", "raw"),
                    dim,
@@ -175,8 +168,16 @@ buffer <- function(type = c("double", "integer", "logical", "raw"),
 #' @param backing Backing type: "mmap" or "shm".
 #' @param readonly Logical. Open as read-only? Default FALSE for workers.
 #'
-#' @return An S3 object of class "shard_buffer".
+#' @return A \code{shard_buffer} object attached to the existing segment.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10)
+#' path <- buffer_path(buf)
+#' buf2 <- buffer_open(path, type = "double", dim = 10, backing = "mmap")
+#' buffer_close(buf2, unlink = FALSE)
+#' buffer_close(buf)
+#' }
 buffer_open <- function(path, type, dim,
                         backing = c("mmap", "shm"),
                         readonly = FALSE) {
@@ -215,8 +216,15 @@ buffer_open <- function(path, type, dim,
 #' Use this to pass buffer location to workers.
 #'
 #' @param x A shard_buffer object.
-#' @return Character string with path/name, or NULL if anonymous.
+#' @return A character string with the path or name of the segment, or
+#'   \code{NULL} if the segment is anonymous.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10)
+#' buffer_path(buf)
+#' buffer_close(buf)
+#' }
 buffer_path <- function(x) {
     stopifnot(inherits(x, "shard_buffer"))
     segment_path(x$segment)
@@ -227,8 +235,15 @@ buffer_path <- function(x) {
 #' Returns information about a buffer.
 #'
 #' @param x A shard_buffer object.
-#' @return A list with buffer properties.
+#' @return A named list with buffer properties: \code{type}, \code{dim},
+#'   \code{n}, \code{bytes}, \code{backing}, \code{path}, and \code{readonly}.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("integer", dim = c(5, 5))
+#' buffer_info(buf)
+#' buffer_close(buf)
+#' }
 buffer_info <- function(x) {
     stopifnot(inherits(x, "shard_buffer"))
     seg_info <- segment_info(x$segment)
@@ -249,15 +264,31 @@ buffer_info <- function(x) {
 #'
 #' @param x A shard_buffer object.
 #' @param unlink Whether to unlink the underlying segment.
-#' @return NULL (invisibly).
+#' @return \code{NULL}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10)
+#' buffer_close(buf)
+#' }
 buffer_close <- function(x, unlink = NULL) {
     stopifnot(inherits(x, "shard_buffer"))
     segment_close(x$segment, unlink = unlink)
     invisible(NULL)
 }
 
+#' Print a Shared Memory Buffer
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param ... Ignored.
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10)
+#' print(buf)
+#' buffer_close(buf)
+#' }
 print.shard_buffer <- function(x, ...) {
     info <- buffer_info(x)
     cat("<shard_buffer>\n")
@@ -275,12 +306,32 @@ print.shard_buffer <- function(x, ...) {
     invisible(x)
 }
 
+#' Length of a Shared Memory Buffer
+#'
+#' @param x A \code{shard_buffer} object.
+#' @return An integer scalar giving the total number of elements.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 20)
+#' length(buf)
+#' buffer_close(buf)
+#' }
 length.shard_buffer <- function(x) {
     x$n
 }
 
+#' Dimensions of a Shared Memory Buffer
+#'
+#' @param x A \code{shard_buffer} object.
+#' @return An integer vector of dimensions, or \code{NULL} for 1-D buffers.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = c(4, 5))
+#' dim(buf)
+#' buffer_close(buf)
+#' }
 dim.shard_buffer <- function(x) {
     if (length(x$dim) == 1) NULL else x$dim
 }
@@ -359,8 +410,15 @@ dim.shard_buffer <- function(x) {
 #' @param j Optional second index (for matrices).
 #' @param ... Additional indices (for arrays).
 #' @param drop Whether to drop dimensions.
-#' @return Vector or array of values.
+#' @return A vector or array of values read from the buffer.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10)
+#' buf[1:5] <- 1:5
+#' buf[1:3]
+#' buffer_close(buf)
+#' }
 `[.shard_buffer` <- function(x, i, j, ..., drop = TRUE) {
     # Determine if this is matrix-style indexing by checking nargs()
     # nargs() > 2 means we have x[i, ...] style (at least one comma)
@@ -437,8 +495,14 @@ dim.shard_buffer <- function(x) {
 #' @param j Optional second index (for matrices).
 #' @param ... Additional indices (for arrays).
 #' @param value Values to assign.
-#' @return The modified buffer (invisibly).
+#' @return The modified \code{shard_buffer} object, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10)
+#' buf[1:5] <- rnorm(5)
+#' buffer_close(buf)
+#' }
 `[<-.shard_buffer` <- function(x, i, j, ..., value) {
     # Determine if this is matrix-style indexing by checking nargs()
     # nargs() > 3 means we have x[i, ...] <- value style (at least one comma)
@@ -525,7 +589,19 @@ dim.shard_buffer <- function(x) {
     invisible(x)
 }
 
+#' Coerce a Shared Memory Buffer to a Vector
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param mode Storage mode passed to \code{\link{as.vector}}.
+#' @return A vector of the buffer's type (or coerced to \code{mode}).
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 5)
+#' buf[1:5] <- 1:5
+#' as.vector(buf)
+#' buffer_close(buf)
+#' }
 as.vector.shard_buffer <- function(x, mode = "any") {
     result <- .buffer_read_range(x, 1L, x$n)
     if (mode != "any") {
@@ -534,27 +610,82 @@ as.vector.shard_buffer <- function(x, mode = "any") {
     result
 }
 
+#' Coerce a Shared Memory Buffer to Double
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param ... Ignored.
+#' @return A double vector with the buffer contents.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 5)
+#' as.double(buf)
+#' buffer_close(buf)
+#' }
 as.double.shard_buffer <- function(x, ...) {
     as.double(.buffer_read_range(x, 1L, x$n))
 }
 
+#' Coerce a Shared Memory Buffer to Integer
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param ... Ignored.
+#' @return An integer vector with the buffer contents.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("integer", dim = 5)
+#' as.integer(buf)
+#' buffer_close(buf)
+#' }
 as.integer.shard_buffer <- function(x, ...) {
     as.integer(.buffer_read_range(x, 1L, x$n))
 }
 
+#' Coerce a Shared Memory Buffer to Logical
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param ... Ignored.
+#' @return A logical vector with the buffer contents.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("logical", dim = 5)
+#' as.logical(buf)
+#' buffer_close(buf)
+#' }
 as.logical.shard_buffer <- function(x, ...) {
     as.logical(.buffer_read_range(x, 1L, x$n))
 }
 
+#' Coerce a Shared Memory Buffer to Raw
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param ... Ignored.
+#' @return A raw vector with the buffer contents.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("raw", dim = 5)
+#' as.raw(buf)
+#' buffer_close(buf)
+#' }
 as.raw.shard_buffer <- function(x, ...) {
     .buffer_read_range(x, 1L, x$n)
 }
 
+#' Coerce a Shared Memory Buffer to Matrix
+#'
+#' @param x A \code{shard_buffer} object (must be 2-dimensional).
+#' @param ... Ignored.
+#' @return A matrix with the buffer contents and the buffer's dimensions.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = c(3, 4))
+#' as.matrix(buf)
+#' buffer_close(buf)
+#' }
 as.matrix.shard_buffer <- function(x, ...) {
     if (length(x$dim) != 2) {
         stop("Buffer is not 2-dimensional")
@@ -564,7 +695,19 @@ as.matrix.shard_buffer <- function(x, ...) {
     result
 }
 
+#' Coerce a Shared Memory Buffer to Array
+#'
+#' @param x A \code{shard_buffer} object.
+#' @param ... Ignored.
+#' @return An array with the buffer contents and the buffer's dimensions, or a
+#'   plain vector for 1-D buffers.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = c(2, 3, 4))
+#' as.array(buf)
+#' buffer_close(buf)
+#' }
 as.array.shard_buffer <- function(x, ...) {
     result <- .buffer_read_range(x, 1L, x$n)
     if (length(x$dim) > 1) {

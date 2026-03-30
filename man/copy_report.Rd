@@ -28,10 +28,9 @@ Generates a report of data transfer and copy statistics during parallel
 execution.
 }
 \examples{
-\dontrun{
-X <- matrix(rnorm(1e4), 100, 100)
-result <- shard_map(shards(10), function(s, X) sum(X[, s$idx]),
-                    borrow = list(X = X))
-copy_report(result)
+\donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+copy_report(res)
 }
 }

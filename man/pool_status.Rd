@@ -15,3 +15,10 @@ A data frame with worker status information.
 \description{
 Returns current status of all workers in the pool.
 }
+\examples{
+\donttest{
+p <- pool_create(2)
+pool_status(p)
+pool_stop(p)
+}
+}

@@ -18,8 +18,5 @@ Removes a previously registered adapter for a class. After unregistration,
 objects of this class will use default traversal behavior during deep sharing.
 }
 \examples{
-\dontrun{
-# Remove adapter for MyData class
-old_adapter <- shard_unregister_adapter("MyData")
-}
+shard_list_adapters()
 }

@@ -12,3 +12,6 @@ Integer count of nested arena scopes (0 if not in an arena).
 \description{
 Returns the nesting depth of arena scopes. Useful for debugging.
 }
+\examples{
+arena_depth()
+}

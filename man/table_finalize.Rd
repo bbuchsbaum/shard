@@ -20,6 +20,10 @@ table_finalize(
 
 \item{...}{Reserved for future extensions.}
 }
+\value{
+A \code{shard_table_handle}, \code{shard_row_groups}, or materialized
+data.frame/tibble depending on \code{target} type and \code{materialize}.
+}
 \description{
 For a \code{shard_table_buffer}, this returns a lightweight in-memory handle (or a
 materialized data.frame/tibble, depending on \code{materialize}).
@@ -27,4 +31,12 @@ materialized data.frame/tibble, depending on \code{materialize}).
 \details{
 For a \code{shard_table_sink}, this returns a row-group handle referencing the
 written partitions (or materializes them if requested).
+}
+\examples{
+\donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 5L)
+table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+handle <- table_finalize(tb)
+}
 }

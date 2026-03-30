@@ -108,9 +108,12 @@ factor_col <- function(levels) {
 #' A schema is a named set of columns with explicit types. It is used to
 #' allocate table buffers and validate writes.
 #'
-#' @param ... Named columns with type specs (e.g., `int32()`, `float64()`).
-#' @return A `shard_schema`.
+#' @param ... Named columns with type specs (e.g., \code{int32()}, \code{float64()}).
+#' @return A \code{shard_schema} object.
 #' @export
+#' @examples
+#' s <- schema(x = float64(), y = int32(), label = string_col())
+#' s
 schema <- function(...) {
   cols <- list(...)
   if (length(cols) == 0) stop("schema() requires at least one column", call. = FALSE)
@@ -130,13 +133,18 @@ schema <- function(...) {
 #' Allocate a fixed-row table buffer
 #'
 #' Allocates a columnar table output: one typed buffer per column, each of
-#' length `nrow`. Intended for lock-free disjoint row-range writes in shard_map.
+#' length \code{nrow}. Intended for lock-free disjoint row-range writes in shard_map.
 #'
-#' @param schema A `shard_schema`.
+#' @param schema A \code{shard_schema}.
 #' @param nrow Total number of rows in the final table.
-#' @param backing Backing type for buffers (`"auto"`, `"mmap"`, `"shm"`).
-#' @return A `shard_table_buffer`.
+#' @param backing Backing type for buffers (\code{"auto"}, \code{"mmap"}, \code{"shm"}).
+#' @return A \code{shard_table_buffer} object with one shared buffer per schema column.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64(), y = int32())
+#' tb <- table_buffer(s, nrow = 100L)
+#' }
 table_buffer <- function(schema, nrow, backing = c("auto", "mmap", "shm")) {
   backing <- match.arg(backing)
   if (!inherits(schema, "shard_schema")) stop("schema must be a shard_schema", call. = FALSE)
@@ -162,10 +170,15 @@ table_buffer <- function(schema, nrow, backing = c("auto", "mmap", "shm")) {
 #' Computes disjoint row ranges for each shard via prefix-sum, enabling lock-free
 #' writes where each shard writes to a unique region.
 #'
-#' @param shards A `shard_descriptor`.
+#' @param shards A \code{shard_descriptor}.
 #' @param rows_per_shard Either a scalar integer or a function(shard)->integer.
-#' @return A list mapping shard id (character) to `idx_range(start,end)`.
+#' @return A named list mapping shard id (character) to an \code{idx_range(start, end)}.
 #' @export
+#' @examples
+#' \donttest{
+#' sh <- shards(100, block_size = 25)
+#' layout <- row_layout(sh, rows_per_shard = 25L)
+#' }
 row_layout <- function(shards, rows_per_shard) {
   if (!inherits(shards, "shard_descriptor")) stop("shards must be a shard_descriptor", call. = FALSE)
   if (missing(rows_per_shard)) stop("rows_per_shard is required", call. = FALSE)
@@ -245,16 +258,25 @@ row_layout <- function(shards, rows_per_shard) {
 
 #' Write tabular results into a table buffer or sink
 #'
-#' `table_write()` is the common write path for shard table outputs:
-#' - For fixed-size outputs, write into a `shard_table_buffer` using a row selector.
-#' - For variable-size outputs, write into a `shard_table_sink` using a shard id.
+#' \code{table_write()} is the common write path for shard table outputs:
+#' \itemize{
+#'   \item For fixed-size outputs, write into a \code{shard_table_buffer} using a row selector.
+#'   \item For variable-size outputs, write into a \code{shard_table_sink} using a shard id.
+#' }
 #'
-#' @param target A `shard_table_buffer` or `shard_table_sink`.
+#' @param target A \code{shard_table_buffer} or \code{shard_table_sink}.
 #' @param rows_or_shard_id For buffers: row selector (idx_range or integer vector).
 #'   For sinks: shard id (integer).
 #' @param data A data.frame or named list matching the schema columns.
 #' @param ... Reserved for future extensions.
+#' @return \code{NULL} (invisibly).
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64(), y = int32())
+#' tb <- table_buffer(s, nrow = 10L)
+#' table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+#' }
 table_write <- function(target, rows_or_shard_id, data, ...) {
   UseMethod("table_write")
 }
@@ -321,17 +343,26 @@ table_write.shard_table_buffer <- function(target, rows_or_shard_id, data, ...) 
 
 #' Finalize a table buffer or sink
 #'
-#' For a `shard_table_buffer`, this returns a lightweight in-memory handle (or a
-#' materialized data.frame/tibble, depending on `materialize`).
+#' For a \code{shard_table_buffer}, this returns a lightweight in-memory handle (or a
+#' materialized data.frame/tibble, depending on \code{materialize}).
 #'
-#' For a `shard_table_sink`, this returns a row-group handle referencing the
+#' For a \code{shard_table_sink}, this returns a row-group handle referencing the
 #' written partitions (or materializes them if requested).
 #'
-#' @param target A `shard_table_buffer` or `shard_table_sink`.
-#' @param materialize `"never"`, `"auto"`, or `"always"`.
-#' @param max_bytes For `"auto"`, materialize only if estimated bytes <= max_bytes.
+#' @param target A \code{shard_table_buffer} or \code{shard_table_sink}.
+#' @param materialize \code{"never"}, \code{"auto"}, or \code{"always"}.
+#' @param max_bytes For \code{"auto"}, materialize only if estimated bytes <= max_bytes.
 #' @param ... Reserved for future extensions.
+#' @return A \code{shard_table_handle}, \code{shard_row_groups}, or materialized
+#'   data.frame/tibble depending on \code{target} type and \code{materialize}.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64(), y = int32())
+#' tb <- table_buffer(s, nrow = 5L)
+#' table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+#' handle <- table_finalize(tb)
+#' }
 table_finalize <- function(target, materialize = c("never", "auto", "always"), max_bytes = 256 * 1024^2, ...) {
   UseMethod("table_finalize")
 }
@@ -373,7 +404,15 @@ table_finalize.shard_table_buffer <- function(target, materialize = c("never", "
 #' @param x A shard table object.
 #' @param max_bytes Warn if estimated payload exceeds this threshold.
 #' @param ... Reserved for future extensions.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64(), y = int32())
+#' tb <- table_buffer(s, nrow = 5L)
+#' table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+#' df <- as_tibble(tb)
+#' }
 as_tibble <- function(x, max_bytes = 256 * 1024^2, ...) {
   UseMethod("as_tibble")
 }
@@ -394,6 +433,12 @@ as_tibble.shard_table_buffer <- function(x, max_bytes = 256 * 1024^2, ...) {
             max_bytes = max_bytes)
 }
 
+#' Materialize a table handle into a data.frame/tibble
+#'
+#' @param x A \code{shard_table_handle}.
+#' @param max_bytes Warn if estimated payload exceeds this threshold.
+#' @param ... Reserved for future extensions.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
 as_tibble.shard_table_handle <- function(x, max_bytes = 256 * 1024^2, ...) {
   sch <- x$schema$columns
@@ -440,20 +485,27 @@ as_tibble.shard_table_handle <- function(x, max_bytes = 256 * 1024^2, ...) {
 #' data.frames to the master. Each shard writes a separate row-group file.
 #'
 #' v1.1 implementation notes:
-#' - Storage format is per-shard RDS (portable, CRAN-friendly).
-#' - This guarantees bounded master memory during execution; final collection
-#'   may still be large if you materialize.
+#' \itemize{
+#'   \item Storage format is per-shard RDS (portable, CRAN-friendly).
+#'   \item This guarantees bounded master memory during execution; final collection
+#'     may still be large if you materialize.
+#' }
 #'
-#' @param schema A `shard_schema`. If NULL, a schema-less sink is created (RDS
+#' @param schema A \code{shard_schema}. If NULL, a schema-less sink is created (RDS
 #'   format only). This is primarily intended for doShard/foreach compatibility
 #'   where output schemas may not be known in advance.
-#' @param mode `"row_groups"` (temp, managed) or `"partitioned"` (persistent path).
+#' @param mode \code{"row_groups"} (temp, managed) or \code{"partitioned"} (persistent path).
 #' @param path Directory to write row-group files. If NULL, a temp dir is created.
-#' @param format Storage format for partitions: `"rds"` (data.frame RDS),
-#'   `"native"` (columnar encoding with string offsets+bytes), or `"auto"`
-#'   (selects `"native"` if the schema contains `string_col()`; otherwise `"rds"`).
-#' @return A `shard_table_sink`.
+#' @param format Storage format for partitions: \code{"rds"} (data.frame RDS),
+#'   \code{"native"} (columnar encoding with string offsets+bytes), or \code{"auto"}
+#'   (selects \code{"native"} if the schema contains \code{string_col()}; otherwise \code{"rds"}).
+#' @return A \code{shard_table_sink} object.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64(), label = string_col())
+#' sink <- table_sink(s, mode = "row_groups")
+#' }
 table_sink <- function(schema,
                        mode = c("row_groups", "partitioned"),
                        path = NULL,
@@ -857,12 +909,22 @@ table_finalize.shard_table_sink <- function(target, materialize = c("never", "au
 
 #' Iterate row groups
 #'
-#' @param x A `shard_row_groups` handle.
+#' @param x A \code{shard_row_groups} handle.
 #' @param decode Logical. If TRUE (default), native-encoded partitions are
 #'   decoded to data.frames. If FALSE, native partitions are returned as their
 #'   internal representation (advanced).
-#' @return An iterator function with no args that returns the next data.frame or NULL.
+#' @return A zero-argument iterator function that returns the next data.frame on
+#'   each call, or \code{NULL} when exhausted.
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64())
+#' sink <- table_sink(s, mode = "row_groups")
+#' table_write(sink, 1L, data.frame(x = rnorm(5)))
+#' rg <- table_finalize(sink)
+#' it <- iterate_row_groups(rg)
+#' chunk <- it()
+#' }
 iterate_row_groups <- function(x, decode = TRUE) {
   if (!(inherits(x, "shard_row_groups") || inherits(x, "shard_dataset"))) {
     stop("x must be a shard_row_groups or shard_dataset handle", call. = FALSE)
@@ -883,6 +945,12 @@ iterate_row_groups <- function(x, decode = TRUE) {
 }
 
 # Extend as_tibble() to accept row-group handles.
+#' Materialize a row-groups handle into a data.frame/tibble
+#'
+#' @param x A \code{shard_row_groups} handle.
+#' @param max_bytes Accepted for API consistency; currently unused for row-groups.
+#' @param ... Reserved for future extensions.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
 as_tibble.shard_row_groups <- function(x, max_bytes = 256 * 1024^2, ...) {
   # max_bytes is accepted for API consistency; row-groups are size-variable and
@@ -904,6 +972,12 @@ as_tibble.shard_row_groups <- function(x, max_bytes = 256 * 1024^2, ...) {
   df
 }
 
+#' Materialize a dataset handle into a data.frame/tibble
+#'
+#' @param x A \code{shard_dataset} handle.
+#' @param max_bytes Accepted for API consistency.
+#' @param ... Reserved for future extensions.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
 as_tibble.shard_dataset <- function(x, max_bytes = 256 * 1024^2, ...) {
   # A shard_dataset is currently a directory of per-shard RDS partitions plus a
@@ -913,25 +987,50 @@ as_tibble.shard_dataset <- function(x, max_bytes = 256 * 1024^2, ...) {
 
 #' Collect a shard table into memory
 #'
-#' `collect()` is a convenience alias for `as_tibble()` for shard table outputs.
+#' \code{collect()} is a convenience alias for \code{as_tibble()} for shard table outputs.
 #'
-#' @param x A shard table handle.
-#' @param ... Passed to `as_tibble()`.
+#' @param x A shard table handle (\code{shard_row_groups}, \code{shard_dataset},
+#'   or \code{shard_table_handle}).
+#' @param ... Passed to \code{as_tibble()}.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
+#' @examples
+#' \donttest{
+#' s <- schema(x = float64(), y = int32())
+#' tb <- table_buffer(s, nrow = 5L)
+#' table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+#' handle <- table_finalize(tb)
+#' df <- collect(handle)
+#' }
 collect <- function(x, ...) {
   UseMethod("collect")
 }
 
+#' Collect a row-groups handle into memory
+#'
+#' @param x A \code{shard_row_groups} handle.
+#' @param ... Passed to \code{as_tibble()}.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
 collect.shard_row_groups <- function(x, ...) {
   as_tibble(x, ...)
 }
 
+#' Collect a dataset handle into memory
+#'
+#' @param x A \code{shard_dataset} handle.
+#' @param ... Passed to \code{as_tibble()}.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
 collect.shard_dataset <- function(x, ...) {
   as_tibble(x, ...)
 }
 
+#' Collect a table handle into memory
+#'
+#' @param x A \code{shard_table_handle}.
+#' @param ... Passed to \code{as_tibble()}.
+#' @return A data.frame (or tibble if the \code{tibble} package is installed).
 #' @export
 collect.shard_table_handle <- function(x, ...) {
   as_tibble(x, ...)

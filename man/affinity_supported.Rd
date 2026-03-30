@@ -7,8 +7,11 @@
 affinity_supported()
 }
 \value{
-Logical.
+A logical scalar indicating platform support.
 }
 \description{
 Currently supported on Linux only.
+}
+\examples{
+affinity_supported()
 }

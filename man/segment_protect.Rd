@@ -10,8 +10,15 @@ segment_protect(x)
 \item{x}{A shard_segment object}
 }
 \value{
-The segment object (invisibly)
+The \code{shard_segment} object, invisibly.
 }
 \description{
 Make a segment read-only
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_protect(seg)
+segment_close(seg)
+}
 }

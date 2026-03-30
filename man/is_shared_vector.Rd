@@ -16,12 +16,12 @@ TRUE if x is a shard ALTREP vector, FALSE otherwise
 Check if an object is a shared vector
 }
 \examples{
-\dontrun{
+\donttest{
 seg <- segment_create(400)
 segment_write(seg, 1:100, offset = 0)
 x <- shared_vector(seg, "integer", length = 100)
 
-is_shared_vector(x)    # TRUE
-is_shared_vector(1:10) # FALSE
+is_shared_vector(x)
+is_shared_vector(1:10)
 }
 }

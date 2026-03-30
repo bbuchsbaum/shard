@@ -18,8 +18,15 @@
 \item{value}{Values to assign.}
 }
 \value{
-The modified buffer (invisibly).
+The modified \code{shard_buffer} object, invisibly.
 }
 \description{
 Assign to Buffer Elements
+}
+\examples{
+\donttest{
+buf <- buffer("double", dim = 10)
+buf[1:5] <- rnorm(5)
+buffer_close(buf)
+}
 }

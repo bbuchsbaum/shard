@@ -10,8 +10,15 @@ segment_path(x)
 \item{x}{A shard_segment object}
 }
 \value{
-The path string, or NULL for anonymous segments
+The path string, or \code{NULL} for anonymous segments.
 }
 \description{
 Get the path or name of a segment
+}
+\examples{
+\donttest{
+seg <- segment_create(1024, backing = "mmap")
+segment_path(seg)
+segment_close(seg)
+}
 }

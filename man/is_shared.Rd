@@ -10,13 +10,17 @@ is_shared(x)
 \item{x}{An object to check.}
 }
 \value{
-TRUE if x is a \code{shard_shared} or \code{shard_deep_shared} object,
-FALSE otherwise.
+A logical scalar: \code{TRUE} if \code{x} is a shared object,
+\code{FALSE} otherwise.
 }
 \description{
 Check if Object is Shared
 }
 \examples{
-is_shared(share(1:10))  # TRUE
-is_shared(1:10)         # FALSE
+is_shared(1:10)
+\donttest{
+shared <- share(1:10)
+is_shared(shared)
+close(shared)
+}
 }

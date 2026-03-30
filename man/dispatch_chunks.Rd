@@ -55,3 +55,11 @@ A \code{shard_dispatch_result} object with results and diagnostics.
 Executes a function over chunks using the worker pool with supervision.
 Handles worker death and recycling transparently by requeuing failed chunks.
 }
+\examples{
+\donttest{
+pool_create(2)
+chunks <- list(list(id = 1L, x = 1), list(id = 2L, x = 2))
+result <- dispatch_chunks(chunks, function(chunk) chunk$x * 2, pool = pool_get())
+pool_stop()
+}
+}

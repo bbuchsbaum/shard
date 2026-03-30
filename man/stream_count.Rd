@@ -10,8 +10,17 @@ stream_count(x)
 \item{x}{A \code{shard_row_groups} or \code{shard_dataset} handle.}
 }
 \value{
-Total number of rows.
+A single integer giving the total number of rows across all partitions.
 }
 \description{
 Stream row count
+}
+\examples{
+\donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+stream_count(rg)
+}
 }

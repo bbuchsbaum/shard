@@ -2,22 +2,37 @@
 % Please edit documentation in R/table_stream.R
 \name{stream_map}
 \alias{stream_map}
+\alias{stream_map.shard_row_groups}
+\alias{stream_map.shard_dataset}
 \title{Stream over row-groups/datasets and map}
 \usage{
 stream_map(x, f, ...)
+
+\method{stream_map}{shard_row_groups}(x, f, ...)
+
+\method{stream_map}{shard_dataset}(x, f, ...)
 }
 \arguments{
 \item{x}{A \code{shard_row_groups} or \code{shard_dataset} handle.}
 
-\item{f}{Function \verb{(chunk, ...) -> value}.}
+\item{f}{Function \code{(chunk, ...) -> value}.}
 
 \item{...}{Passed to \code{f()}.}
 }
 \value{
-A list of per-partition values (one per file).
+A list of per-partition values, one element per row-group file.
 }
 \description{
 Applies \code{f()} to each partition and returns the list of per-partition results.
 This is still much cheaper than collecting the full dataset when \code{f()} returns
 a small summary per partition.
+}
+\examples{
+\donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+nrows <- stream_map(rg, nrow)
+}
 }

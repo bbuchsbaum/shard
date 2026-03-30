@@ -16,10 +16,20 @@ For sinks: shard id (integer).}
 
 \item{...}{Reserved for future extensions.}
 }
+\value{
+\code{NULL} (invisibly).
+}
 \description{
 \code{table_write()} is the common write path for shard table outputs:
 \itemize{
 \item For fixed-size outputs, write into a \code{shard_table_buffer} using a row selector.
 \item For variable-size outputs, write into a \code{shard_table_sink} using a shard id.
+}
+}
+\examples{
+\donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 10L)
+table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
 }
 }

@@ -9,17 +9,26 @@ stream_filter(x, predicate, path = NULL, ...)
 \arguments{
 \item{x}{A \code{shard_row_groups} or \code{shard_dataset} handle.}
 
-\item{predicate}{Function \verb{(chunk, ...) -> logical} row mask (length == nrow(chunk)).}
+\item{predicate}{Function \code{(chunk, ...) -> logical} row mask (length == nrow(chunk)).}
 
 \item{path}{Output directory. If NULL, a temp dir is created.}
 
 \item{...}{Passed to \code{predicate()}.}
 }
 \value{
-A \code{shard_dataset} handle.
+A \code{shard_dataset} handle pointing to the filtered partitions.
 }
 \description{
 Reads each partition, filters rows, and writes a new partitioned dataset.
 Output is written as one partition per input partition (empty partitions are
 allowed). This avoids materializing all results.
+}
+\examples{
+\donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = c(1.0, 2.0, 3.0)))
+rg <- table_finalize(sink)
+filtered <- stream_filter(rg, predicate = function(chunk) chunk$x > 1.5)
+}
 }

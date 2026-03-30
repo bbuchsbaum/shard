@@ -11,6 +11,7 @@ NULL
 #' @param pid Integer. Process ID to query.
 #' @return Numeric. RSS in bytes, or NA if unavailable.
 #' @keywords internal
+#' @noRd
 rss_get_pid <- function(pid) {
   if (is.na(pid)) {
     return(NA_real_)
@@ -50,6 +51,7 @@ rss_get_pid <- function(pid) {
 #' @param pid Process ID.
 #' @return RSS in bytes or NA.
 #' @keywords internal
+#' @noRd
 rss_via_ps <- function(pid) {
   tryCatch({
     p <- ps::ps_handle(pid)
@@ -66,6 +68,7 @@ rss_via_ps <- function(pid) {
 #' @param pid Process ID.
 #' @return RSS in bytes or NA.
 #' @keywords internal
+#' @noRd
 rss_via_proc <- function(pid) {
   statm_path <- file.path("/proc", pid, "statm")
 
@@ -94,6 +97,7 @@ rss_via_proc <- function(pid) {
 #' @param pid Process ID.
 #' @return RSS in bytes or NA.
 #' @keywords internal
+#' @noRd
 rss_via_ps_cmd <- function(pid) {
   tryCatch({
     # ps -o rss= gives RSS in KB
@@ -124,6 +128,7 @@ rss_via_ps_cmd <- function(pid) {
 #' @param pid Process ID.
 #' @return RSS in bytes or NA.
 #' @keywords internal
+#' @noRd
 rss_via_wmic <- function(pid) {
   tryCatch({
     cmd <- sprintf("wmic process where ProcessId=%d get WorkingSetSize /value", pid)
@@ -140,6 +145,7 @@ rss_via_wmic <- function(pid) {
 #'
 #' @return RSS in bytes for the current R process.
 #' @keywords internal
+#' @noRd
 rss_self <- function() {
   rss_get_pid(Sys.getpid())
 }
@@ -151,6 +157,7 @@ rss_self <- function() {
 #' @param pid Process ID to monitor.
 #' @return A list with `sample()` and `history()` functions.
 #' @keywords internal
+#' @noRd
 rss_monitor <- function(pid) {
   samples <- list()
 

@@ -14,6 +14,14 @@
     stop("Attempted to mutate a shared input with cow='deny'.", call. = FALSE)
 }
 
+#' Print a Shared Vector
+#'
+#' Print method for \code{shard_shared_vector} objects. Drops the wrapper class
+#' and delegates to the underlying R print method.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param ... Additional arguments passed to \code{print}.
+#' @return The input \code{x}, invisibly.
 #' @export
 print.shard_shared_vector <- function(x, ...) {
     # Drop only the wrapper class and preserve any underlying class (e.g.,
@@ -26,6 +34,15 @@ print.shard_shared_vector <- function(x, ...) {
     invisible(x)
 }
 
+#' Subset-assign a Shared Vector
+#'
+#' Replacement method for \code{shard_shared_vector}. Raises an error if the
+#' copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param ... Indices.
+#' @param value Replacement value.
+#' @return The modified object \code{x}.
 #' @export
 `[<-.shard_shared_vector` <- function(x, ..., value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
@@ -40,6 +57,15 @@ print.shard_shared_vector <- function(x, ...) {
     x
 }
 
+#' Double-bracket Subset-assign a Shared Vector
+#'
+#' Replacement method for \code{shard_shared_vector}. Raises an error if the
+#' copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param ... Indices.
+#' @param value Replacement value.
+#' @return The modified object \code{x}.
 #' @export
 `[[<-.shard_shared_vector` <- function(x, ..., value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
@@ -52,6 +78,14 @@ print.shard_shared_vector <- function(x, ...) {
 
 # Attribute mutations are also considered violations under cow='deny'.
 
+#' Set an Attribute on a Shared Vector
+#'
+#' Raises an error if the copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param which Attribute name.
+#' @param value Attribute value.
+#' @return The modified object \code{x}.
 #' @method attr<- shard_shared_vector
 #' @export
 `attr<-.shard_shared_vector` <- function(x, which, value) {
@@ -63,6 +97,13 @@ print.shard_shared_vector <- function(x, ...) {
     x
 }
 
+#' Set Attributes on a Shared Vector
+#'
+#' Raises an error if the copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param value Named list of attributes.
+#' @return The modified object \code{x}.
 #' @method attributes<- shard_shared_vector
 #' @export
 `attributes<-.shard_shared_vector` <- function(x, value) {
@@ -74,6 +115,13 @@ print.shard_shared_vector <- function(x, ...) {
     x
 }
 
+#' Set Names on a Shared Vector
+#'
+#' Raises an error if the copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param value Character vector of names.
+#' @return The modified object \code{x}.
 #' @export
 `names<-.shard_shared_vector` <- function(x, value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
@@ -84,6 +132,13 @@ print.shard_shared_vector <- function(x, ...) {
     x
 }
 
+#' Set dim on a Shared Vector
+#'
+#' Raises an error if the copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param value Integer vector of dimensions.
+#' @return The modified object \code{x}.
 #' @export
 `dim<-.shard_shared_vector` <- function(x, value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
@@ -94,6 +149,13 @@ print.shard_shared_vector <- function(x, ...) {
     x
 }
 
+#' Set dimnames on a Shared Vector
+#'
+#' Raises an error if the copy-on-write policy is \code{"deny"}.
+#'
+#' @param x A \code{shard_shared_vector}.
+#' @param value List of dimnames.
+#' @return The modified object \code{x}.
 #' @export
 `dimnames<-.shard_shared_vector` <- function(x, value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()

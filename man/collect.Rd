@@ -7,10 +7,23 @@
 collect(x, ...)
 }
 \arguments{
-\item{x}{A shard table handle.}
+\item{x}{A shard table handle (\code{shard_row_groups}, \code{shard_dataset},
+or \code{shard_table_handle}).}
 
 \item{...}{Passed to \code{as_tibble()}.}
 }
+\value{
+A data.frame (or tibble if the \code{tibble} package is installed).
+}
 \description{
 \code{collect()} is a convenience alias for \code{as_tibble()} for shard table outputs.
+}
+\examples{
+\donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 5L)
+table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+handle <- table_finalize(tb)
+df <- collect(handle)
+}
 }

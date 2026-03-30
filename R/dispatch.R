@@ -25,8 +25,15 @@ NULL
 #' @param retain_chunks Logical (advanced). If FALSE, completed chunk descriptors
 #'   are stored minimally (avoids retaining large shard lists in memory).
 #'
-#' @return A `shard_dispatch_result` object with results and diagnostics.
+#' @return A \code{shard_dispatch_result} object with results and diagnostics.
 #' @export
+#' @examples
+#' \donttest{
+#' pool_create(2)
+#' chunks <- list(list(id = 1L, x = 1), list(id = 2L, x = 2))
+#' result <- dispatch_chunks(chunks, function(chunk) chunk$x * 2, pool = pool_get())
+#' pool_stop()
+#' }
 dispatch_chunks <- function(chunks, fun, ...,
                             pool = NULL,
                             health_check_interval = 10L,
@@ -537,6 +544,12 @@ dispatch_chunks <- function(chunks, fun, ...,
 #'
 #' @return A list of results.
 #' @export
+#' @examples
+#' \donttest{
+#' pool_create(2)
+#' result <- pool_lapply(1:4, function(x) x^2, pool = pool_get())
+#' pool_stop()
+#' }
 pool_lapply <- function(X, FUN, ..., pool = NULL, chunk_size = 1L) {
   if (is.null(pool)) {
     pool <- pool_get()
@@ -587,6 +600,12 @@ pool_lapply <- function(X, FUN, ..., pool = NULL, chunk_size = 1L) {
 #'
 #' @return Simplified result if possible, otherwise a list.
 #' @export
+#' @examples
+#' \donttest{
+#' pool_create(2)
+#' result <- pool_sapply(1:4, function(x) x^2, pool = pool_get())
+#' pool_stop()
+#' }
 pool_sapply <- function(X, FUN, ..., simplify = TRUE, pool = NULL) {
   result <- pool_lapply(X, FUN, ..., pool = pool)
 
@@ -600,7 +619,20 @@ pool_sapply <- function(X, FUN, ..., simplify = TRUE, pool = NULL) {
   }
 }
 
+#' Print a shard_dispatch_result Object
+#'
+#' @param x A \code{shard_dispatch_result} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' pool_create(2)
+#' chunks <- list(list(id = 1L, x = 1), list(id = 2L, x = 2))
+#' result <- dispatch_chunks(chunks, function(chunk) chunk$x, pool = pool_get())
+#' print(result)
+#' pool_stop()
+#' }
 print.shard_dispatch_result <- function(x, ...) {
   cat("shard dispatch result\n")
   cat("  Duration:", sprintf("%.2f seconds", x$diagnostics$duration), "\n")

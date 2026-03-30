@@ -57,34 +57,21 @@ NULL
 #'   along with the result. Default is FALSE.
 #'
 #' @return The result of evaluating \code{expr}. If \code{diagnostics = TRUE},
-#'   returns a list with:
-#'   \itemize{
-#'     \item \code{result}: The expression result
-#'     \item \code{diagnostics}: Memory usage information
-#'   }
-#'
+#'   returns an \code{arena_result} object with elements \code{result} and
+#'   \code{diagnostics}.
 #' @export
 #' @examples
-#' \dontrun{
-#' # Basic usage - wrap scratch computation
+#' \donttest{
 #' result <- arena({
-#'   # Large temporaries created here won't accumulate
 #'   tmp <- matrix(rnorm(1e6), nrow = 1000)
-#'   colMeans(tmp)  # Only the means escape
+#'   colMeans(tmp)
 #' })
 #'
-#' # Strict mode - warns on large escapes
-#' result <- arena({
-#'   big <- rnorm(1e7)  # 80MB
-#'   big  # Warning: large object escaping
-#' }, strict = TRUE)
-#'
-#' # Get diagnostics about memory usage
 #' info <- arena({
 #'   x <- rnorm(1e5)
 #'   sum(x)
 #' }, diagnostics = TRUE)
-#' info$diagnostics  # Memory tracking info
+#' info$diagnostics
 #' }
 arena <- function(expr,
                   strict = FALSE,
@@ -171,9 +158,9 @@ arena <- function(expr,
 #' @return Logical indicating whether we are in an arena scope.
 #' @export
 #' @examples
-#' in_arena()  # FALSE
+#' in_arena()
 #' arena({
-#'   in_arena()  # TRUE
+#'   in_arena()
 #' })
 in_arena <- function() {
     .arena_depth() > 0
@@ -185,6 +172,8 @@ in_arena <- function() {
 #'
 #' @return Integer count of nested arena scopes (0 if not in an arena).
 #' @export
+#' @examples
+#' arena_depth()
 arena_depth <- function() {
     .arena_depth()
 }
@@ -196,6 +185,7 @@ arena_depth <- function() {
 #' Push a new arena onto the stack
 #' @return Arena ID for matching pop
 #' @keywords internal
+#' @noRd
 .arena_push <- function() {
     depth <- .arena_depth()
     new_id <- paste0("arena_", depth + 1L, "_", format(Sys.time(), "%H%M%S%OS3"))
@@ -210,6 +200,7 @@ arena_depth <- function() {
 #' @param arena_id The ID to verify we're popping the right arena
 #' @param run_gc Whether to trigger GC after pop
 #' @keywords internal
+#' @noRd
 .arena_pop <- function(arena_id, run_gc = FALSE) {
     stack <- .arena_state$stack
 
@@ -241,6 +232,7 @@ arena_depth <- function() {
 #' Get current arena depth
 #' @return Integer depth
 #' @keywords internal
+#' @noRd
 .arena_depth <- function() {
     length(.arena_state$stack %||% character(0))
 }
@@ -249,6 +241,7 @@ arena_depth <- function() {
 #' @param x Object to measure
 #' @return Size in bytes or NA if cannot determine
 #' @keywords internal
+#' @noRd
 .estimate_object_size <- function(x) {
     tryCatch({
         as.numeric(utils::object.size(x))
@@ -257,7 +250,17 @@ arena_depth <- function() {
     })
 }
 
+#' Print an arena_result object
+#'
+#' @param x An \code{arena_result} object.
+#' @param ... Additional arguments passed to \code{print}.
+#' @return Returns \code{x} invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' info <- arena({ sum(1:10) }, diagnostics = TRUE)
+#' print(info)
+#' }
 print.arena_result <- function(x, ...) {
     cat("<arena_result>\n")
 

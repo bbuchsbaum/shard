@@ -24,8 +24,9 @@ containing:
 Generates a report of copy-on-write behavior for borrowed inputs.
 }
 \examples{
-\dontrun{
-result <- shard_map(shards(10), function(s) s$idx, cow = "audit")
-cow_report(result)
+\donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+cow_report(res)
 }
 }

@@ -18,7 +18,10 @@
 #'
 #' @param max_bytes Maximum scratch pool bytes allowed in a worker. If exceeded,
 #'   the worker is flagged for recycle at the next safe point.
+#' @return \code{NULL}, invisibly.
 #' @export
+#' @examples
+#' cfg <- scratch_pool_config(max_bytes = 100 * 1024^2)
 scratch_pool_config <- function(max_bytes = Inf) {
   if (is.character(max_bytes)) max_bytes <- parse_bytes(max_bytes)
   max_bytes <- as.double(max_bytes)
@@ -41,6 +44,8 @@ scratch_reset_diagnostics <- function() {
 #'
 #' @return A list with counters and current pool bytes.
 #' @export
+#' @examples
+#' scratch_diagnostics()
 scratch_diagnostics <- function() {
   list(
     hits = .scratch_env$hits,
@@ -94,7 +99,11 @@ scratch_diagnostics <- function() {
 #'
 #' @param nrow,ncol Dimensions.
 #' @param key Optional key to control reuse. Defaults to a shape-derived key.
+#' @return A double matrix of dimensions \code{nrow} by \code{ncol}.
 #' @export
+#' @examples
+#' m <- scratch_matrix(10, 5)
+#' dim(m)
 scratch_matrix <- function(nrow, ncol, key = NULL) {
   nrow <- as.integer(nrow)
   ncol <- as.integer(ncol)

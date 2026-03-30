@@ -33,16 +33,13 @@ NULL
 #' @return An ALTREP vector backed by shared memory
 #' @export
 #' @examples
-#' \dontrun{
-#' # Create a segment and store integers
-#' seg <- segment_create(400)  # 100 integers * 4 bytes
+#' \donttest{
+#' seg <- segment_create(400)
 #' segment_write(seg, 1:100, offset = 0)
 #'
-#' # Create ALTREP view
 #' x <- shared_vector(seg, "integer", length = 100)
-#' x[1:10]  # Returns a view, not a copy
+#' x[1:10]
 #'
-#' # Check diagnostics
 #' shared_diagnostics(x)
 #' }
 shared_vector <- function(segment,
@@ -97,14 +94,13 @@ shared_vector <- function(segment,
 #' @return An ALTREP view into the same shared memory
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' seg <- segment_create(800)
 #' segment_write(seg, 1:100, offset = 0)
 #' x <- shared_vector(seg, "integer", length = 100)
 #'
-#' # Create a view of elements 10-20
 #' y <- shared_view(x, start = 10, length = 11)
-#' y[1]  # Same as x[10]
+#' y[1]
 #' }
 shared_view <- function(x, start, length) {
     if (!is_shared_vector(x)) {
@@ -132,15 +128,13 @@ shared_view <- function(x, start, length) {
 #'   }
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' seg <- segment_create(400)
 #' segment_write(seg, 1:100, offset = 0)
 #' x <- shared_vector(seg, "integer", length = 100)
 #'
-#' # Access data
 #' sum(x)
 #'
-#' # Check diagnostics
 #' shared_diagnostics(x)
 #' }
 shared_diagnostics <- function(x) {
@@ -157,13 +151,13 @@ shared_diagnostics <- function(x) {
 #' @return TRUE if x is a shard ALTREP vector, FALSE otherwise
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' seg <- segment_create(400)
 #' segment_write(seg, 1:100, offset = 0)
 #' x <- shared_vector(seg, "integer", length = 100)
 #'
-#' is_shared_vector(x)    # TRUE
-#' is_shared_vector(1:10) # FALSE
+#' is_shared_vector(x)
+#' is_shared_vector(1:10)
 #' }
 is_shared_vector <- function(x) {
     .Call("C_is_shard_altrep", x, PACKAGE = "shard")
@@ -174,6 +168,11 @@ is_shared_vector <- function(x) {
 #' @param x A shard ALTREP vector
 #' @return A `shard_segment` S3 object wrapping the underlying segment
 #' @export
+#' @examples
+#' \donttest{
+#' x <- as_shared(1:100)
+#' shared_segment(x)
+#' }
 shared_segment <- function(x) {
     if (!is_shared_vector(x)) {
         stop("x must be a shard ALTREP vector")
@@ -199,16 +198,16 @@ shared_segment <- function(x) {
 #' @return x (invisibly)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' seg <- segment_create(400)
 #' segment_write(seg, 1:100, offset = 0)
 #' x <- shared_vector(seg, "integer", length = 100)
 #'
 #' sum(x)
-#' shared_diagnostics(x)$dataptr_calls  # > 0
+#' shared_diagnostics(x)$dataptr_calls
 #'
 #' shared_reset_diagnostics(x)
-#' shared_diagnostics(x)$dataptr_calls  # 0
+#' shared_diagnostics(x)$dataptr_calls
 #' }
 shared_reset_diagnostics <- function(x) {
     if (!is_shared_vector(x)) {
@@ -232,14 +231,12 @@ shared_reset_diagnostics <- function(x) {
 #' @return An ALTREP vector backed by shared memory
 #' @export
 #' @examples
-#' \dontrun{
-#' # Convert existing vector to shared
+#' \donttest{
 #' x <- as_shared(1:100)
-#' is_shared_vector(x)  # TRUE
+#' is_shared_vector(x)
 #'
-#' # Subsetting returns views
 #' y <- x[1:10]
-#' is_shared_vector(y)  # TRUE for contiguous subsets
+#' is_shared_vector(y)
 #' }
 as_shared <- function(x, readonly = TRUE, backing = "auto", cow = NULL) {
     if (!is.atomic(x) || is.null(x)) {

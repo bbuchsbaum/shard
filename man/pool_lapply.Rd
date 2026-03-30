@@ -24,3 +24,10 @@ A list of results.
 An alternative dispatch that uses parallel::parLapply-style execution
 but with supervision. This is a simpler interface for basic parallel apply.
 }
+\examples{
+\donttest{
+pool_create(2)
+result <- pool_lapply(1:4, function(x) x^2, pool = pool_get())
+pool_stop()
+}
+}

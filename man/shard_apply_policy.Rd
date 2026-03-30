@@ -35,3 +35,7 @@ An object of class \code{shard_apply_policy}.
 \description{
 Centralizes safe defaults and guardrails for apply/lapply convenience wrappers.
 }
+\examples{
+cfg <- shard_apply_policy()
+cfg
+}

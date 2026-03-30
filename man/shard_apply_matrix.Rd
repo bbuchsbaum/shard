@@ -41,3 +41,10 @@ is shared once and each worker receives a zero-copy column view when possible.
 Current limitation: \code{MARGIN} must be 2 (columns). Row-wise apply would require
 strided/gather slicing and is intentionally explicit in shard via views/kernels.
 }
+\examples{
+\donttest{
+X <- matrix(rnorm(400), 20, 20)
+shard_apply_matrix(X, MARGIN = 2, FUN = mean)
+pool_stop()
+}
+}

@@ -2,26 +2,41 @@
 % Please edit documentation in R/table_stream.R
 \name{stream_reduce}
 \alias{stream_reduce}
+\alias{stream_reduce.shard_row_groups}
+\alias{stream_reduce.shard_dataset}
 \title{Stream over row-groups/datasets and reduce}
 \usage{
 stream_reduce(x, f, init, combine, ...)
+
+\method{stream_reduce}{shard_row_groups}(x, f, init, combine, ...)
+
+\method{stream_reduce}{shard_dataset}(x, f, init, combine, ...)
 }
 \arguments{
 \item{x}{A \code{shard_row_groups} or \code{shard_dataset} handle.}
 
-\item{f}{Function \verb{(chunk, ...) -> value} producing a per-partition value.}
+\item{f}{Function \code{(chunk, ...) -> value} producing a per-partition value.}
 
 \item{init}{Initial accumulator value.}
 
-\item{combine}{Function \verb{(acc, value) -> acc} to update the accumulator.}
+\item{combine}{Function \code{(acc, value) -> acc} to update the accumulator.}
 
 \item{...}{Passed to \code{f()}.}
 }
 \value{
-The final accumulator.
+The final accumulator value after processing all partitions.
 }
 \description{
 Applies \code{f()} to each partition (row-group) and combines results with
 \code{combine()} into a single accumulator. This keeps peak memory bounded by the
 largest single partition (plus your accumulator).
+}
+\examples{
+\donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+total <- stream_reduce(rg, f = nrow, init = 0L, combine = `+`)
+}
 }

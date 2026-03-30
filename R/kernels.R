@@ -29,6 +29,14 @@
 #'   - `run`: the underlying shard_result from shard_map
 #'   - `tile`: chosen tile sizes
 #' @export
+#' @examples
+#' \donttest{
+#' X <- matrix(rnorm(2000), 100, 20)
+#' Y <- matrix(rnorm(2000), 100, 20)
+#' res <- shard_crossprod(X, Y, block_x = 50, block_y = 10, workers = 2)
+#' pool_stop()
+#' res$value
+#' }
 shard_crossprod <- function(X,
                             Y,
                             workers = NULL,

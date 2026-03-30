@@ -18,7 +18,8 @@ stream_top_k(x, col, k = 10L, decreasing = TRUE, na_drop = TRUE)
 \item{na_drop}{Logical; drop rows where \code{col} is NA (default TRUE).}
 }
 \value{
-A data.frame (or tibble if installed) with at most \code{k} rows.
+A data.frame (or tibble if the \code{tibble} package is installed)
+with at most \code{k} rows ordered by \code{col}.
 }
 \description{
 Finds the top \code{k} rows by \code{col} without collecting the full dataset.
@@ -27,4 +28,13 @@ Finds the top \code{k} rows by \code{col} without collecting the full dataset.
 For native-encoded partitions, this selects candidate rows using the numeric
 column without decoding strings, then decodes only the chosen rows for the
 returned result.
+}
+\examples{
+\donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = c(3.0, 1.0, 2.0)))
+rg <- table_finalize(sink)
+stream_top_k(rg, "x", k = 2L)
+}
 }

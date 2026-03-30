@@ -14,10 +14,19 @@ share_open(path, backing = c("mmap", "shm"), size = NULL)
 \item{size}{Size of the segment in bytes. If NULL, attempts to detect.}
 }
 \value{
-A \code{shard_shared} object.
+A \code{shard_shared} object attached to the existing segment.
 }
 \description{
 Opens a shared object that was created by another process. This is useful
 for workers that need to attach to shared data without having the original
 \code{shard_shared} object.
+}
+\examples{
+\donttest{
+shared <- share(1:50)
+info <- shared_info(shared)
+reopened <- share_open(info$path, backing = "mmap")
+close(reopened)
+close(shared)
+}
 }

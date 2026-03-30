@@ -12,8 +12,12 @@
 \item{i}{Index or indices.}
 }
 \value{
-The selected shard(s).
+A subset of the object.
 }
 \description{
 Subset Shard Descriptor
+}
+\examples{
+sh <- shards(100, block_size = 25)
+sh[1:2]
 }

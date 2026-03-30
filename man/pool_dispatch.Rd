@@ -29,3 +29,10 @@ The result of evaluating expr in the worker.
 \description{
 Sends a task to a specific worker and waits for the result.
 }
+\examples{
+\donttest{
+p <- pool_create(2)
+pool_dispatch(1, quote(1 + 1), pool = p)
+pool_stop(p)
+}
+}

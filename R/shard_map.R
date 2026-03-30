@@ -94,23 +94,12 @@ NULL
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Simple parallel computation
-#' blocks <- shards(1000, workers = 4)
+#' \donttest{
+#' blocks <- shards(1000, workers = 2)
 #' result <- shard_map(blocks, function(shard) {
 #'   sum(shard$idx^2)
-#' }, workers = 4)
-#'
-#' # With shared inputs
-#' X <- matrix(rnorm(1e6), nrow = 1000)
-#' blocks <- shards(ncol(X), workers = 4)
-#' result <- shard_map(blocks,
-#'   borrow = list(X = X),
-#'   fun = function(shard, X) {
-#'     colMeans(X[, shard$idx, drop = FALSE])
-#'   },
-#'   workers = 4
-#' )
+#' }, workers = 2)
+#' pool_stop()
 #' }
 shard_map <- function(shards,
                       fun = NULL,
@@ -798,6 +787,7 @@ shard_map_online_ <- function(n,
 #' @param recycle User-specified recycle setting.
 #' @return List of settings.
 #' @keywords internal
+#' @noRd
 get_profile_settings <- function(profile, mem_cap, recycle) {
   settings <- list(
     mem_cap = parse_bytes(mem_cap),
@@ -834,6 +824,7 @@ get_profile_settings <- function(profile, mem_cap, recycle) {
 #' @param init_expr Init expression.
 #' @return Pool object.
 #' @keywords internal
+#' @noRd
 ensure_pool <- function(workers, mem_cap, rss_drift_threshold, packages, init_expr) {
   pool <- pool_get()
 
@@ -866,6 +857,7 @@ ensure_pool <- function(workers, mem_cap, rss_drift_threshold, packages, init_ex
 #' @param cow COW policy.
 #' @return Validated borrow list.
 #' @keywords internal
+#' @noRd
 validate_borrow <- function(borrow, cow) {
   if (length(borrow) == 0) return(borrow)
 
@@ -930,6 +922,7 @@ validate_borrow <- function(borrow, cow) {
 #' @param out List of output buffers.
 #' @return Validated out list.
 #' @keywords internal
+#' @noRd
 validate_out <- function(out) {
   if (length(out) == 0) return(out)
 
@@ -962,6 +955,7 @@ validate_out <- function(out) {
 #' @param seed Base seed.
 #' @param num_shards Number of shards for substream calculation.
 #' @keywords internal
+#' @noRd
 set_worker_seeds <- function(pool, seed, num_shards) {
   for (i in seq_len(pool$n)) {
     worker_seed <- seed + (i - 1L) * num_shards
@@ -980,6 +974,7 @@ set_worker_seeds <- function(pool, seed, num_shards) {
 #' @param pool Worker pool.
 #' @param borrow List of borrowed inputs.
 #' @keywords internal
+#' @noRd
 export_borrow_to_workers <- function(pool, borrow) {
   if (length(borrow) == 0) return(invisible(NULL))
 
@@ -1009,6 +1004,7 @@ export_borrow_to_workers <- function(pool, borrow) {
 #' @param pool Worker pool.
 #' @param out List of output buffers.
 #' @keywords internal
+#' @noRd
 export_out_to_workers <- function(pool, out) {
   if (length(out) == 0) return(invisible(NULL))
 
@@ -1139,6 +1135,7 @@ reset_worker_diagnostics_ <- function(pool) {
 #' @param out Output buffers.
 #' @return List of chunk descriptors.
 #' @keywords internal
+#' @noRd
 create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_meta = NULL) {
   chunk_size <- max(as.integer(chunk_size), 1L)
   num_chunks <- ceiling(shards$num_shards / chunk_size)
@@ -1214,6 +1211,7 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_met
 #'
 #' @return A function that executes chunks.
 #' @keywords internal
+#' @noRd
 make_chunk_executor <- function(auto_table = FALSE) {
   out_desc_key_ <- function(d) {
     # A stable identifier for deciding whether a cached out handle can be reused.
@@ -1386,7 +1384,18 @@ make_chunk_executor <- function(auto_table = FALSE) {
   }
 }
 
+#' Print a shard_result Object
+#'
+#' @param x A \code{shard_result} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' result <- shard_map(4L, function(shard) shard$idx, workers = 2)
+#' pool_stop()
+#' print(result)
+#' }
 print.shard_result <- function(x, ...) {
   cat("shard_map result\n")
 
@@ -1426,6 +1435,12 @@ print.shard_result <- function(x, ...) {
 #' @param flatten Logical. Flatten nested results?
 #' @return List or vector of results.
 #' @export
+#' @examples
+#' \donttest{
+#' result <- shard_map(4L, function(shard) shard$idx[[1L]], workers = 2)
+#' pool_stop()
+#' results(result)
+#' }
 results <- function(x, flatten = TRUE) {
   if (!inherits(x, "shard_result")) {
     stop("x must be a shard_result object", call. = FALSE)
@@ -1466,6 +1481,12 @@ results <- function(x, flatten = TRUE) {
 #' @param x A shard_result object.
 #' @return Logical. TRUE if no failures.
 #' @export
+#' @examples
+#' \donttest{
+#' result <- shard_map(4L, function(shard) shard$idx[[1L]], workers = 2)
+#' pool_stop()
+#' succeeded(result)
+#' }
 succeeded <- function(x) {
   if (inherits(x, "shard_result") || inherits(x, "shard_reduce_result")) {
     return(length(x$failures) == 0)

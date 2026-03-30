@@ -22,3 +22,8 @@ Invisibly, a logical vector per worker indicating success.
 Best-effort worker pinning to improve cache locality and reduce cross-core
 migration. Currently supported on Linux only.
 }
+\examples{
+\donttest{
+affinity_supported()
+}
+}

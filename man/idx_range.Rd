@@ -18,3 +18,7 @@ An object of class \code{shard_idx_range}.
 Creates a compact, serializable range descriptor for contiguous indices.
 This avoids allocating an explicit index vector for large slices.
 }
+\examples{
+r <- idx_range(1, 100)
+r
+}

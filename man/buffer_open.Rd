@@ -18,9 +18,18 @@ buffer_open(path, type, dim, backing = c("mmap", "shm"), readonly = FALSE)
 \item{readonly}{Logical. Open as read-only? Default FALSE for workers.}
 }
 \value{
-An S3 object of class "shard_buffer".
+A \code{shard_buffer} object attached to the existing segment.
 }
 \description{
 Opens a shared memory buffer that was created in another process.
 Used by workers to attach to the parent's output buffer.
+}
+\examples{
+\donttest{
+buf <- buffer("double", dim = 10)
+path <- buffer_path(buf)
+buf2 <- buffer_open(path, type = "double", dim = 10, backing = "mmap")
+buffer_close(buf2, unlink = FALSE)
+buffer_close(buf)
+}
 }

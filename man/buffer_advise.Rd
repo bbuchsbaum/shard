@@ -15,8 +15,14 @@ buffer_advise(
 \item{advice}{See \code{\link[=segment_advise]{segment_advise()}}.}
 }
 \value{
-Logical.
+A logical scalar; \code{TRUE} if the OS accepted the hint.
 }
 \description{
 Advise access pattern for a buffer
+}
+\examples{
+\donttest{
+buf <- buffer("double", dim = 10L)
+buffer_advise(buf, "sequential")
+}
 }

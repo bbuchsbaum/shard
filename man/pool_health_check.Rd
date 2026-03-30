@@ -19,3 +19,10 @@ A list with health status per worker and actions taken.
 \description{
 Monitors all workers, recycling those with excessive RSS drift or that have died.
 }
+\examples{
+\donttest{
+p <- pool_create(2)
+pool_health_check(p)
+pool_stop(p)
+}
+}

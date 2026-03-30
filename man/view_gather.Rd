@@ -14,7 +14,7 @@ view_gather(x, rows = NULL, cols)
 \item{cols}{Integer vector of column indices (1-based).}
 }
 \value{
-A view object of class \code{shard_view_gather}.
+A \code{shard_view_gather} object describing the indexed column view.
 }
 \description{
 Gather views describe non-contiguous column (or row) subsets without
@@ -25,4 +25,10 @@ or run gather-aware compute paths.
 \details{
 v1 note: only column-gather views are implemented (rows may be NULL or
 idx_range()).
+}
+\examples{
+\donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view_gather(m, cols = c(1L, 3L))
+}
 }

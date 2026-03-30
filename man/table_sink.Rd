@@ -25,7 +25,7 @@ where output schemas may not be known in advance.}
 (selects \code{"native"} if the schema contains \code{string_col()}; otherwise \code{"rds"}).}
 }
 \value{
-A \code{shard_table_sink}.
+A \code{shard_table_sink} object.
 }
 \description{
 A table sink supports variable-sized outputs without returning large
@@ -37,5 +37,11 @@ v1.1 implementation notes:
 \item Storage format is per-shard RDS (portable, CRAN-friendly).
 \item This guarantees bounded master memory during execution; final collection
 may still be large if you materialize.
+}
+}
+\examples{
+\donttest{
+s <- schema(x = float64(), label = string_col())
+sink <- table_sink(s, mode = "row_groups")
 }
 }

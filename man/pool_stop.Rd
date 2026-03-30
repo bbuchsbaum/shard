@@ -19,3 +19,9 @@ NULL (invisibly).
 Terminates all worker processes and releases resources. Waits for workers
 to actually terminate before returning.
 }
+\examples{
+\donttest{
+p <- pool_create(2)
+pool_stop(p)
+}
+}

@@ -14,8 +14,19 @@ decoded to data.frames. If FALSE, native partitions are returned as their
 internal representation (advanced).}
 }
 \value{
-An iterator function with no args that returns the next data.frame or NULL.
+A zero-argument iterator function that returns the next data.frame on
+each call, or \code{NULL} when exhausted.
 }
 \description{
 Iterate row groups
+}
+\examples{
+\donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+it <- iterate_row_groups(rg)
+chunk <- it()
+}
 }

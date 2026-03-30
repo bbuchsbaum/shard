@@ -35,16 +35,13 @@ An ALTREP vector backed by shared memory
 Create a shared vector from a segment
 }
 \examples{
-\dontrun{
-# Create a segment and store integers
-seg <- segment_create(400)  # 100 integers * 4 bytes
+\donttest{
+seg <- segment_create(400)
 segment_write(seg, 1:100, offset = 0)
 
-# Create ALTREP view
 x <- shared_vector(seg, "integer", length = 100)
-x[1:10]  # Returns a view, not a copy
+x[1:10]
 
-# Check diagnostics
 shared_diagnostics(x)
 }
 }

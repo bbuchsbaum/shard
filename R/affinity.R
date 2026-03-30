@@ -10,8 +10,10 @@ NULL
 #'
 #' Currently supported on Linux only.
 #'
-#' @return Logical.
+#' @return A logical scalar indicating platform support.
 #' @export
+#' @examples
+#' affinity_supported()
 affinity_supported <- function() {
   isTRUE(.Call("C_shard_affinity_supported", PACKAGE = "shard"))
 }
@@ -22,8 +24,10 @@ affinity_supported <- function() {
 #' On unsupported platforms, returns FALSE.
 #'
 #' @param cores Integer vector of 0-based CPU core ids.
-#' @return Logical; TRUE on success.
+#' @return A logical scalar; \code{TRUE} on success, \code{FALSE} if not supported.
 #' @export
+#' @examples
+#' affinity_supported()
 set_affinity <- function(cores) {
   cores <- as.integer(cores)
   isTRUE(.Call("C_shard_set_affinity", cores, PACKAGE = "shard"))
@@ -41,6 +45,10 @@ set_affinity <- function(cores) {
 #'   uses 0:(detectCores()-1).
 #' @return Invisibly, a logical vector per worker indicating success.
 #' @export
+#' @examples
+#' \donttest{
+#' affinity_supported()
+#' }
 pin_workers <- function(pool = NULL,
                         strategy = c("spread", "compact"),
                         cores = NULL) {
@@ -80,8 +88,13 @@ pin_workers <- function(pool = NULL,
 #'
 #' @param seg A shard_segment.
 #' @param advice One of "normal", "sequential", "random", "willneed", "dontneed".
-#' @return Logical; TRUE if the OS accepted the hint.
+#' @return A logical scalar; \code{TRUE} if the OS accepted the hint.
 #' @export
+#' @examples
+#' \donttest{
+#' seg <- segment_create(1024)
+#' segment_advise(seg, "sequential")
+#' }
 segment_advise <- function(seg,
                            advice = c("normal", "sequential", "random", "willneed", "dontneed")) {
   if (!(inherits(seg, "shard_segment") || identical(typeof(seg), "externalptr"))) {
@@ -103,8 +116,13 @@ segment_advise <- function(seg,
 #'
 #' @param x A shard_buffer.
 #' @param advice See [segment_advise()].
-#' @return Logical.
+#' @return A logical scalar; \code{TRUE} if the OS accepted the hint.
 #' @export
+#' @examples
+#' \donttest{
+#' buf <- buffer("double", dim = 10L)
+#' buffer_advise(buf, "sequential")
+#' }
 buffer_advise <- function(x,
                           advice = c("normal", "sequential", "random", "willneed", "dontneed")) {
   stopifnot(inherits(x, "shard_buffer"))
@@ -115,8 +133,13 @@ buffer_advise <- function(x,
 #'
 #' @param x A shard shared vector (from [share()]).
 #' @param advice See [segment_advise()].
-#' @return Logical.
+#' @return A logical scalar; \code{TRUE} if the OS accepted the hint.
 #' @export
+#' @examples
+#' \donttest{
+#' x <- as_shared(1:100)
+#' shared_advise(x, "sequential")
+#' }
 shared_advise <- function(x,
                           advice = c("normal", "sequential", "random", "willneed", "dontneed")) {
   if (!is_shared_vector(x)) stop("x must be a shared vector", call. = FALSE)

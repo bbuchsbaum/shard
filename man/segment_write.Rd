@@ -14,8 +14,15 @@ segment_write(x, data, offset = 0)
 \item{offset}{Byte offset to start writing (0-based)}
 }
 \value{
-Number of bytes written (invisibly)
+Number of bytes written, invisibly.
 }
 \description{
 Write data to a segment
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_write(seg, as.integer(1:10), offset = 0)
+segment_close(seg)
+}
 }

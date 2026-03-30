@@ -2,9 +2,15 @@
 % Please edit documentation in R/share.R
 \name{close.shard_shared}
 \alias{close.shard_shared}
+\alias{close.shard_shared_vector}
+\alias{close.shard_deep_shared}
 \title{Close a Shared Object}
 \usage{
 \method{close}{shard_shared}(con, ...)
+
+\method{close}{shard_shared_vector}(con, ...)
+
+\method{close}{shard_deep_shared}(con, ...)
 }
 \arguments{
 \item{con}{A \code{shard_shared} object.}

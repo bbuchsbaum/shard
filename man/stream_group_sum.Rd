@@ -9,16 +9,26 @@ stream_group_sum(x, group, value, na_rm = TRUE)
 \arguments{
 \item{x}{A \code{shard_row_groups} or \code{shard_dataset} handle.}
 
-\item{group}{Group column name (recommended: factor_col()).}
+\item{group}{Group column name (recommended: \code{factor_col()}).}
 
 \item{value}{Numeric column name to sum.}
 
 \item{na_rm}{Logical; drop rows where value is NA (default TRUE).}
 }
 \value{
-A data.frame with columns \code{group} and \code{sum}.
+A data.frame with columns \code{group} (factor) and \code{sum} (numeric).
 }
 \description{
 Computes sum(value) by group across partitions without collecting. This is
-optimized for factor groups (factor_col()).
+optimized for factor groups (\code{factor_col()}).
+}
+\examples{
+\donttest{
+s <- schema(g = factor_col(c("a", "b")), x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L,
+  data.frame(g = factor(c("a", "b", "a"), levels = c("a", "b")), x = c(1, 2, 3)))
+rg <- table_finalize(sink)
+stream_group_sum(rg, "g", "x")
+}
 }

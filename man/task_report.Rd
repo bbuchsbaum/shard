@@ -29,8 +29,9 @@ containing:
 Generates a report of task/chunk execution statistics from a shard_map result.
 }
 \examples{
-\dontrun{
-result <- shard_map(shards(100), function(s) sum(s$idx))
-task_report(result)
+\donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+task_report(res)
 }
 }

@@ -9,12 +9,22 @@ stream_group_count(x, group)
 \arguments{
 \item{x}{A \code{shard_row_groups} or \code{shard_dataset} handle.}
 
-\item{group}{Group column name (recommended: factor_col()).}
+\item{group}{Group column name (recommended: \code{factor_col()}).}
 }
 \value{
-A data.frame with columns \code{group} and \code{n}.
+A data.frame with columns \code{group} (factor) and \code{n} (integer).
 }
 \description{
 Counts rows per group across partitions without collecting. Optimized for
-factor groups (factor_col()).
+factor groups (\code{factor_col()}).
+}
+\examples{
+\donttest{
+s <- schema(g = factor_col(c("a", "b")), x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L,
+  data.frame(g = factor(c("a", "b", "a"), levels = c("a", "b")), x = c(1, 2, 3)))
+rg <- table_finalize(sink)
+stream_group_count(rg, "g")
+}
 }

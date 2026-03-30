@@ -15,8 +15,14 @@ segment_advise(
 \item{advice}{One of "normal", "sequential", "random", "willneed", "dontneed".}
 }
 \value{
-Logical; TRUE if the OS accepted the hint.
+A logical scalar; \code{TRUE} if the OS accepted the hint.
 }
 \description{
 This calls \code{madvise()} on the segment mapping when available.
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_advise(seg, "sequential")
+}
 }

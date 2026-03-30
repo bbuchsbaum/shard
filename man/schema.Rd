@@ -10,9 +10,13 @@ schema(...)
 \item{...}{Named columns with type specs (e.g., \code{int32()}, \code{float64()}).}
 }
 \value{
-A \code{shard_schema}.
+A \code{shard_schema} object.
 }
 \description{
 A schema is a named set of columns with explicit types. It is used to
 allocate table buffers and validate writes.
+}
+\examples{
+s <- schema(x = float64(), y = int32(), label = string_col())
+s
 }

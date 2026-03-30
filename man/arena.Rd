@@ -35,11 +35,8 @@ along with the result. Default is FALSE.}
 }
 \value{
 The result of evaluating \code{expr}. If \code{diagnostics = TRUE},
-returns a list with:
-\itemize{
-\item \code{result}: The expression result
-\item \code{diagnostics}: Memory usage information
-}
+returns an \code{arena_result} object with elements \code{result} and
+\code{diagnostics}.
 }
 \description{
 Semantic scope for scratch memory that signals temporary data
@@ -71,26 +68,17 @@ scope, and triggers aggressive memory reclamation.
 }
 }
 \examples{
-\dontrun{
-# Basic usage - wrap scratch computation
+\donttest{
 result <- arena({
-  # Large temporaries created here won't accumulate
   tmp <- matrix(rnorm(1e6), nrow = 1000)
-  colMeans(tmp)  # Only the means escape
+  colMeans(tmp)
 })
 
-# Strict mode - warns on large escapes
-result <- arena({
-  big <- rnorm(1e7)  # 80MB
-  big  # Warning: large object escaping
-}, strict = TRUE)
-
-# Get diagnostics about memory usage
 info <- arena({
   x <- rnorm(1e5)
   sum(x)
 }, diagnostics = TRUE)
-info$diagnostics  # Memory tracking info
+info$diagnostics
 }
 }
 \seealso{

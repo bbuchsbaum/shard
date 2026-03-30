@@ -7,8 +7,11 @@
 available_backings()
 }
 \value{
-Character vector of available backing types
+A character vector of available backing types on the current platform.
 }
 \description{
 Get available shared memory backing types
+}
+\examples{
+available_backings()
 }

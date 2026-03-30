@@ -13,8 +13,8 @@ Logical indicating whether we are in an arena scope.
 Returns TRUE if the current execution context is within an arena() scope.
 }
 \examples{
-in_arena()  # FALSE
+in_arena()
 arena({
-  in_arena()  # TRUE
+  in_arena()
 })
 }

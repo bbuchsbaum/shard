@@ -5,15 +5,11 @@ NULL
 
 #' Null-coalescing Operator
 #'
-#' @name null_coalesce
-#' @aliases %||%
 #' @param x Value to check.
 #' @param y Default value if x is NULL.
 #' @return x if not NULL, otherwise y.
 #' @keywords internal
-NULL
-
-#' @rdname null_coalesce
+#' @noRd
 `%||%` <- function(x, y) {
 
   if (is.null(x)) y else x
@@ -26,6 +22,7 @@ NULL
 #' @param x Character or numeric. If numeric, returned as-is.
 #' @return Numeric value in bytes.
 #' @keywords internal
+#' @noRd
 parse_bytes <- function(x) {
   if (is.numeric(x)) {
     return(as.numeric(x))
@@ -63,6 +60,7 @@ parse_bytes <- function(x) {
 #' @param digits Integer. Decimal places (default 1).
 #' @return Character string like "1.5 GB".
 #' @keywords internal
+#' @noRd
 format_bytes <- function(bytes, digits = 1) {
   if (is.na(bytes)) {
     return("NA")
@@ -87,6 +85,7 @@ format_bytes <- function(bytes, digits = 1) {
 #' @param y Denominator.
 #' @return x/y or NA if y is zero.
 #' @keywords internal
+#' @noRd
 safe_div <- function(x, y) {
   ifelse(y == 0, NA_real_, x / y)
 }
@@ -102,6 +101,7 @@ safe_div <- function(x, y) {
 #' @param on_error Function. Called on each error with (attempt, error).
 #' @return Result of f() or error on final failure.
 #' @keywords internal
+#' @noRd
 retry_with_backoff <- function(f, max_attempts = 3, initial_delay = 0.1,
                                max_delay = 5, on_error = NULL) {
   delay <- initial_delay
@@ -134,6 +134,7 @@ retry_with_backoff <- function(f, max_attempts = 3, initial_delay = 0.1,
 #' @param pkg Package name.
 #' @return Logical. TRUE if package is available.
 #' @keywords internal
+#' @noRd
 pkg_available <- function(pkg) {
   requireNamespace(pkg, quietly = TRUE)
 }
@@ -145,6 +146,7 @@ pkg_available <- function(pkg) {
 #' @param prefix Character. Prefix for the ID.
 #' @return Character string like "prefix_a1b2c3".
 #' @keywords internal
+#' @noRd
 unique_id <- function(prefix = "") {
   # Use high-resolution time + random component for uniqueness
   timestamp <- as.numeric(Sys.time()) * 1e6
@@ -164,6 +166,7 @@ unique_id <- function(prefix = "") {
 #' @param name Name for error messages.
 #' @return Integer value.
 #' @keywords internal
+#' @noRd
 assert_positive_int <- function(x, name = "value") {
   x <- as.integer(x)
   if (is.na(x) || x < 1L) {
@@ -179,6 +182,7 @@ assert_positive_int <- function(x, name = "value") {
 #' @param expr Expression to time.
 #' @return List with result and elapsed time.
 #' @keywords internal
+#' @noRd
 capture_time <- function(expr) {
   start <- Sys.time()
   result <- force(expr)

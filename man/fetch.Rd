@@ -2,9 +2,18 @@
 % Please edit documentation in R/share.R
 \name{fetch}
 \alias{fetch}
+\alias{fetch.shard_shared}
+\alias{fetch.shard_deep_shared}
+\alias{fetch.default}
 \title{Fetch Data from a Shared Object}
 \usage{
 fetch(x, ...)
+
+\method{fetch}{shard_shared}(x, ...)
+
+\method{fetch}{shard_deep_shared}(x, ...)
+
+\method{fetch}{default}(x, ...)
 }
 \arguments{
 \item{x}{A \code{shard_shared} object.}
@@ -27,10 +36,11 @@ The \code{fetch()} function is the primary way to access shared data.
 It can also be called as \code{materialize()} for compatibility.
 }
 \examples{
-\dontrun{
-x <- 1:1000
+\donttest{
+x <- 1:100
 shared <- share(x)
 recovered <- fetch(shared)
-identical(x, recovered)  # TRUE
+identical(x, recovered)
+close(shared)
 }
 }

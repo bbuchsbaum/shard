@@ -13,6 +13,7 @@ NULL
 #'
 #' @return A `shard_worker` object.
 #' @keywords internal
+#' @noRd
 worker_spawn <- function(id, init_expr = NULL, packages = NULL, dev_path = NULL) {
   # Use makeCluster to spawn a single worker
   # This creates a socket connection to an R process
@@ -114,6 +115,7 @@ worker_spawn <- function(id, init_expr = NULL, packages = NULL, dev_path = NULL)
 #' @param worker A `shard_worker` object.
 #' @return Logical. TRUE if worker is alive.
 #' @keywords internal
+#' @noRd
 worker_is_alive <- function(worker) {
   if (is.null(worker) || is.null(worker$cluster)) {
     return(FALSE)
@@ -140,6 +142,7 @@ worker_is_alive <- function(worker) {
 #' @param worker A `shard_worker` object.
 #' @return Numeric. RSS in bytes, or NA if unavailable.
 #' @keywords internal
+#' @noRd
 worker_rss <- function(worker) {
   if (is.null(worker) || is.na(worker$pid)) {
     return(NA_real_)
@@ -180,6 +183,7 @@ worker_close_connection_ <- function(worker) {
 #'   cluster stop step and force termination directly.
 #' @return NULL (invisibly).
 #' @keywords internal
+#' @noRd
 worker_kill <- function(worker, graceful = TRUE) {
   if (is.null(worker)) {
     return(invisible(NULL))
@@ -228,6 +232,7 @@ worker_kill <- function(worker, graceful = TRUE) {
 #' @param packages Character vector. Packages to load.
 #' @return A new `shard_worker` object.
 #' @keywords internal
+#' @noRd
 worker_recycle <- function(worker, init_expr = NULL, packages = NULL, dev_path = NULL) {
   id <- worker$id
   old_recycle_count <- worker$recycle_count %||% 0L
@@ -253,6 +258,7 @@ worker_recycle <- function(worker, init_expr = NULL, packages = NULL, dev_path =
 #' @param timeout Numeric. Seconds to wait for result.
 #' @return The result of evaluation.
 #' @keywords internal
+#' @noRd
 worker_eval <- function(worker, expr, envir = parent.frame(), timeout = 3600) {
   if (!worker_is_alive(worker)) {
     stop("Worker ", worker$id, " is not alive", call. = FALSE)
@@ -334,6 +340,7 @@ worker_eval <- function(worker, expr, envir = parent.frame(), timeout = 3600) {
 #' @param worker A `shard_worker` object.
 #' @return A list of worker metrics.
 #' @keywords internal
+#' @noRd
 worker_metrics <- function(worker) {
   alive <- worker_is_alive(worker)
   rss <- if (alive) worker_rss(worker) else NA_real_
@@ -350,6 +357,17 @@ worker_metrics <- function(worker) {
   )
 }
 
+#' Print a shard_worker Object
+#'
+#' @param x A \code{shard_worker} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
+#' @examples
+#' \donttest{
+#' p <- pool_create(1)
+#' print(p$workers[[1]])
+#' pool_stop(p)
+#' }
 #' @export
 print.shard_worker <- function(x, ...) {
   cat("shard worker [", x$id, "]\n", sep = "")
@@ -366,6 +384,7 @@ print.shard_worker <- function(x, ...) {
 #' @param pid Process ID to check.
 #' @return Logical.
 #' @keywords internal
+#' @noRd
 pid_is_alive <- function(pid) {
   if (is.na(pid)) return(FALSE)
 

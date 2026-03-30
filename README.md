@@ -31,7 +31,7 @@ Development version:
 
 ```r
 # install.packages("pak")
-pak::pak("your-org/shard")
+pak::pak("bbuchsbaum/shard")
 ```
 
 ---

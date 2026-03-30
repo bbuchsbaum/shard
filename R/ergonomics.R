@@ -64,6 +64,9 @@ NULL
 #' @param backing Backing type used when auto-sharing (`"auto"`, `"mmap"`, `"shm"`).
 #' @return An object of class `shard_apply_policy`.
 #' @export
+#' @examples
+#' cfg <- shard_apply_policy()
+#' cfg
 shard_apply_policy <- function(auto_share_min_bytes = "1MB",
                                max_gather_bytes = "256MB",
                                cow = c("deny", "audit", "allow"),
@@ -87,6 +90,11 @@ shard_apply_policy <- function(auto_share_min_bytes = "1MB",
   )
 }
 
+#' Print a shard_apply_policy Object
+#'
+#' @param x A \code{shard_apply_policy} object.
+#' @param ... Ignored.
+#' @return The input \code{x}, invisibly.
 #' @export
 print.shard_apply_policy <- function(x, ...) {
   cat("shard_apply_policy\n")
@@ -117,6 +125,12 @@ print.shard_apply_policy <- function(x, ...) {
 #' @param policy A [shard_apply_policy()] object.
 #' @return An atomic vector of length `ncol(X)` with the results.
 #' @export
+#' @examples
+#' \donttest{
+#' X <- matrix(rnorm(400), 20, 20)
+#' shard_apply_matrix(X, MARGIN = 2, FUN = mean)
+#' pool_stop()
+#' }
 shard_apply_matrix <- function(X,
                                MARGIN = 2,
                                FUN,
@@ -227,8 +241,14 @@ shard_apply_matrix <- function(X,
 #' @param workers Number of workers (passed to [shard_map()]).
 #' @param ... Additional arguments forwarded to `FUN`.
 #' @param policy A [shard_apply_policy()] object.
-#' @return A list of results of length `length(x)`.
+#' @return A list of results, one per element of \code{x}.
 #' @export
+#' @examples
+#' \donttest{
+#' res <- shard_lapply_shared(as.list(1:4), function(x) x^2)
+#' pool_stop()
+#' res
+#' }
 shard_lapply_shared <- function(x,
                                 FUN,
                                 VARS = NULL,

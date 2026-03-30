@@ -26,12 +26,7 @@ segments are automatically cleaned up when their R objects are garbage
 collected, so this only shows segments with live references.
 }
 \examples{
-\dontrun{
-# Create some segments
-seg1 <- segment_create(1024)
-seg2 <- segment_create(2048)
-shared <- share(1:1000)
-
+\donttest{
 segment_report()
 }
 }

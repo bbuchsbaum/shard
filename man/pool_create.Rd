@@ -41,3 +41,9 @@ package environment for reuse.
 Spawns N R worker processes that persist across multiple \code{shard_map()} calls.
 Workers are supervised and recycled when RSS drift exceeds thresholds.
 }
+\examples{
+\donttest{
+p <- pool_create(2)
+pool_stop(p)
+}
+}

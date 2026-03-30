@@ -11,10 +11,14 @@ shards_list(idxs)
 one shard with fields \code{id}, \code{idx}, and \code{len}.}
 }
 \value{
-A \code{shard_descriptor}.
+A \code{shard_descriptor} list describing the chunk layout.
 }
 \description{
 Constructs a \code{shard_descriptor} from a user-supplied list of index vectors.
 This is useful for non-contiguous workloads like searchlights/feature sets
 where each shard operates on an arbitrary subset.
+}
+\examples{
+sh <- shards_list(list(1:10, 11:20, 21:30))
+length(sh)
 }

@@ -12,8 +12,14 @@ buffer_close(x, unlink = NULL)
 \item{unlink}{Whether to unlink the underlying segment.}
 }
 \value{
-NULL (invisibly).
+\code{NULL}, invisibly.
 }
 \description{
 Closes the buffer and releases the underlying shared memory.
+}
+\examples{
+\donttest{
+buf <- buffer("double", dim = 10)
+buffer_close(buf)
+}
 }

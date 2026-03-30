@@ -53,13 +53,10 @@ Produces shard descriptors (index ranges) for use with \code{shard_map()}.
 Supports autotuning based on worker count and memory constraints.
 }
 \examples{
-# Autotune for 8 workers
 blocks <- shards(1e6, workers = 8)
-length(blocks$shards)  # Number of shards
+length(blocks$shards)
 
-# Explicit block size
 blocks <- shards(1000, block_size = 100)
 
-# Access shard indices
-blocks$shards[[1]]$idx  # Indices for first shard
+blocks$shards[[1]]$idx
 }

@@ -37,18 +37,9 @@ of the current runtime state including pool status, memory usage, and
 execution statistics.
 }
 \examples{
-\dontrun{
-# Basic summary
-report()
-
-# Include worker details
-report("workers")
-
-# Full report with task and segment details
-report("segments")
-
-# Include diagnostics from a shard_map result
-result <- shard_map(shards(100), function(s) sum(s$idx))
-report("tasks", result = result)
+\donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+report(result = res)
 }
 }

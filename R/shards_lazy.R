@@ -30,6 +30,14 @@ shards_lazy <- function(n, block_size) {
   list(id = i, start = start, end = end, idx = start:end, len = end - start + 1L)
 }
 
+#' Print a shard_descriptor_lazy Object
+#'
+#' @param x A \code{shard_descriptor_lazy} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' print(sh)
 #' @export
 print.shard_descriptor_lazy <- function(x, ...) {
   cat("shard descriptor (lazy)\n")
@@ -40,16 +48,39 @@ print.shard_descriptor_lazy <- function(x, ...) {
   invisible(x)
 }
 
+#' Length of a shard_descriptor_lazy Object
+#'
+#' @param x A \code{shard_descriptor_lazy} object.
+#' @return An integer scalar giving the number of shards.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' length(sh)
 #' @export
 length.shard_descriptor_lazy <- function(x) {
   x$num_shards
 }
 
+#' Subset a shard_descriptor_lazy Object
+#'
+#' @param x A \code{shard_descriptor_lazy} object.
+#' @param i Index or indices.
+#' @return A subset of the object.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' sh[1:2]
 #' @export
 `[.shard_descriptor_lazy` <- function(x, i) {
   lapply(i, function(j) .lazy_shard_at(x, j))
 }
 
+#' Extract a Single Shard from a shard_descriptor_lazy Object
+#'
+#' @param x A \code{shard_descriptor_lazy} object.
+#' @param i Index.
+#' @return A subset of the object.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' sh[[1]]
 #' @export
 `[[.shard_descriptor_lazy` <- function(x, i) {
   .lazy_shard_at(x, i)

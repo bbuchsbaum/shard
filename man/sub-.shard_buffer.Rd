@@ -18,8 +18,16 @@
 \item{drop}{Whether to drop dimensions.}
 }
 \value{
-Vector or array of values.
+A vector or array of values read from the buffer.
 }
 \description{
 Extract Buffer Elements
+}
+\examples{
+\donttest{
+buf <- buffer("double", dim = 10)
+buf[1:5] <- 1:5
+buf[1:3]
+buffer_close(buf)
+}
 }

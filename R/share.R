@@ -159,20 +159,17 @@ is_shareable_atomic <- function(x) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Define a hook for a class with a cache slot to skip
+#' \donttest{
 #' shard_share_hook.MyModelClass <- function(x, ctx) {
 #'     list(
-#'         skip_slots = "cache",  # Don't traverse the cache slot
-#'         force_share_paths = paste0(ctx$path, "@coefficients")  # Always share coefficients
+#'         skip_slots = "cache",
+#'         force_share_paths = paste0(ctx$path, "@coefficients")
 #'     )
 #' }
 #'
-#' # Define a hook that rewrites objects before sharing
 #' shard_share_hook.LazyData <- function(x, ctx) {
 #'     list(
 #'         rewrite = function(obj) {
-#'             # Materialize lazy data before sharing
 #'             obj$data <- as.matrix(obj$data)
 #'             obj
 #'         }
@@ -850,34 +847,12 @@ fetch_deep_reconstruct <- function(node) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' # Share a large matrix
-#' mat <- matrix(rnorm(1e6), nrow = 1000)
+#' \donttest{
+#' mat <- matrix(rnorm(1e4), nrow = 100)
 #' shared_mat <- share(mat)
-#'
-#' # The shared object is lightweight - only metadata
-#' print(object.size(shared_mat))  # Small
-#'
-#' # Get the data back with fetch()
 #' recovered <- fetch(shared_mat)
-#' identical(mat, recovered)  # TRUE
-#'
-#' # Use in parallel (workers access without copying)
-#' pool_create(4)
-#' result <- pool_lapply(1:10, function(i) {
-#'   # Workers can access shared_mat efficiently
-#'   data <- fetch(shared_mat)
-#'   sum(data[i, ])
-#' })
-#'
-#' # Clean up when done
+#' identical(mat, recovered)
 #' close(shared_mat)
-#'
-#' # Deep sharing with alias preservation
-#' big_mat <- matrix(rnorm(1e6), nrow = 1000)
-#' lst <- list(a = big_mat, b = big_mat)  # Same object referenced twice
-#' shared_lst <- share(lst, deep = TRUE, min_bytes = 1000)
-#' # Creates only ONE shared segment - both 'a' and 'b' reference it
 #' }
 share <- function(x,
                   backing = c("auto", "mmap", "shm"),
@@ -1082,16 +1057,18 @@ share <- function(x,
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' x <- 1:1000
+#' \donttest{
+#' x <- 1:100
 #' shared <- share(x)
 #' recovered <- fetch(shared)
-#' identical(x, recovered)  # TRUE
+#' identical(x, recovered)
+#' close(shared)
 #' }
 fetch <- function(x, ...) {
     UseMethod("fetch")
 }
 
+#' @rdname fetch
 #' @export
 fetch.shard_shared <- function(x, ...) {
     # Try using existing segment pointer (main process scenario)
@@ -1120,12 +1097,14 @@ fetch.shard_shared <- function(x, ...) {
     unserialize(raw_data)
 }
 
+#' @rdname fetch
 #' @export
 fetch.shard_deep_shared <- function(x, ...) {
     # Reconstruct the object from the shared structure tree
     fetch_deep_reconstruct(x$tree)
 }
 
+#' @rdname fetch
 #' @export
 fetch.default <- function(x, ...) {
     x
@@ -1139,19 +1118,22 @@ fetch.default <- function(x, ...) {
 #' @return The original R object.
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' shared <- share(1:100)
 #' data <- materialize(shared)
+#' close(shared)
 #' }
 materialize <- function(x) {
     UseMethod("materialize")
 }
 
+#' @rdname materialize
 #' @export
 materialize.shard_shared <- function(x) {
     fetch.shard_shared(x)
 }
 
+#' @rdname materialize
 #' @export
 materialize.default <- function(x) {
     # Handle shard ALTREP vectors (from shared_vector/as_shared)
@@ -1195,6 +1177,7 @@ close.shard_shared <- function(con, ...) {
     invisible(NULL)
 }
 
+#' @rdname close.shard_shared
 #' @export
 #' @method close shard_shared_vector
 close.shard_shared_vector <- function(con, ...) {
@@ -1207,6 +1190,7 @@ close.shard_shared_vector <- function(con, ...) {
     invisible(NULL)
 }
 
+#' @rdname close.shard_shared
 #' @export
 #' @method close shard_deep_shared
 close.shard_deep_shared <- function(con, ...) {
@@ -1223,12 +1207,16 @@ close.shard_deep_shared <- function(con, ...) {
 #' Check if Object is Shared
 #'
 #' @param x An object to check.
-#' @return TRUE if x is a \code{shard_shared} or \code{shard_deep_shared} object,
-#'   FALSE otherwise.
+#' @return A logical scalar: \code{TRUE} if \code{x} is a shared object,
+#'   \code{FALSE} otherwise.
 #' @export
 #' @examples
-#' is_shared(share(1:10))  # TRUE
-#' is_shared(1:10)         # FALSE
+#' is_shared(1:10)
+#' \donttest{
+#' shared <- share(1:10)
+#' is_shared(shared)
+#' close(shared)
+#' }
 is_shared <- function(x) {
     inherits(x, c("shard_shared", "shard_deep_shared", "shard_shared_vector")) ||
         (is.atomic(x) && is_shared_vector(x))
@@ -1237,8 +1225,15 @@ is_shared <- function(x) {
 #' Get Information About a Shared Object
 #'
 #' @param x A \code{shard_shared} object.
-#' @return A list with detailed information about the shared segment.
+#' @return A named list with fields \code{path}, \code{backing}, \code{size},
+#'   \code{readonly}, \code{class_info}, and \code{segment_info}.
 #' @export
+#' @examples
+#' \donttest{
+#' shared <- share(1:100)
+#' shared_info(shared)
+#' close(shared)
+#' }
 shared_info <- function(x) {
     if (inherits(x, "shard_shared")) {
         return(list(
@@ -1277,7 +1272,18 @@ shared_info <- function(x) {
          call. = FALSE)
 }
 
+#' Print a Shared Object
+#'
+#' @param x A \code{shard_shared} object.
+#' @param ... Ignored.
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' shared <- share(1:10)
+#' print(shared)
+#' close(shared)
+#' }
 print.shard_shared <- function(x, ...) {
     cat("<shard_shared>\n")
     cat("  Path:", x$path, "\n")
@@ -1303,7 +1309,19 @@ print.shard_shared <- function(x, ...) {
     invisible(x)
 }
 
+#' Print a Deep-Shared Object
+#'
+#' @param x A \code{shard_deep_shared} object.
+#' @param ... Ignored.
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' lst <- list(a = 1:10, b = 11:20)
+#' shared <- share(lst, deep = TRUE, min_bytes = 1)
+#' print(shared)
+#' close(shared)
+#' }
 print.shard_deep_shared <- function(x, ...) {
     cat("<shard_deep_shared>\n")
     cat("  Type:", x$class_info$type, "\n")
@@ -1333,8 +1351,16 @@ print.shard_deep_shared <- function(x, ...) {
 #' @param backing Backing type: "mmap" or "shm".
 #' @param size Size of the segment in bytes. If NULL, attempts to detect.
 #'
-#' @return A \code{shard_shared} object.
+#' @return A \code{shard_shared} object attached to the existing segment.
 #' @export
+#' @examples
+#' \donttest{
+#' shared <- share(1:50)
+#' info <- shared_info(shared)
+#' reopened <- share_open(info$path, backing = "mmap")
+#' close(reopened)
+#' close(shared)
+#' }
 share_open <- function(path, backing = c("mmap", "shm"), size = NULL) {
     backing <- match.arg(backing)
 

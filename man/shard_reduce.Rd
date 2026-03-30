@@ -92,15 +92,15 @@ For performance and memory efficiency, reduction is performed in two stages:
 }
 }
 \examples{
-\dontrun{
-# Sum 1..1e6 without materializing 1e6 per-shard results:
+\donttest{
 res <- shard_reduce(
-  shards(1e6, block_size = 1000),
+  100L,
   map = function(s) sum(s$idx),
   combine = function(acc, x) acc + x,
   init = 0,
-  workers = 4
+  workers = 2
 )
+pool_stop()
 res$value
 }
 }

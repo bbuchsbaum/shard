@@ -28,8 +28,9 @@ containing:
 Generates a report of memory usage across all workers in the pool.
 }
 \examples{
-\dontrun{
-pool_create(4)
-mem_report()
+\donttest{
+p <- pool_create(2)
+mem_report(p)
+pool_stop(p)
 }
 }

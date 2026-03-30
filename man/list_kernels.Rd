@@ -12,3 +12,6 @@ A character vector of registered kernel names.
 \description{
 List registered kernels
 }
+\examples{
+list_kernels()
+}

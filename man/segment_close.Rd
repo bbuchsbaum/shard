@@ -13,8 +13,14 @@ segment_close(x, unlink = NULL)
 opened segments, TRUE for owned segments)}
 }
 \value{
-NULL (invisibly)
+\code{NULL}, invisibly.
 }
 \description{
 Close a shared memory segment
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_close(seg)
+}
 }

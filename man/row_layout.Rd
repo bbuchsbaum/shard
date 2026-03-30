@@ -12,9 +12,15 @@ row_layout(shards, rows_per_shard)
 \item{rows_per_shard}{Either a scalar integer or a function(shard)->integer.}
 }
 \value{
-A list mapping shard id (character) to \code{idx_range(start,end)}.
+A named list mapping shard id (character) to an \code{idx_range(start, end)}.
 }
 \description{
 Computes disjoint row ranges for each shard via prefix-sum, enabling lock-free
 writes where each shard writes to a unique region.
+}
+\examples{
+\donttest{
+sh <- shards(100, block_size = 25)
+layout <- row_layout(sh, rows_per_shard = 25L)
+}
 }

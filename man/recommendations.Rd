@@ -16,3 +16,10 @@ A character vector of recommendations (possibly empty).
 Uses run telemetry (copy/materialization stats, packing volume, buffer/table
 writes, scratch pool stats) to produce actionable recommendations.
 }
+\examples{
+\donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+recommendations(res)
+}
+}

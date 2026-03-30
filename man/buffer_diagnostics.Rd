@@ -7,9 +7,13 @@
 buffer_diagnostics()
 }
 \value{
-A list with \code{writes} and \code{bytes}.
+A list with elements \code{writes} (integer count) and \code{bytes}
+(total bytes written) accumulated in the current process.
 }
 \description{
 Returns per-process counters for shard buffer writes. shard_map uses these
 internally to report write volume/operations in copy_report().
+}
+\examples{
+buffer_diagnostics()
 }

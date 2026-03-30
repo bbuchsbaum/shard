@@ -41,3 +41,6 @@ A "kernel" is just a function that shard_map can call for each shard. The
 registry lets shard_map attach additional metadata (footprint hints,
 supports_views) for scheduling/autotuning.
 }
+\examples{
+list_kernels()
+}

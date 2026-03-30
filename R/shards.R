@@ -28,15 +28,12 @@ NULL
 #'
 #' @export
 #' @examples
-#' # Autotune for 8 workers
 #' blocks <- shards(1e6, workers = 8)
-#' length(blocks$shards)  # Number of shards
+#' length(blocks$shards)
 #'
-#' # Explicit block size
 #' blocks <- shards(1000, block_size = 100)
 #'
-#' # Access shard indices
-#' blocks$shards[[1]]$idx  # Indices for first shard
+#' blocks$shards[[1]]$idx
 shards <- function(n,
                    block_size = "auto",
                    workers = NULL,
@@ -115,7 +112,10 @@ shards <- function(n,
 #'
 #' @param idxs List of integer vectors (1-based indices). Each element becomes
 #'   one shard with fields `id`, `idx`, and `len`.
-#' @return A `shard_descriptor`.
+#' @return A \code{shard_descriptor} list describing the chunk layout.
+#' @examples
+#' sh <- shards_list(list(1:10, 11:20, 21:30))
+#' length(sh)
 #' @export
 shards_list <- function(idxs) {
   if (!is.list(idxs)) stop("idxs must be a list", call. = FALSE)
@@ -156,6 +156,7 @@ shards_list <- function(idxs) {
 #' @param scratch_budget Total scratch budget.
 #' @return Integer block size.
 #' @keywords internal
+#' @noRd
 autotune_block_size <- function(n, workers,
                                 min_shards_per_worker = 4L,
                                 max_shards_per_worker = 64L,
@@ -208,6 +209,7 @@ autotune_block_size <- function(n, workers,
 #' @param block_size Items per shard.
 #' @return List of shard descriptors.
 #' @keywords internal
+#' @noRd
 create_contiguous_shards <- function(n, block_size) {
   num_shards <- ceiling(n / block_size)
   shards <- vector("list", num_shards)
@@ -269,6 +271,7 @@ create_contiguous_shards_window_ <- function(start, end, block_size, start_id = 
 #' @param num_shards Number of shards.
 #' @return List of shard descriptors.
 #' @keywords internal
+#' @noRd
 create_strided_shards <- function(n, num_shards) {
   num_shards <- max(min(num_shards, n), 1L)
   shards <- vector("list", num_shards)
@@ -295,6 +298,7 @@ create_strided_shards <- function(n, num_shards) {
 #' @param x Character string.
 #' @return Integer value.
 #' @keywords internal
+#' @noRd
 parse_count <- function(x) {
   if (is.numeric(x)) return(as.integer(x))
 
@@ -320,6 +324,14 @@ parse_count <- function(x) {
   as.integer(value * multiplier)
 }
 
+#' Print a shard_descriptor Object
+#'
+#' @param x A \code{shard_descriptor} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' print(sh)
 #' @export
 print.shard_descriptor <- function(x, ...) {
   cat("shard descriptor\n")
@@ -339,6 +351,13 @@ print.shard_descriptor <- function(x, ...) {
   invisible(x)
 }
 
+#' Length of a shard_descriptor Object
+#'
+#' @param x A \code{shard_descriptor} object.
+#' @return An integer scalar giving the number of shards.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' length(sh)
 #' @export
 length.shard_descriptor <- function(x) {
   x$num_shards
@@ -348,7 +367,10 @@ length.shard_descriptor <- function(x) {
 #'
 #' @param x A shard_descriptor object.
 #' @param i Index or indices.
-#' @return The selected shard(s).
+#' @return A subset of the object.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' sh[1:2]
 #' @export
 `[.shard_descriptor` <- function(x, i) {
   x$shards[i]
@@ -358,7 +380,10 @@ length.shard_descriptor <- function(x) {
 #'
 #' @param x A shard_descriptor object.
 #' @param i Index.
-#' @return The selected shard.
+#' @return A subset of the object.
+#' @examples
+#' sh <- shards(100, block_size = 25)
+#' sh[[1]]
 #' @export
 `[[.shard_descriptor` <- function(x, i) {
   x$shards[[i]]

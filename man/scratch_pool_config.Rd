@@ -10,6 +10,12 @@ scratch_pool_config(max_bytes = Inf)
 \item{max_bytes}{Maximum scratch pool bytes allowed in a worker. If exceeded,
 the worker is flagged for recycle at the next safe point.}
 }
+\value{
+\code{NULL}, invisibly.
+}
 \description{
 Configure scratch pool limits
+}
+\examples{
+cfg <- scratch_pool_config(max_bytes = 100 * 1024^2)
 }

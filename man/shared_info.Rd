@@ -10,8 +10,16 @@ shared_info(x)
 \item{x}{A \code{shard_shared} object.}
 }
 \value{
-A list with detailed information about the shared segment.
+A named list with fields \code{path}, \code{backing}, \code{size},
+\code{readonly}, \code{class_info}, and \code{segment_info}.
 }
 \description{
 Get Information About a Shared Object
+}
+\examples{
+\donttest{
+shared <- share(1:100)
+shared_info(shared)
+close(shared)
+}
 }

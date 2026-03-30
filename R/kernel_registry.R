@@ -26,6 +26,8 @@
 #' @param description Optional human-readable description.
 #' @return Invisibly, the registered kernel metadata.
 #' @export
+#' @examples
+#' list_kernels()
 register_kernel <- function(name,
                             impl,
                             signature = NULL,
@@ -58,6 +60,8 @@ register_kernel <- function(name,
 #'
 #' @return A character vector of registered kernel names.
 #' @export
+#' @examples
+#' list_kernels()
 list_kernels <- function() {
   ls(.kernel_env$registry, all.names = TRUE)
 }

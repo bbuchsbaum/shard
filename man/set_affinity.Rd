@@ -10,9 +10,12 @@ set_affinity(cores)
 \item{cores}{Integer vector of 0-based CPU core ids.}
 }
 \value{
-Logical; TRUE on success.
+A logical scalar; \code{TRUE} on success, \code{FALSE} if not supported.
 }
 \description{
 Intended to be called inside a worker process (e.g., via \code{clusterCall()}).
 On unsupported platforms, returns FALSE.
+}
+\examples{
+affinity_supported()
 }

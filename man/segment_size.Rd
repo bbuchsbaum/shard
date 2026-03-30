@@ -10,8 +10,15 @@ segment_size(x)
 \item{x}{A shard_segment object}
 }
 \value{
-Size in bytes
+Size in bytes as a numeric scalar.
 }
 \description{
 Get the size of a segment
+}
+\examples{
+\donttest{
+seg <- segment_create(1024)
+segment_size(seg)
+segment_close(seg)
+}
 }

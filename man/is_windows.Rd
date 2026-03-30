@@ -7,8 +7,11 @@
 is_windows()
 }
 \value{
-TRUE if on Windows, FALSE otherwise
+A logical scalar: \code{TRUE} if running on Windows, \code{FALSE} otherwise.
 }
 \description{
 Check if running on Windows
+}
+\examples{
+is_windows()
 }

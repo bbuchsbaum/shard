@@ -14,8 +14,14 @@ view_block(x, rows = NULL, cols = NULL)
 \item{cols}{NULL or idx_range().}
 }
 \value{
-A \code{shard_view_block} object.
+A \code{shard_view_block} object representing the contiguous block slice.
 }
 \description{
 Create a contiguous block view
+}
+\examples{
+\donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view_block(m, cols = idx_range(1, 2))
+}
 }

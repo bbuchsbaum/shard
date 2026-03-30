@@ -30,21 +30,5 @@ an object of this class, it will use the adapter's \code{children()} function
 to extract shareable components instead of generic traversal.
 }
 \examples{
-\dontrun{
-# Register an adapter for a custom S4 class
-setClass("MyData", slots = c(data = "matrix", metadata = "list"))
-
-shard_register_adapter("MyData", list(
-  class = "MyData",
-  children = function(x) list(data = x@data),  # Only share the data slot
-  replace = function(x, children) {
-    x@data <- children$data
-    x
-  }
-))
-
-# Now deep sharing will only traverse the 'data' slot
-obj <- new("MyData", data = matrix(1:1e6, nrow = 1000), metadata = list(a = 1))
-shared <- share(obj, deep = TRUE, min_bytes = 1000)
-}
+shard_list_adapters()
 }

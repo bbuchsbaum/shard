@@ -24,13 +24,11 @@ Convenience function that creates a segment, writes the data,
 and returns an ALTREP view.
 }
 \examples{
-\dontrun{
-# Convert existing vector to shared
+\donttest{
 x <- as_shared(1:100)
-is_shared_vector(x)  # TRUE
+is_shared_vector(x)
 
-# Subsetting returns views
 y <- x[1:10]
-is_shared_vector(y)  # TRUE for contiguous subsets
+is_shared_vector(y)
 }
 }

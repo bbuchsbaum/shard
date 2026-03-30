@@ -14,8 +14,17 @@ segment_open(path, backing = c("mmap", "shm"), readonly = TRUE)
 \item{readonly}{Open as read-only}
 }
 \value{
-An S3 object of class "shard_segment"
+A \code{shard_segment} object attached to the existing segment.
 }
 \description{
 Open an existing shared memory segment
+}
+\examples{
+\donttest{
+seg <- segment_create(1024, backing = "mmap")
+path <- segment_path(seg)
+seg2 <- segment_open(path, backing = "mmap", readonly = TRUE)
+segment_close(seg2, unlink = FALSE)
+segment_close(seg)
+}
 }

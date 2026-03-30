@@ -29,3 +29,5 @@
 ^why-shard-is-different\.md$
 ^\.rcmdcheck_result\.rds$
 ^LICENSE\.md$
+^cran-comments\.md$
+^NEWS\.md$

@@ -69,7 +69,7 @@ Useful links:
 
 }
 \author{
-\strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com}
+\strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com} [copyright holder]
 
 }
 \keyword{internal}

@@ -23,3 +23,10 @@ Simplified result if possible, otherwise a list.
 \description{
 Parallel sapply with Supervision
 }
+\examples{
+\donttest{
+pool_create(2)
+result <- pool_sapply(1:4, function(x) x^2, pool = pool_get())
+pool_stop()
+}
+}

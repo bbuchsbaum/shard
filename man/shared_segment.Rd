@@ -15,3 +15,9 @@ A \code{shard_segment} S3 object wrapping the underlying segment
 \description{
 Get the underlying segment from a shared vector
 }
+\examples{
+\donttest{
+x <- as_shared(1:100)
+shared_segment(x)
+}
+}

@@ -43,15 +43,15 @@ NULL
 #'   - `queue_status`, `pool_stats`
 #' @export
 #' @examples
-#' \dontrun{
-#' # Sum 1..1e6 without materializing 1e6 per-shard results:
+#' \donttest{
 #' res <- shard_reduce(
-#'   shards(1e6, block_size = 1000),
+#'   100L,
 #'   map = function(s) sum(s$idx),
 #'   combine = function(acc, x) acc + x,
 #'   init = 0,
-#'   workers = 4
+#'   workers = 2
 #' )
+#' pool_stop()
 #' res$value
 #' }
 shard_reduce <- function(shards,
@@ -258,7 +258,19 @@ shard_reduce <- function(shards,
   )
 }
 
+#' Print a shard_reduce_result Object
+#'
+#' @param x A \code{shard_reduce_result} object.
+#' @param ... Further arguments (ignored).
+#' @return The input \code{x}, invisibly.
 #' @export
+#' @examples
+#' \donttest{
+#' res <- shard_reduce(4L, map = function(s) sum(s$idx),
+#'   combine = `+`, init = 0, workers = 2)
+#' pool_stop()
+#' print(res)
+#' }
 print.shard_reduce_result <- function(x, ...) {
   cat("shard_reduce result\n")
   if (!is.null(x$diagnostics)) {

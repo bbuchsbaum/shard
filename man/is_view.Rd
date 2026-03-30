@@ -13,8 +13,16 @@ is_block_view(x)
 \item{x}{An object.}
 }
 \value{
-Logical. TRUE if \code{x} is a shard view (or block view).
+Logical. \code{TRUE} if \code{x} is a shard view (or block view).
 }
 \description{
 View Predicates
+}
+\examples{
+\donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view_block(m, cols = idx_range(1, 2))
+is_view(v)
+is_block_view(v)
+}
 }

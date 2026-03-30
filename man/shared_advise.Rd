@@ -15,8 +15,14 @@ shared_advise(
 \item{advice}{See \code{\link[=segment_advise]{segment_advise()}}.}
 }
 \value{
-Logical.
+A logical scalar; \code{TRUE} if the OS accepted the hint.
 }
 \description{
 Advise access pattern for a shared input vector/matrix
+}
+\examples{
+\donttest{
+x <- as_shared(1:100)
+shared_advise(x, "sequential")
+}
 }

@@ -20,13 +20,12 @@ An ALTREP view into the same shared memory
 Create a view (subset) of a shared vector
 }
 \examples{
-\dontrun{
+\donttest{
 seg <- segment_create(800)
 segment_write(seg, 1:100, offset = 0)
 x <- shared_vector(seg, "integer", length = 100)
 
-# Create a view of elements 10-20
 y <- shared_view(x, start = 10, length = 11)
-y[1]  # Same as x[10]
+y[1]
 }
 }

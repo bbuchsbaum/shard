@@ -2,9 +2,15 @@
 % Please edit documentation in R/share.R
 \name{materialize}
 \alias{materialize}
+\alias{materialize.shard_shared}
+\alias{materialize.default}
 \title{Materialize Shared Object}
 \usage{
 materialize(x)
+
+\method{materialize}{shard_shared}(x)
+
+\method{materialize}{default}(x)
 }
 \arguments{
 \item{x}{A \code{shard_shared} object.}
@@ -16,8 +22,9 @@ The original R object.
 Alias for \code{fetch()}. Retrieves the R object from shared memory.
 }
 \examples{
-\dontrun{
+\donttest{
 shared <- share(1:100)
 data <- materialize(shared)
+close(shared)
 }
 }
