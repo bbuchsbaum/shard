@@ -32,3 +32,17 @@ table_write(target, rows_or_shard_id, data, ...)
 - ...:
 
   Reserved for future extensions.
+
+## Value
+
+`NULL` (invisibly).
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 10L)
+table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+# }
+```

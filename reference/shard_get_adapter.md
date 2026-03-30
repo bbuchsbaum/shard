@@ -24,11 +24,6 @@ or NULL if no adapter is registered.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Check if an adapter is registered for an object
-adapter <- shard_get_adapter(my_object)
-if (!is.null(adapter)) {
-  children <- adapter$children(my_object)
-}
-} # }
+shard_get_adapter(1:10)
+#> NULL
 ```

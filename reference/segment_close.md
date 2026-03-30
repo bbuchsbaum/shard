@@ -21,4 +21,13 @@ segment_close(x, unlink = NULL)
 
 ## Value
 
-NULL (invisibly)
+`NULL`, invisibly.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024)
+segment_close(seg)
+# }
+```

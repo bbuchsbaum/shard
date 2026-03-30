@@ -21,4 +21,13 @@ row_layout(shards, rows_per_shard)
 
 ## Value
 
-A list mapping shard id (character) to `idx_range(start,end)`.
+A named list mapping shard id (character) to an `idx_range(start, end)`.
+
+## Examples
+
+``` r
+# \donttest{
+sh <- shards(100, block_size = 25)
+layout <- row_layout(sh, rows_per_shard = 25L)
+# }
+```

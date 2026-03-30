@@ -73,24 +73,21 @@ Return an empty list for default behavior (no customization).
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Define a hook for a class with a cache slot to skip
+# \donttest{
 shard_share_hook.MyModelClass <- function(x, ctx) {
     list(
-        skip_slots = "cache",  # Don't traverse the cache slot
-        force_share_paths = paste0(ctx$path, "@coefficients")  # Always share coefficients
+        skip_slots = "cache",
+        force_share_paths = paste0(ctx$path, "@coefficients")
     )
 }
 
-# Define a hook that rewrites objects before sharing
 shard_share_hook.LazyData <- function(x, ctx) {
     list(
         rewrite = function(obj) {
-            # Materialize lazy data before sharing
             obj$data <- as.matrix(obj$data)
             obj
         }
     )
 }
-} # }
+# }
 ```

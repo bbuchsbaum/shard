@@ -10,4 +10,11 @@ available_backings()
 
 ## Value
 
-Character vector of available backing types
+A character vector of available backing types on the current platform.
+
+## Examples
+
+``` r
+available_backings()
+#> [1] "mmap" "shm" 
+```

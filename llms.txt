@@ -27,7 +27,7 @@ Development version:
 
 ``` r
 # install.packages("pak")
-pak::pak("your-org/shard")
+pak::pak("bbuchsbaum/shard")
 ```
 
 ------------------------------------------------------------------------
@@ -180,12 +180,36 @@ MIT
   Arena Semantic Scope
 - [`arena_depth()`](https://bbuchsbaum.github.io/shard/reference/arena_depth.md)
   : Get Current Arena Depth
+- [`as.array(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.array.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to Array
+- [`as.double(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.double.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to Double
+- [`as.integer(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.integer.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to Integer
+- [`as.logical(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.logical.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to Logical
+- [`as.matrix(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.matrix.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to Matrix
+- [`as.raw(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.raw.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to Raw
+- [`as.vector(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as.vector.shard_buffer.md)
+  : Coerce a Shared Memory Buffer to a Vector
 - [`as_shared()`](https://bbuchsbaum.github.io/shard/reference/as_shared.md)
   : Create a shared vector from an existing R vector
 - [`as_tibble()`](https://bbuchsbaum.github.io/shard/reference/as_tibble.md)
   : Materialize a shard table handle as a data.frame/tibble
+- [`as_tibble(`*`<shard_dataset>`*`)`](https://bbuchsbaum.github.io/shard/reference/as_tibble.shard_dataset.md)
+  : Materialize a dataset handle into a data.frame/tibble
+- [`as_tibble(`*`<shard_row_groups>`*`)`](https://bbuchsbaum.github.io/shard/reference/as_tibble.shard_row_groups.md)
+  : Materialize a row-groups handle into a data.frame/tibble
 - [`as_tibble(`*`<shard_table_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/as_tibble.shard_table_buffer.md)
   : Materialize a fixed table handle or buffer
+- [`as_tibble(`*`<shard_table_handle>`*`)`](https://bbuchsbaum.github.io/shard/reference/as_tibble.shard_table_handle.md)
+  : Materialize a table handle into a data.frame/tibble
+- [`` `attr<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/attr-set-.shard_shared_vector.md)
+  : Set an Attribute on a Shared Vector
+- [`` `attributes<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/attributes-set-.shard_shared_vector.md)
+  : Set Attributes on a Shared Vector
 - [`available_backings()`](https://bbuchsbaum.github.io/shard/reference/available_backings.md)
   : Get available shared memory backing types
 - [`buffer()`](https://bbuchsbaum.github.io/shard/reference/buffer.md) :
@@ -203,9 +227,17 @@ MIT
 - [`buffer_path()`](https://bbuchsbaum.github.io/shard/reference/buffer_path.md)
   : Get Buffer Path
 - [`close(`*`<shard_shared>`*`)`](https://bbuchsbaum.github.io/shard/reference/close.shard_shared.md)
+  [`close(`*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/close.shard_shared.md)
+  [`close(`*`<shard_deep_shared>`*`)`](https://bbuchsbaum.github.io/shard/reference/close.shard_shared.md)
   : Close a Shared Object
 - [`collect()`](https://bbuchsbaum.github.io/shard/reference/collect.md)
   : Collect a shard table into memory
+- [`collect(`*`<shard_dataset>`*`)`](https://bbuchsbaum.github.io/shard/reference/collect.shard_dataset.md)
+  : Collect a dataset handle into memory
+- [`collect(`*`<shard_row_groups>`*`)`](https://bbuchsbaum.github.io/shard/reference/collect.shard_row_groups.md)
+  : Collect a row-groups handle into memory
+- [`collect(`*`<shard_table_handle>`*`)`](https://bbuchsbaum.github.io/shard/reference/collect.shard_table_handle.md)
+  : Collect a table handle into memory
 - [`int32()`](https://bbuchsbaum.github.io/shard/reference/coltypes.md)
   [`float64()`](https://bbuchsbaum.github.io/shard/reference/coltypes.md)
   [`bool()`](https://bbuchsbaum.github.io/shard/reference/coltypes.md)
@@ -218,6 +250,12 @@ MIT
   : Copy-on-Write Policy Report
 - [`diagnostics`](https://bbuchsbaum.github.io/shard/reference/diagnostics.md)
   : Diagnostics API
+- [`` `dim<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/dim-set-.shard_shared_vector.md)
+  : Set dim on a Shared Vector
+- [`dim(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/dim.shard_buffer.md)
+  : Dimensions of a Shared Memory Buffer
+- [`` `dimnames<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/dimnames-set-.shard_shared_vector.md)
+  : Set dimnames on a Shared Vector
 - [`dispatch`](https://bbuchsbaum.github.io/shard/reference/dispatch.md)
   : Task Dispatch Engine
 - [`dispatch_chunks()`](https://bbuchsbaum.github.io/shard/reference/dispatch_chunks.md)
@@ -243,12 +281,24 @@ MIT
   : Check if running on Windows
 - [`iterate_row_groups()`](https://bbuchsbaum.github.io/shard/reference/iterate_row_groups.md)
   : Iterate row groups
+- [`length(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/length.shard_buffer.md)
+  : Length of a Shared Memory Buffer
+- [`length(`*`<shard_descriptor>`*`)`](https://bbuchsbaum.github.io/shard/reference/length.shard_descriptor.md)
+  : Length of a shard_descriptor Object
+- [`length(`*`<shard_descriptor_lazy>`*`)`](https://bbuchsbaum.github.io/shard/reference/length.shard_descriptor_lazy.md)
+  : Length of a shard_descriptor_lazy Object
 - [`list_kernels()`](https://bbuchsbaum.github.io/shard/reference/list_kernels.md)
   : List registered kernels
 - [`materialize()`](https://bbuchsbaum.github.io/shard/reference/materialize.md)
   : Materialize Shared Object
+- [`materialize(`*`<shard_view_block>`*`)`](https://bbuchsbaum.github.io/shard/reference/materialize.shard_view_block.md)
+  : Materialize a block view into an R matrix
+- [`materialize(`*`<shard_view_gather>`*`)`](https://bbuchsbaum.github.io/shard/reference/materialize.shard_view_gather.md)
+  : Materialize a gather view into an R matrix
 - [`mem_report()`](https://bbuchsbaum.github.io/shard/reference/mem_report.md)
   : Memory Usage Report
+- [`` `names<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/names-set-.shard_shared_vector.md)
+  : Set Names on a Shared Vector
 - [`pin_workers()`](https://bbuchsbaum.github.io/shard/reference/pin_workers.md)
   : Pin shard workers to CPU cores
 - [`pool`](https://bbuchsbaum.github.io/shard/reference/pool.md) :
@@ -269,6 +319,46 @@ MIT
   : Get Pool Status
 - [`pool_stop()`](https://bbuchsbaum.github.io/shard/reference/pool_stop.md)
   : Stop the Worker Pool
+- [`print(`*`<arena_result>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.arena_result.md)
+  : Print an arena_result object
+- [`print(`*`<shard_apply_policy>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_apply_policy.md)
+  : Print a shard_apply_policy Object
+- [`print(`*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_buffer.md)
+  : Print a Shared Memory Buffer
+- [`print(`*`<shard_deep_shared>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_deep_shared.md)
+  : Print a Deep-Shared Object
+- [`print(`*`<shard_descriptor>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_descriptor.md)
+  : Print a shard_descriptor Object
+- [`print(`*`<shard_descriptor_lazy>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_descriptor_lazy.md)
+  : Print a shard_descriptor_lazy Object
+- [`print(`*`<shard_dispatch_result>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_dispatch_result.md)
+  : Print a shard_dispatch_result Object
+- [`print(`*`<shard_health_report>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_health_report.md)
+  : Print a shard_health_report Object
+- [`print(`*`<shard_idx_range>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_idx_range.md)
+  : Print a shard_idx_range object
+- [`print(`*`<shard_pool>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_pool.md)
+  : Print a shard_pool Object
+- [`print(`*`<shard_reduce_result>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_reduce_result.md)
+  : Print a shard_reduce_result Object
+- [`print(`*`<shard_report>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_report.md)
+  : Print a shard_report Object
+- [`print(`*`<shard_result>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_result.md)
+  : Print a shard_result Object
+- [`print(`*`<shard_segment>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_segment.md)
+  : Print a Shared Memory Segment
+- [`print(`*`<shard_shared>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_shared.md)
+  : Print a Shared Object
+- [`print(`*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_shared_vector.md)
+  : Print a Shared Vector
+- [`print(`*`<shard_tiles>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_tiles.md)
+  : Print a shard_tiles object
+- [`print(`*`<shard_view_block>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_view_block.md)
+  : Print a shard_view_block object
+- [`print(`*`<shard_view_gather>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_view_gather.md)
+  : Print a shard_view_gather object
+- [`print(`*`<shard_worker>`*`)`](https://bbuchsbaum.github.io/shard/reference/print.shard_worker.md)
+  : Print a shard_worker Object
 - [`queue`](https://bbuchsbaum.github.io/shard/reference/queue.md) :
   Chunk Queue Management
 - [`recommendations()`](https://bbuchsbaum.github.io/shard/reference/recommendations.md)
@@ -381,10 +471,18 @@ MIT
   : Extract Buffer Elements
 - [`` `[`( ``*`<shard_descriptor>`*`)`](https://bbuchsbaum.github.io/shard/reference/sub-.shard_descriptor.md)
   : Subset Shard Descriptor
+- [`` `[`( ``*`<shard_descriptor_lazy>`*`)`](https://bbuchsbaum.github.io/shard/reference/sub-.shard_descriptor_lazy.md)
+  : Subset a shard_descriptor_lazy Object
 - [`` `[[`( ``*`<shard_descriptor>`*`)`](https://bbuchsbaum.github.io/shard/reference/sub-sub-.shard_descriptor.md)
   : Get Single Shard
+- [`` `[[`( ``*`<shard_descriptor_lazy>`*`)`](https://bbuchsbaum.github.io/shard/reference/sub-sub-.shard_descriptor_lazy.md)
+  : Extract a Single Shard from a shard_descriptor_lazy Object
+- [`` `[[<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/sub-subset-.shard_shared_vector.md)
+  : Double-bracket Subset-assign a Shared Vector
 - [`` `[<-`( ``*`<shard_buffer>`*`)`](https://bbuchsbaum.github.io/shard/reference/subset-.shard_buffer.md)
   : Assign to Buffer Elements
+- [`` `[<-`( ``*`<shard_shared_vector>`*`)`](https://bbuchsbaum.github.io/shard/reference/subset-.shard_shared_vector.md)
+  : Subset-assign a Shared Vector
 - [`succeeded()`](https://bbuchsbaum.github.io/shard/reference/succeeded.md)
   : Check if shard_map Succeeded
 - [`table_buffer()`](https://bbuchsbaum.github.io/shard/reference/table_buffer.md)

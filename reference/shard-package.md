@@ -94,4 +94,5 @@ Useful links:
 
 ## Author
 
-**Maintainer**: Bradley Buchsbaum <brad.buchsbaum@gmail.com>
+**Maintainer**: Bradley Buchsbaum <brad.buchsbaum@gmail.com> \[copyright
+holder\]

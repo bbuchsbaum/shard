@@ -16,4 +16,15 @@ segment_size(x)
 
 ## Value
 
-Size in bytes
+Size in bytes as a numeric scalar.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024)
+segment_size(seg)
+#> [1] 1024
+segment_close(seg)
+# }
+```

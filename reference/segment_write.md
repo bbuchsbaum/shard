@@ -24,4 +24,14 @@ segment_write(x, data, offset = 0)
 
 ## Value
 
-Number of bytes written (invisibly)
+Number of bytes written, invisibly.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024)
+segment_write(seg, as.integer(1:10), offset = 0)
+segment_close(seg)
+# }
+```

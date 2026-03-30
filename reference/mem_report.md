@@ -39,8 +39,23 @@ An S3 object of class `shard_report` with type `"memory"` containing:
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-pool_create(4)
-mem_report()
-} # }
+# \donttest{
+p <- pool_create(2)
+mem_report(p)
+#> shard memory report
+#> Generated: 2026-03-30 15:53:31 
+#> 
+#> Pool: 2 workers
+#> RSS limit: 2.0 GB 
+#> 
+#> Aggregate:
+#>   Total: 137.4 MB 
+#>   Peak: 68.7 MB 
+#>   Mean: 68.7 MB 
+#> 
+#> Per-worker:
+#>   [+] 1: rss=68.6 MB, baseline=68.6 MB, drift=0.0%
+#>   [+] 2: rss=68.7 MB, baseline=68.7 MB, drift=0.0%
+pool_stop(p)
+# }
 ```

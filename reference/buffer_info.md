@@ -16,4 +16,36 @@ buffer_info(x)
 
 ## Value
 
-A list with buffer properties.
+A named list with buffer properties: `type`, `dim`, `n`, `bytes`,
+`backing`, `path`, and `readonly`.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("integer", dim = c(5, 5))
+buffer_info(buf)
+#> $type
+#> [1] "integer"
+#> 
+#> $dim
+#> [1] 5 5
+#> 
+#> $n
+#> [1] 25
+#> 
+#> $bytes
+#> [1] 100
+#> 
+#> $backing
+#> [1] "mmap"
+#> 
+#> $path
+#> [1] "/tmp/shard_7100_1774886001_1774886011"
+#> 
+#> $readonly
+#> [1] FALSE
+#> 
+buffer_close(buf)
+# }
+```

@@ -16,4 +16,15 @@ segment_path(x)
 
 ## Value
 
-The path string, or NULL for anonymous segments
+The path string, or `NULL` for anonymous segments.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024, backing = "mmap")
+segment_path(seg)
+#> [1] "/tmp/shard_7100_1774886037_1774886033"
+segment_close(seg)
+# }
+```

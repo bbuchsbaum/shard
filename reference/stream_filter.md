@@ -30,4 +30,16 @@ stream_filter(x, predicate, path = NULL, ...)
 
 ## Value
 
-A `shard_dataset` handle.
+A `shard_dataset` handle pointing to the filtered partitions.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = c(1.0, 2.0, 3.0)))
+rg <- table_finalize(sink)
+filtered <- stream_filter(rg, predicate = function(chunk) chunk$x > 1.5)
+# }
+```

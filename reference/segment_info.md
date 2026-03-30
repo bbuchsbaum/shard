@@ -16,4 +16,30 @@ segment_info(x)
 
 ## Value
 
-A list with segment properties
+A named list with segment metadata including `size`, `backing`, `path`,
+`readonly`, and `owns`.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024)
+segment_info(seg)
+#> $size
+#> [1] 1024
+#> 
+#> $backing
+#> [1] "mmap"
+#> 
+#> $path
+#> [1] "/tmp/shard_7100_1774886037_1774886031"
+#> 
+#> $readonly
+#> [1] FALSE
+#> 
+#> $owns
+#> [1] TRUE
+#> 
+segment_close(seg)
+# }
+```

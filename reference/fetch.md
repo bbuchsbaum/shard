@@ -7,6 +7,15 @@ the primary way to access shared data in workers.
 
 ``` r
 fetch(x, ...)
+
+# S3 method for class 'shard_shared'
+fetch(x, ...)
+
+# S3 method for class 'shard_deep_shared'
+fetch(x, ...)
+
+# Default S3 method
+fetch(x, ...)
 ```
 
 ## Arguments
@@ -37,10 +46,12 @@ for compatibility.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-x <- 1:1000
+# \donttest{
+x <- 1:100
 shared <- share(x)
 recovered <- fetch(shared)
-identical(x, recovered)  # TRUE
-} # }
+identical(x, recovered)
+#> [1] FALSE
+close(shared)
+# }
 ```

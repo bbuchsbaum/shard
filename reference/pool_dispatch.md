@@ -39,3 +39,14 @@ pool_dispatch(
 ## Value
 
 The result of evaluating expr in the worker.
+
+## Examples
+
+``` r
+# \donttest{
+p <- pool_create(2)
+pool_dispatch(1, quote(1 + 1), pool = p)
+#> [1] 2
+pool_stop(p)
+# }
+```

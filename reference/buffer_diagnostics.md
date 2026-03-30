@@ -11,4 +11,17 @@ buffer_diagnostics()
 
 ## Value
 
-A list with `writes` and `bytes`.
+A list with elements `writes` (integer count) and `bytes` (total bytes
+written) accumulated in the current process.
+
+## Examples
+
+``` r
+buffer_diagnostics()
+#> $writes
+#> [1] 4
+#> 
+#> $bytes
+#> [1] 180
+#> 
+```

@@ -81,19 +81,9 @@ read-only shared inputs
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Create a 1M element double buffer
-out <- buffer("double", dim = 1e6)
-
-# Write to slices (typically done in workers)
-out[1:1000] <- rnorm(1000)
-out[1001:2000] <- rnorm(1000)
-
-# Read back results
-result <- out[]  # or as.double(out)
-
-# Matrix buffer
-mat <- buffer("double", dim = c(100, 50))
-mat[1:10, ] <- matrix(1:500, nrow = 10)
-} # }
+# \donttest{
+out <- buffer("double", dim = 100)
+out[1:10] <- rnorm(10)
+result <- out[]
+# }
 ```

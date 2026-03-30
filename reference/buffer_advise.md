@@ -24,4 +24,14 @@ buffer_advise(
 
 ## Value
 
-Logical.
+A logical scalar; `TRUE` if the OS accepted the hint.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("double", dim = 10L)
+buffer_advise(buf, "sequential")
+#> [1] TRUE
+# }
+```

@@ -17,3 +17,15 @@ scratch_matrix(nrow, ncol, key = NULL)
 - key:
 
   Optional key to control reuse. Defaults to a shape-derived key.
+
+## Value
+
+A double matrix of dimensions `nrow` by `ncol`.
+
+## Examples
+
+``` r
+m <- scratch_matrix(10, 5)
+dim(m)
+#> [1] 10  5
+```

@@ -28,3 +28,12 @@ pin_workers(pool = NULL, strategy = c("spread", "compact"), cores = NULL)
 ## Value
 
 Invisibly, a logical vector per worker indicating success.
+
+## Examples
+
+``` r
+# \donttest{
+affinity_supported()
+#> [1] TRUE
+# }
+```

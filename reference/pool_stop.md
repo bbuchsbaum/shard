@@ -23,3 +23,12 @@ pool_stop(pool = NULL, timeout = 5)
 ## Value
 
 NULL (invisibly).
+
+## Examples
+
+``` r
+# \donttest{
+p <- pool_create(2)
+pool_stop(p)
+# }
+```

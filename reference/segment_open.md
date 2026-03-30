@@ -24,4 +24,16 @@ segment_open(path, backing = c("mmap", "shm"), readonly = TRUE)
 
 ## Value
 
-An S3 object of class "shard_segment"
+A `shard_segment` object attached to the existing segment.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024, backing = "mmap")
+path <- segment_path(seg)
+seg2 <- segment_open(path, backing = "mmap", readonly = TRUE)
+segment_close(seg2, unlink = FALSE)
+segment_close(seg)
+# }
+```

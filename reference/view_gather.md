@@ -27,9 +27,18 @@ view_gather(x, rows = NULL, cols)
 
 ## Value
 
-A view object of class `shard_view_gather`.
+A `shard_view_gather` object describing the indexed column view.
 
 ## Details
 
 v1 note: only column-gather views are implemented (rows may be NULL or
 idx_range()).
+
+## Examples
+
+``` r
+# \donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view_gather(m, cols = c(1L, 3L))
+# }
+```

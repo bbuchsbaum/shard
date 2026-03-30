@@ -16,14 +16,17 @@ is_shared(x)
 
 ## Value
 
-TRUE if x is a `shard_shared` or `shard_deep_shared` object, FALSE
-otherwise.
+A logical scalar: `TRUE` if `x` is a shared object, `FALSE` otherwise.
 
 ## Examples
 
 ``` r
-is_shared(share(1:10))  # TRUE
-#> [1] TRUE
-is_shared(1:10)         # FALSE
+is_shared(1:10)
 #> [1] FALSE
+# \donttest{
+shared <- share(1:10)
+is_shared(shared)
+#> [1] TRUE
+close(shared)
+# }
 ```

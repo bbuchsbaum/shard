@@ -55,12 +55,8 @@ arena(
 
 ## Value
 
-The result of evaluating `expr`. If `diagnostics = TRUE`, returns a list
-with:
-
-- `result`: The expression result
-
-- `diagnostics`: Memory usage information
+The result of evaluating `expr`. If `diagnostics = TRUE`, returns an
+`arena_result` object with elements `result` and `diagnostics`.
 
 ## Details
 
@@ -93,25 +89,44 @@ shared memory inputs.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Basic usage - wrap scratch computation
+# \donttest{
 result <- arena({
-  # Large temporaries created here won't accumulate
   tmp <- matrix(rnorm(1e6), nrow = 1000)
-  colMeans(tmp)  # Only the means escape
+  colMeans(tmp)
 })
 
-# Strict mode - warns on large escapes
-result <- arena({
-  big <- rnorm(1e7)  # 80MB
-  big  # Warning: large object escaping
-}, strict = TRUE)
-
-# Get diagnostics about memory usage
 info <- arena({
   x <- rnorm(1e5)
   sum(x)
 }, diagnostics = TRUE)
-info$diagnostics  # Memory tracking info
-} # }
+info$diagnostics
+#> $arena_id
+#> [1] "arena_1_15531818.487"
+#> 
+#> $strict
+#> [1] FALSE
+#> 
+#> $rss_before
+#> [1] 166858752
+#> 
+#> $rss_after
+#> [1] 166858752
+#> 
+#> $rss_delta
+#> [1] 0
+#> 
+#> $result_size
+#> [1] 56
+#> 
+#> $gc_before
+#>           used (Mb) gc trigger (Mb) max used (Mb)
+#> Ncells 1022282 54.6    1315775 70.3  1315775 70.3
+#> Vcells 3088226 23.6    8388608 64.0  5590311 42.7
+#> 
+#> $gc_after
+#>           used (Mb) gc trigger (Mb) max used (Mb)
+#> Ncells 1022319 54.6    1315775 70.3  1315775 70.3
+#> Vcells 3188273 24.4    8388608 64.0  5590311 42.7
+#> 
+# }
 ```

@@ -16,4 +16,14 @@ segment_protect(x)
 
 ## Value
 
-The segment object (invisibly)
+The `shard_segment` object, invisibly.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024)
+segment_protect(seg)
+segment_close(seg)
+# }
+```

@@ -40,7 +40,7 @@ table_sink(
 
 ## Value
 
-A `shard_table_sink`.
+A `shard_table_sink` object.
 
 ## Details
 
@@ -50,3 +50,12 @@ v1.1 implementation notes:
 
 - This guarantees bounded master memory during execution; final
   collection may still be large if you materialize.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64(), label = string_col())
+sink <- table_sink(s, mode = "row_groups")
+# }
+```

@@ -8,6 +8,12 @@ no longer be accessed.
 ``` r
 # S3 method for class 'shard_shared'
 close(con, ...)
+
+# S3 method for class 'shard_shared_vector'
+close(con, ...)
+
+# S3 method for class 'shard_deep_shared'
+close(con, ...)
 ```
 
 ## Arguments

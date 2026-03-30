@@ -33,3 +33,13 @@ pool_sapply(X, FUN, ..., simplify = TRUE, pool = NULL)
 ## Value
 
 Simplified result if possible, otherwise a list.
+
+## Examples
+
+``` r
+# \donttest{
+pool_create(2)
+result <- pool_sapply(1:4, function(x) x^2, pool = pool_get())
+pool_stop()
+# }
+```

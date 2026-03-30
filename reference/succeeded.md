@@ -17,3 +17,14 @@ succeeded(x)
 ## Value
 
 Logical. TRUE if no failures.
+
+## Examples
+
+``` r
+# \donttest{
+result <- shard_map(4L, function(shard) shard$idx[[1L]], workers = 2)
+pool_stop()
+succeeded(result)
+#> [1] TRUE
+# }
+```

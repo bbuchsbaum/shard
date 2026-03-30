@@ -33,4 +33,16 @@ buffer_open(path, type, dim, backing = c("mmap", "shm"), readonly = FALSE)
 
 ## Value
 
-An S3 object of class "shard_buffer".
+A `shard_buffer` object attached to the existing segment.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("double", dim = 10)
+path <- buffer_path(buf)
+buf2 <- buffer_open(path, type = "double", dim = 10, backing = "mmap")
+buffer_close(buf2, unlink = FALSE)
+buffer_close(buf)
+# }
+```

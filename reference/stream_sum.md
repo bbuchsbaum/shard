@@ -26,4 +26,18 @@ stream_sum(x, col, na_rm = TRUE)
 
 ## Value
 
-A single numeric sum.
+A single numeric value giving the sum of the column across all
+partitions.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = c(1.0, 2.0, 3.0)))
+rg <- table_finalize(sink)
+stream_sum(rg, "x")
+#> [1] 6
+# }
+```

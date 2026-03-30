@@ -38,10 +38,35 @@ An S3 object of class `shard_report` with type `"copy"` containing:
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-X <- matrix(rnorm(1e4), 100, 100)
-result <- shard_map(shards(10), function(s, X) sum(X[, s$idx]),
-                    borrow = list(X = X))
-copy_report(result)
-} # }
+# \donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+copy_report(res)
+#> shard data copy report
+#> Generated: 2026-03-30 15:53:24 
+#> 
+#> Borrowed inputs:
+#>   Exports: 0 
+#>   Bytes: 0 B 
+#> 
+#> Results:
+#>   Imports: 8 
+#>   Bytes: 1.6 KB 
+#> 
+#> Buffers:
+#>   Writes: 0 
+#>   Bytes: 0 B 
+#> 
+#> Tables:
+#>   Writes: 0 
+#>   Rows: 0 
+#>   Bytes: 0 B 
+#> 
+#> Views:
+#>   Created: 0 
+#>   Materialized: 0 
+#>   Materialized bytes: 0 B 
+#>   Packed: 0 
+#>   Packed bytes: 0 B 
+# }
 ```

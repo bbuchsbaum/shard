@@ -24,3 +24,16 @@ pool_health_check(pool = NULL, busy_workers = NULL)
 ## Value
 
 A list with health status per worker and actions taken.
+
+## Examples
+
+``` r
+# \donttest{
+p <- pool_create(2)
+pool_health_check(p)
+#> Pool health check at 2026-03-30 15:53:33 
+#> Stats: recycles = 0 , deaths = 0 , tasks = 0 
+#> All workers healthy
+pool_stop(p)
+# }
+```

@@ -54,3 +54,10 @@ Invisibly, the registered kernel metadata.
 A "kernel" is just a function that shard_map can call for each shard.
 The registry lets shard_map attach additional metadata (footprint hints,
 supports_views) for scheduling/autotuning.
+
+## Examples
+
+``` r
+list_kernels()
+#> [1] "col_means"      "col_vars"       "crossprod_tile"
+```

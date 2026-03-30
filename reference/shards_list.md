@@ -20,4 +20,12 @@ shards_list(idxs)
 
 ## Value
 
-A `shard_descriptor`.
+A `shard_descriptor` list describing the chunk layout.
+
+## Examples
+
+``` r
+sh <- shards_list(list(1:10, 11:20, 21:30))
+length(sh)
+#> [1] 3
+```

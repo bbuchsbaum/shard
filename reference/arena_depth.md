@@ -11,3 +11,10 @@ arena_depth()
 ## Value
 
 Integer count of nested arena scopes (0 if not in an arena).
+
+## Examples
+
+``` r
+arena_depth()
+#> [1] 0
+```

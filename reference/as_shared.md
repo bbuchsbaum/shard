@@ -35,13 +35,13 @@ An ALTREP vector backed by shared memory
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Convert existing vector to shared
+# \donttest{
 x <- as_shared(1:100)
-is_shared_vector(x)  # TRUE
+is_shared_vector(x)
+#> [1] TRUE
 
-# Subsetting returns views
 y <- x[1:10]
-is_shared_vector(y)  # TRUE for contiguous subsets
-} # }
+is_shared_vector(y)
+#> [1] TRUE
+# }
 ```

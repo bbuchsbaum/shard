@@ -26,4 +26,16 @@ share_open(path, backing = c("mmap", "shm"), size = NULL)
 
 ## Value
 
-A `shard_shared` object.
+A `shard_shared` object attached to the existing segment.
+
+## Examples
+
+``` r
+# \donttest{
+shared <- share(1:50)
+info <- shared_info(shared)
+reopened <- share_open(info$path, backing = "mmap")
+close(reopened)
+close(shared)
+# }
+```

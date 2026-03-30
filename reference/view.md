@@ -28,4 +28,14 @@ view(x, rows = NULL, cols = NULL, type = c("auto", "block", "gather"))
 
 ## Value
 
-A view object.
+A `shard_view_block` or `shard_view_gather` object depending on the
+selectors provided.
+
+## Examples
+
+``` r
+# \donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view(m, cols = idx_range(1, 2))
+# }
+```

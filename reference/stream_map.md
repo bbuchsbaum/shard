@@ -8,6 +8,12 @@ when `f()` returns a small summary per partition.
 
 ``` r
 stream_map(x, f, ...)
+
+# S3 method for class 'shard_row_groups'
+stream_map(x, f, ...)
+
+# S3 method for class 'shard_dataset'
+stream_map(x, f, ...)
 ```
 
 ## Arguments
@@ -26,4 +32,16 @@ stream_map(x, f, ...)
 
 ## Value
 
-A list of per-partition values (one per file).
+A list of per-partition values, one element per row-group file.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+nrows <- stream_map(rg, nrow)
+# }
+```

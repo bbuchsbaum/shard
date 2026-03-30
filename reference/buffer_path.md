@@ -17,4 +17,16 @@ buffer_path(x)
 
 ## Value
 
-Character string with path/name, or NULL if anonymous.
+A character string with the path or name of the segment, or `NULL` if
+the segment is anonymous.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("double", dim = 10)
+buffer_path(buf)
+#> [1] "/tmp/shard_7100_1774886001_1774886013"
+buffer_close(buf)
+# }
+```

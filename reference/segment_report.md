@@ -32,12 +32,14 @@ garbage collected, so this only shows segments with live references.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Create some segments
-seg1 <- segment_create(1024)
-seg2 <- segment_create(2048)
-shared <- share(1:1000)
-
+# \donttest{
 segment_report()
-} # }
+#> shard segment report
+#> Generated: 2026-03-30 15:53:57 
+#> 
+#> Backing types:
+#>   Available: mmap, shm 
+#>   Platform: unix 
+#>   Windows: FALSE 
+# }
 ```

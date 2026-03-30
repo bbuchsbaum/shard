@@ -33,4 +33,14 @@ x[i, j, ...] <- value
 
 ## Value
 
-The modified buffer (invisibly).
+The modified `shard_buffer` object, invisibly.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("double", dim = 10)
+buf[1:5] <- rnorm(5)
+buffer_close(buf)
+# }
+```

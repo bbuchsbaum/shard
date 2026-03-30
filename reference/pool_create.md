@@ -57,3 +57,12 @@ pool_create(
 
 A `shard_pool` object (invisibly). The pool is also stored in the
 package environment for reuse.
+
+## Examples
+
+``` r
+# \donttest{
+p <- pool_create(2)
+pool_stop(p)
+# }
+```

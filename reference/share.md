@@ -119,33 +119,12 @@ for worker pool management.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Share a large matrix
-mat <- matrix(rnorm(1e6), nrow = 1000)
+# \donttest{
+mat <- matrix(rnorm(1e4), nrow = 100)
 shared_mat <- share(mat)
-
-# The shared object is lightweight - only metadata
-print(object.size(shared_mat))  # Small
-
-# Get the data back with fetch()
 recovered <- fetch(shared_mat)
-identical(mat, recovered)  # TRUE
-
-# Use in parallel (workers access without copying)
-pool_create(4)
-result <- pool_lapply(1:10, function(i) {
-  # Workers can access shared_mat efficiently
-  data <- fetch(shared_mat)
-  sum(data[i, ])
-})
-
-# Clean up when done
+identical(mat, recovered)
+#> [1] FALSE
 close(shared_mat)
-
-# Deep sharing with alias preservation
-big_mat <- matrix(rnorm(1e6), nrow = 1000)
-lst <- list(a = big_mat, b = big_mat)  # Same object referenced twice
-shared_lst <- share(lst, deep = TRUE, min_bytes = 1000)
-# Creates only ONE shared segment - both 'a' and 'b' reference it
-} # }
+# }
 ```

@@ -33,4 +33,16 @@ x[i, j, ..., drop = TRUE]
 
 ## Value
 
-Vector or array of values.
+A vector or array of values read from the buffer.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("double", dim = 10)
+buf[1:5] <- 1:5
+buf[1:3]
+#> [1] 1 2 3
+buffer_close(buf)
+# }
+```

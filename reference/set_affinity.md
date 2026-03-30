@@ -17,4 +17,11 @@ set_affinity(cores)
 
 ## Value
 
-Logical; TRUE on success.
+A logical scalar; `TRUE` on success, `FALSE` if not supported.
+
+## Examples
+
+``` r
+affinity_supported()
+#> [1] TRUE
+```

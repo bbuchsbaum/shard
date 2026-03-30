@@ -10,4 +10,11 @@ is_windows()
 
 ## Value
 
-TRUE if on Windows, FALSE otherwise
+A logical scalar: `TRUE` if running on Windows, `FALSE` otherwise.
+
+## Examples
+
+``` r
+is_windows()
+#> [1] FALSE
+```

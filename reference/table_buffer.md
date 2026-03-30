@@ -26,4 +26,13 @@ table_buffer(schema, nrow, backing = c("auto", "mmap", "shm"))
 
 ## Value
 
-A `shard_table_buffer`.
+A `shard_table_buffer` object with one shared buffer per schema column.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 100L)
+# }
+```

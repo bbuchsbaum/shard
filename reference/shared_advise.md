@@ -25,4 +25,14 @@ shared_advise(
 
 ## Value
 
-Logical.
+A logical scalar; `TRUE` if the OS accepted the hint.
+
+## Examples
+
+``` r
+# \donttest{
+x <- as_shared(1:100)
+shared_advise(x, "sequential")
+#> [1] TRUE
+# }
+```

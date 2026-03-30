@@ -49,3 +49,17 @@ shard_apply_policy(
 ## Value
 
 An object of class `shard_apply_policy`.
+
+## Examples
+
+``` r
+cfg <- shard_apply_policy()
+cfg
+#> shard_apply_policy
+#>   auto_share_min_bytes: 1.0 MB 
+#>   max_gather_bytes: 256.0 MB 
+#>   cow: deny 
+#>   profile: default 
+#>   block_size: auto 
+#>   backing: auto 
+```

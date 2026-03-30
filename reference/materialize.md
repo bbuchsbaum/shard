@@ -8,6 +8,12 @@ Retrieves the R object from shared memory.
 
 ``` r
 materialize(x)
+
+# S3 method for class 'shard_shared'
+materialize(x)
+
+# Default S3 method
+materialize(x)
 ```
 
 ## Arguments
@@ -23,8 +29,9 @@ The original R object.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
+# \donttest{
 shared <- share(1:100)
 data <- materialize(shared)
-} # }
+close(shared)
+# }
 ```

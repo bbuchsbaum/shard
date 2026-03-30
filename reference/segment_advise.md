@@ -23,4 +23,14 @@ segment_advise(
 
 ## Value
 
-Logical; TRUE if the OS accepted the hint.
+A logical scalar; `TRUE` if the OS accepted the hint.
+
+## Examples
+
+``` r
+# \donttest{
+seg <- segment_create(1024)
+segment_advise(seg, "sequential")
+#> [1] TRUE
+# }
+```

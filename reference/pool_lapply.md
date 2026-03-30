@@ -35,3 +35,13 @@ pool_lapply(X, FUN, ..., pool = NULL, chunk_size = 1L)
 ## Value
 
 A list of results.
+
+## Examples
+
+``` r
+# \donttest{
+pool_create(2)
+result <- pool_lapply(1:4, function(x) x^2, pool = pool_get())
+pool_stop()
+# }
+```

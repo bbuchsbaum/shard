@@ -45,15 +45,32 @@ A list with diagnostic information:
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
+# \donttest{
 seg <- segment_create(400)
 segment_write(seg, 1:100, offset = 0)
 x <- shared_vector(seg, "integer", length = 100)
 
-# Access data
 sum(x)
+#> [1] 5050
 
-# Check diagnostics
 shared_diagnostics(x)
-} # }
+#> $dataptr_calls
+#> [1] 0
+#> 
+#> $materialize_calls
+#> [1] 0
+#> 
+#> $length
+#> [1] 100
+#> 
+#> $offset
+#> [1] 0
+#> 
+#> $readonly
+#> [1] TRUE
+#> 
+#> $type
+#> [1] "integer"
+#> 
+# }
 ```

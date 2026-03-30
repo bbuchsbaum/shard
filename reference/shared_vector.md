@@ -50,16 +50,36 @@ An ALTREP vector backed by shared memory
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Create a segment and store integers
-seg <- segment_create(400)  # 100 integers * 4 bytes
+# \donttest{
+seg <- segment_create(400)
 segment_write(seg, 1:100, offset = 0)
 
-# Create ALTREP view
 x <- shared_vector(seg, "integer", length = 100)
-x[1:10]  # Returns a view, not a copy
+x[1:10]
+#>  [1]  1  2  3  4  5  6  7  8  9 10
+#> attr(,"shard_cow")
+#> [1] "deny"
+#> attr(,"shard_readonly")
+#> [1] TRUE
 
-# Check diagnostics
 shared_diagnostics(x)
-} # }
+#> $dataptr_calls
+#> [1] 0
+#> 
+#> $materialize_calls
+#> [1] 0
+#> 
+#> $length
+#> [1] 100
+#> 
+#> $offset
+#> [1] 0
+#> 
+#> $readonly
+#> [1] TRUE
+#> 
+#> $type
+#> [1] "integer"
+#> 
+# }
 ```

@@ -16,10 +16,10 @@ Logical indicating whether we are in an arena scope.
 ## Examples
 
 ``` r
-in_arena()  # FALSE
+in_arena()
 #> [1] FALSE
 arena({
-  in_arena()  # TRUE
+  in_arena()
 })
 #> [1] TRUE
 ```

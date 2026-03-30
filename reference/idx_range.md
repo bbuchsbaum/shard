@@ -22,3 +22,11 @@ idx_range(start, end)
 ## Value
 
 An object of class `shard_idx_range`.
+
+## Examples
+
+``` r
+r <- idx_range(1, 100)
+r
+#> idx_range [1:100] 
+```

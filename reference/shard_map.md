@@ -221,22 +221,11 @@ A `shard_result` object containing:
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Simple parallel computation
-blocks <- shards(1000, workers = 4)
+# \donttest{
+blocks <- shards(1000, workers = 2)
 result <- shard_map(blocks, function(shard) {
   sum(shard$idx^2)
-}, workers = 4)
-
-# With shared inputs
-X <- matrix(rnorm(1e6), nrow = 1000)
-blocks <- shards(ncol(X), workers = 4)
-result <- shard_map(blocks,
-  borrow = list(X = X),
-  fun = function(shard, X) {
-    colMeans(X[, shard$idx, drop = FALSE])
-  },
-  workers = 4
-)
-} # }
+}, workers = 2)
+pool_stop()
+# }
 ```

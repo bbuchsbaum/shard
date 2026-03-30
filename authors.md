@@ -2,7 +2,7 @@
 
 ## Authors
 
-- **Bradley Buchsbaum**. Author, maintainer.
+- **Bradley Buchsbaum**. Author, maintainer, copyright holder.
 
 ## Citation
 

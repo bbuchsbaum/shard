@@ -11,3 +11,10 @@ list_kernels()
 ## Value
 
 A character vector of registered kernel names.
+
+## Examples
+
+``` r
+list_kernels()
+#> [1] "col_means"      "col_vars"       "crossprod_tile"
+```

@@ -32,7 +32,23 @@ table_finalize(
 
   Reserved for future extensions.
 
+## Value
+
+A `shard_table_handle`, `shard_row_groups`, or materialized
+data.frame/tibble depending on `target` type and `materialize`.
+
 ## Details
 
 For a `shard_table_sink`, this returns a row-group handle referencing
 the written partitions (or materializes them if requested).
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64(), y = int32())
+tb <- table_buffer(s, nrow = 5L)
+table_write(tb, idx_range(1, 5), data.frame(x = rnorm(5), y = 1:5))
+handle <- table_finalize(tb)
+# }
+```

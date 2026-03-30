@@ -24,4 +24,13 @@ view_block(x, rows = NULL, cols = NULL)
 
 ## Value
 
-A `shard_view_block` object.
+A `shard_view_block` object representing the contiguous block slice.
+
+## Examples
+
+``` r
+# \donttest{
+m <- share(matrix(1:20, nrow = 4))
+v <- view_block(m, cols = idx_range(1, 2))
+# }
+```

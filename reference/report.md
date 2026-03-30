@@ -53,18 +53,16 @@ An S3 object of class `shard_report` containing:
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Basic summary
-report()
-
-# Include worker details
-report("workers")
-
-# Full report with task and segment details
-report("segments")
-
-# Include diagnostics from a shard_map result
-result <- shard_map(shards(100), function(s) sum(s$idx))
-report("tasks", result = result)
-} # }
+# \donttest{
+res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
+pool_stop()
+report(result = res)
+#> shard_report (summary)
+#> Generated: 2026-03-30 15:53:54 
+#> 
+#> Pool: (not active)
+#> 
+#> Memory:
+#>   (no pool active)
+# }
 ```

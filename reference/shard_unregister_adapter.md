@@ -24,8 +24,6 @@ registered for this class.
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-# Remove adapter for MyData class
-old_adapter <- shard_unregister_adapter("MyData")
-} # }
+shard_list_adapters()
+#> character(0)
 ```

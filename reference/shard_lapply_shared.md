@@ -48,10 +48,32 @@ shard_lapply_shared(
 
 ## Value
 
-A list of results of length `length(x)`.
+A list of results, one per element of `x`.
 
 ## Details
 
 This wrapper enforces guardrails to avoid accidental huge gathers: it
 estimates the total gathered result size from a probe call and refuses
 to run if it exceeds `policy$max_gather_bytes`.
+
+## Examples
+
+``` r
+# \donttest{
+res <- shard_lapply_shared(as.list(1:4), function(x) x^2)
+pool_stop()
+res
+#> [[1]]
+#> [1] 1
+#> 
+#> [[2]]
+#> [1] 4
+#> 
+#> [[3]]
+#> [1] 9
+#> 
+#> [[4]]
+#> [1] 16
+#> 
+# }
+```

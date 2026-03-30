@@ -62,3 +62,17 @@ An atomic vector of length `ncol(X)` with the results.
 Current limitation: `MARGIN` must be 2 (columns). Row-wise apply would
 require strided/gather slicing and is intentionally explicit in shard
 via views/kernels.
+
+## Examples
+
+``` r
+# \donttest{
+X <- matrix(rnorm(400), 20, 20)
+shard_apply_matrix(X, MARGIN = 2, FUN = mean)
+#>  [1] -0.001318534 -0.137691473  0.167734132 -0.313173042 -0.077425565
+#>  [6] -0.181145755 -0.051592701 -0.186890507  0.231881906 -0.135645149
+#> [11] -0.037327701  0.029086775 -0.045347449 -0.308523295 -0.014213638
+#> [16] -0.347121746 -0.167135456 -0.280361143  0.138963790  0.282064603
+pool_stop()
+# }
+```

@@ -8,6 +8,12 @@ the largest single partition (plus your accumulator).
 
 ``` r
 stream_reduce(x, f, init, combine, ...)
+
+# S3 method for class 'shard_row_groups'
+stream_reduce(x, f, init, combine, ...)
+
+# S3 method for class 'shard_dataset'
+stream_reduce(x, f, init, combine, ...)
 ```
 
 ## Arguments
@@ -34,4 +40,16 @@ stream_reduce(x, f, init, combine, ...)
 
 ## Value
 
-The final accumulator.
+The final accumulator value after processing all partitions.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+total <- stream_reduce(rg, f = nrow, init = 0L, combine = `+`)
+# }
+```

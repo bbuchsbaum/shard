@@ -22,5 +22,18 @@ iterate_row_groups(x, decode = TRUE)
 
 ## Value
 
-An iterator function with no args that returns the next data.frame or
-NULL.
+A zero-argument iterator function that returns the next data.frame on
+each call, or `NULL` when exhausted.
+
+## Examples
+
+``` r
+# \donttest{
+s <- schema(x = float64())
+sink <- table_sink(s, mode = "row_groups")
+table_write(sink, 1L, data.frame(x = rnorm(5)))
+rg <- table_finalize(sink)
+it <- iterate_row_groups(rg)
+chunk <- it()
+# }
+```

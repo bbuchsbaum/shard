@@ -20,4 +20,13 @@ buffer_close(x, unlink = NULL)
 
 ## Value
 
-NULL (invisibly).
+`NULL`, invisibly.
+
+## Examples
+
+``` r
+# \donttest{
+buf <- buffer("double", dim = 10)
+buffer_close(buf)
+# }
+```
