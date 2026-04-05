@@ -36,7 +36,7 @@ res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
 pool_stop()
 cow_report(res)
 #> shard copy-on-write report
-#> Generated: 2026-03-30 20:47:15 
+#> Generated: 2026-04-05 20:45:08 
 #> 
 #> Policy: deny 
 #> Violations: 0 

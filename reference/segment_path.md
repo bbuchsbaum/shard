@@ -24,7 +24,7 @@ The path string, or `NULL` for anonymous segments.
 # \donttest{
 seg <- segment_create(1024, backing = "mmap")
 segment_path(seg)
-#> [1] "/tmp/shard_7143_1774903666_1774903661"
+#> [1] "/tmp/shard_7147_1775421939_1775421935"
 segment_close(seg)
 # }
 ```

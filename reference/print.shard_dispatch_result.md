@@ -32,7 +32,7 @@ chunks <- list(list(id = 1L, x = 1), list(id = 2L, x = 2))
 result <- dispatch_chunks(chunks, function(chunk) chunk$x, pool = pool_get())
 print(result)
 #> shard dispatch result
-#>   Duration: 0.89 seconds 
+#>   Duration: 0.82 seconds 
 #>   Chunks: 2 completed
 #>   Pool stats: 0 recycles, 0 deaths
 pool_stop()

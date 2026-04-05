@@ -2,6 +2,8 @@
 
 ## shard 0.1.0
 
+CRAN release: 2026-04-03
+
 - Initial CRAN release.
 - Deterministic, zero-copy parallel execution runtime for R.
 - Shared-memory and memory-mapped segment support for large inputs.
