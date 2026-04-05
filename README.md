@@ -8,11 +8,13 @@
 **Deterministic, zero-copy parallel execution for R.**
 
 `shard` is a parallel runtime for workloads that look like:
+
 - "run the same numeric kernel over many slices of big data"
 - "thousands of independent tasks over a shared dataset"
 - "parallel GLM / simulation / bootstrap / feature screening"
 
 It focuses on three things that are often painful in R parallelism:
+
 1) **Shared immutable inputs** (avoid duplicating large objects across workers)
 2) **Explicit output buffers** (avoid huge result-gather lists)
 3) **Deterministic cleanup** (supervise workers and recycle on memory drift)
@@ -83,11 +85,13 @@ shard::report(run)
 ### Borrowed inputs are immutable
 
 By default, trying to mutate borrowed/shared inputs is treated as a bug:
+
 - `cow = "deny"` (default): mutation triggers an error
 - `cow = "audit"`: detect and flag (best-effort; platform dependent)
 - `cow = "allow"`: allow copy-on-write, track it, and enforce budgets
 
 **Why default is deny:**
+
 - Prevents silent memory blowups from accidental wide writes
 - Prevents subtle correctness bugs (changes are private to a worker)
 - Keeps behavior predictable across platforms
@@ -106,6 +110,7 @@ exceeds thresholds, keeping end-of-run memory close to baseline.
 ## Diagnostics
 
 After a run, `shard` can report:
+
 - total and per-worker peak RSS
 - end RSS vs baseline
 - materialized bytes (hidden copies)
