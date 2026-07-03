@@ -32,8 +32,8 @@ typedef struct {
     atomic_int done_count;
     atomic_int failed_count;
     atomic_int retry_total;
-    /* tasks follow */
-    shard_taskq_task_t tasks[1];
+    /* C99 flexible array member -- avoids UBSAN out-of-bounds on tasks[i] */
+    shard_taskq_task_t tasks[];
 } shard_taskq_header_t;
 #else
 typedef struct {
@@ -47,7 +47,7 @@ typedef struct {
     int done_count;
     int failed_count;
     int retry_total;
-    shard_taskq_task_t tasks[1];
+    shard_taskq_task_t tasks[]; /* C99 flexible array member */
 } shard_taskq_header_t;
 #endif
 
@@ -68,7 +68,7 @@ static shard_taskq_header_t *hdr_from_seg(shard_segment_t *seg) {
 
 static size_t taskq_required_size(int n_tasks) {
     if (n_tasks < 1) return 0;
-    return sizeof(shard_taskq_header_t) + (size_t)(n_tasks - 1) * sizeof(shard_taskq_task_t);
+    return sizeof(shard_taskq_header_t) + (size_t)n_tasks * sizeof(shard_taskq_task_t);
 }
 
 SEXP C_shard_taskq_supported(void) {

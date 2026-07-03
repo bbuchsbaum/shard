@@ -13,7 +13,8 @@ NULL
 #' Spawns N R worker processes that persist across multiple `shard_map()` calls.
 #' Workers are supervised and recycled when RSS drift exceeds thresholds.
 #'
-#' @param n Integer. Number of worker processes to spawn.
+#' @param n Integer. Number of worker processes to spawn. Defaults to
+#'   `detectCores() - 1`, capped at 2 during `R CMD check`.
 #' @param rss_limit Numeric or character. Maximum RSS per worker before recycling.
 #'   Can be bytes (numeric) or human-readable (e.g., "2GB"). Default is "2GB".
 #' @param rss_drift_threshold Numeric. Fraction of RSS increase from baseline
@@ -34,7 +35,7 @@ NULL
 #' pool_stop(p)
 #' }
 #' @export
-pool_create <- function(n = parallel::detectCores() - 1L,
+pool_create <- function(n = .default_workers(),
                         rss_limit = "2GB",
                         rss_drift_threshold = 0.5,
                         heartbeat_interval = 5,

@@ -168,9 +168,7 @@ shard_map <- function(shards,
     if (!is.null(pool)) {
       workers <- pool$n
     } else {
-      dc <- parallel::detectCores()
-      if (is.na(dc) || dc < 1L) dc <- 1L
-      workers <- max(dc - 1L, 1L)
+      workers <- .default_workers()
     }
   }
   workers <- as.integer(workers)

@@ -5,7 +5,7 @@
 \title{Create a Worker Pool}
 \usage{
 pool_create(
-  n = parallel::detectCores() - 1L,
+  n = .default_workers(),
   rss_limit = "2GB",
   rss_drift_threshold = 0.5,
   heartbeat_interval = 5,
@@ -15,7 +15,8 @@ pool_create(
 )
 }
 \arguments{
-\item{n}{Integer. Number of worker processes to spawn.}
+\item{n}{Integer. Number of worker processes to spawn. Defaults to
+\code{detectCores() - 1}, capped at 2 during \verb{R CMD check}.}
 
 \item{rss_limit}{Numeric or character. Maximum RSS per worker before recycling.
 Can be bytes (numeric) or human-readable (e.g., "2GB"). Default is "2GB".}

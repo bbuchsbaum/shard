@@ -22,6 +22,7 @@
 ^\.github$
 ^\.claude$
 ^\.omc$
+^\.planning$
 ^AGENTS\.md$
 ^CLAUDE\.md$
 ^PRD\..*\.json$
@@ -31,3 +32,4 @@
 ^LICENSE\.md$
 ^cran-comments\.md$
 ^NEWS\.md$
+^CRAN-SUBMISSION$

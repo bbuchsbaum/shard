@@ -99,7 +99,7 @@ shard_reduce <- function(shards,
   # Determine worker count
   if (is.null(workers)) {
     pool <- pool_get()
-    workers <- if (!is.null(pool)) pool$n else max(parallel::detectCores() - 1L, 1L)
+    workers <- if (!is.null(pool)) pool$n else .default_workers()
   }
   workers <- max(as.integer(workers), 1L)
 

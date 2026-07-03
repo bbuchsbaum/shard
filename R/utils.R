@@ -15,6 +15,18 @@ NULL
   if (is.null(x)) y else x
 }
 
+# Returns the default worker count, capped at 2 during R CMD check
+# (CRAN policy: no more than 2 parallel processes).
+.default_workers <- function() {
+  dc <- parallel::detectCores()
+  if (is.na(dc) || dc < 1L) dc <- 1L
+  n <- max(dc - 1L, 1L)
+  if (isTRUE(as.logical(Sys.getenv("_R_CHECK_LIMIT_CORES_", "FALSE")))) {
+    n <- min(n, 2L)
+  }
+  n
+}
+
 #' Parse Human-Readable Byte Strings
 #'
 #' Converts strings like "2GB", "512MB", "1.5GB" to bytes.
