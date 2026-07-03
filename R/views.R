@@ -118,7 +118,11 @@ idx_print <- function(x) {
     cl <- calls[[i]]
     if (!is.call(cl)) next
     fn <- tryCatch(as.character(cl[[1]]), error = function(e) "")
-    if (!nzchar(fn) || fn %in% skip) next
+    # A call head can deparse to length != 1 (e.g. an anonymous-function
+    # call like `(function(x) {...})(v)`); take the first element so the
+    # scalar `if` below cannot error under R >= 4.3.
+    fn <- if (length(fn) >= 1L) fn[[1L]] else ""
+    if (is.na(fn) || !nzchar(fn) || fn %in% skip) next
     txt <- paste(deparse(cl, nlines = 1L, width.cutoff = 200L), collapse = " ")
     if (nzchar(txt)) return(txt)
   }

@@ -552,7 +552,26 @@ dim.shard_buffer <- function(x) {
       # of the entire buffer (critical for parallel disjoint writes).
       is_contig <- function(idx) length(idx) <= 1L || all(diff(idx) == 1L)
 
-      if (length(i) > 0 && length(j) > 0 && is_contig(i) && is_contig(j) &&
+      block_ok <- length(i) > 0 && length(j) > 0 &&
+        !anyNA(i) && !anyNA(j) &&
+        i[1] >= 1L && j[1] >= 1L &&
+        is_contig(i) && is_contig(j) &&
+        i[length(i)] <= nrow && j[length(j)] <= ncol
+
+      # Recycle a vector RHS into the target block shape so column/row-slice
+      # assignments with vector values (e.g. buf[, j] <- vec, buf[i, ] <- vec)
+      # also take the fast path below. Falling through to the full-buffer
+      # read/modify/write would amplify the write by ~nrow*ncol/length(value)
+      # and silently race with concurrent workers writing disjoint slices.
+      if (block_ok && is.null(dim(value)) && length(value) > 0) {
+        n_target <- as.numeric(length(i)) * as.numeric(length(j))
+        if (n_target %% length(value) == 0) {
+          value <- matrix(rep_len(value, n_target),
+                          nrow = length(i), ncol = length(j))
+        }
+      }
+
+      if (block_ok &&
           is.matrix(value) && identical(dim(value), c(length(i), length(j)))) {
         # If writing full rows for contiguous columns, write one contiguous span.
         if (identical(i, seq_len(nrow))) {
