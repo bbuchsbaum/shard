@@ -291,35 +291,52 @@ create_strided_shards <- function(n, num_shards) {
 
 #' Parse Count String
 #'
-#' Parses strings like "1K", "10K", "1M" to integers.
+#' Parses strings like "1K", "10K", "1M", "3B" to counts.
 #'
-#' @param x Character string.
-#' @return Integer value.
+#' @param x Character string or numeric.
+#' @return Numeric count: an integer when the value fits in integer range,
+#'   otherwise a double (e.g. "3B" = 3e9). Errors on malformed input.
 #' @keywords internal
 #' @noRd
 parse_count <- function(x) {
-  if (is.numeric(x)) return(as.integer(x))
+  if (is.numeric(x)) {
+    value <- as.numeric(x)
+    multiplier <- 1
+  } else {
+    x <- toupper(trimws(x))
+    match <- regexec("^([0-9.]+)\\s*(K|M|B)?$", x)
+    parts <- regmatches(x, match)[[1]]
 
-  x <- toupper(trimws(x))
-  match <- regexec("^([0-9.]+)\\s*(K|M|B)?$", x)
-  parts <- regmatches(x, match)[[1]]
+    if (length(parts) < 2) {
+      stop("Cannot parse count string: ", x, call. = FALSE)
+    }
 
-  if (length(parts) < 2) {
-    stop("Cannot parse count string: ", x, call. = FALSE)
+    value <- suppressWarnings(as.numeric(parts[2]))
+    if (is.na(value)) {
+      stop("Cannot parse count string: '", x,
+           "' (malformed number '", parts[2], "')", call. = FALSE)
+    }
+    unit <- if (length(parts) >= 3) parts[3] else ""
+
+    # NOTE: for counts, "B" means billions (1e9). This intentionally differs
+    # from parse_bytes() in utils.R, where "B" means bytes.
+    multiplier <- switch(
+      unit,
+      "K" = 1e3,
+      "M" = 1e6,
+      "B" = 1e9,
+      1
+    )
   }
 
-  value <- as.numeric(parts[2])
-  unit <- if (length(parts) >= 3) parts[3] else ""
+  # Compute in double to avoid integer overflow (e.g. "3B" > .Machine$integer.max).
+  result <- value * multiplier
+  if (length(result) != 1L || !is.finite(result) || result < 0) {
+    stop("Cannot parse count: ", paste(format(x), collapse = ", "),
+         " (value out of range or not finite)", call. = FALSE)
+  }
 
-  multiplier <- switch(
-    unit,
-    "K" = 1000L,
-    "M" = 1000000L,
-    "B" = 1000000000L,
-    1L
-  )
-
-  as.integer(value * multiplier)
+  if (result <= .Machine$integer.max) as.integer(result) else result
 }
 
 #' Print a shard_descriptor Object

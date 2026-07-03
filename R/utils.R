@@ -50,7 +50,14 @@ parse_bytes <- function(x) {
     stop("Cannot parse byte string: ", x, call. = FALSE)
   }
 
-  value <- as.numeric(parts[2])
+  value <- suppressWarnings(as.numeric(parts[2]))
+  if (is.na(value)) {
+    # e.g. "1..5GB" matches the regex but is not a valid number; error here
+    # instead of returning NA, which would silently propagate into memory
+    # cap comparisons downstream.
+    stop("Cannot parse byte string: '", x,
+         "' (malformed number '", parts[2], "')", call. = FALSE)
+  }
   unit <- if (length(parts) >= 3) parts[3] else "B"
 
   multiplier <- switch(
@@ -159,11 +166,21 @@ pkg_available <- function(pkg) {
 #' @return Character string like "prefix_a1b2c3".
 #' @keywords internal
 #' @noRd
+.unique_id_env <- new.env(parent = emptyenv())
+.unique_id_env$counter <- 0L
+
 unique_id <- function(prefix = "") {
-  # Use high-resolution time + random component for uniqueness
+  # Derive entropy WITHOUT the R RNG (tempfile()-style) so calling this never
+  # consumes or perturbs the caller's `.Random.seed` / reproducible RNG
+  # stream: high-resolution wall clock + process id + per-session counter.
+  # The pid makes IDs unique across processes; the counter makes them unique
+  # within a process even when the clock resolution is coarse.
   timestamp <- as.numeric(Sys.time()) * 1e6
-  random_part <- paste(sample(c(letters, 0:9), 8, replace = TRUE), collapse = "")
-  hash <- sprintf("%s_%s", format(timestamp, scientific = FALSE), random_part)
+  counter <- (.unique_id_env$counter %% 999999999L) + 1L
+  .unique_id_env$counter <- counter
+  hash <- sprintf("%s_%d_%d",
+                  format(timestamp, scientific = FALSE),
+                  Sys.getpid(), counter)
 
   if (nchar(prefix) > 0) {
     paste0(prefix, "_", hash)
