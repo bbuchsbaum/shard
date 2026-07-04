@@ -55,6 +55,52 @@ static unsigned int shard_unique_id(void) {
     return ++shard_counter;
 }
 
+/*
+ * Per-process attach registry (Phase 3.4)
+ *
+ * Workers attach to the same shared object for every task that touches it;
+ * without a registry that is one open+fstat+mmap round trip per task. The
+ * registry is a singly-linked list of live, attached (not created) segments.
+ * shard_segment_attach() consults it; shard_segment_close() removes an entry
+ * when its last handle closes (unmap-at-zero -- no zero-ref cache).
+ *
+ * Why unmap-at-zero instead of an LRU cache: it is correct by construction
+ * (a registry entry always has >= 1 live handle, so a cached mapping can
+ * never outlive its references, and no shm/disk space is pinned for
+ * unlinked-but-cached files), it needs no flush hooks at shutdown, and it
+ * still captures the win: consecutive tasks in a worker overlap because R
+ * finalizes lazily, so the previous task's mapping is almost always still
+ * live when the next task attaches.
+ *
+ * Registry key: exact path string + backing + readonly mode, validated by
+ * (st_dev, st_ino) of a freshly opened fd against the identity captured at
+ * map time. The entry's own fd stays open for its lifetime and therefore
+ * pins the inode: the kernel cannot recycle (dev, ino) into a different
+ * file while the entry lives, so dev/ino equality proves identity and a
+ * recreated file at the same path (new inode) can never produce a stale
+ * hit. The path string is part of the key as defense-in-depth so that
+ * filesystems/objects with degenerate inode numbering (e.g. POSIX shm on
+ * some platforms) can only ever cause a MISS, never a wrong hit.
+ *
+ * Single-threaded by design: all attach/close calls run on the R main
+ * thread of one process (each worker process has its own registry).
+ */
+static shard_segment_t *g_attach_registry = NULL;
+
+/* Diagnostics counters (exposed via C_shard_shm_registry_stats) */
+static unsigned long long g_attach_calls = 0; /* shard_segment_attach calls */
+static unsigned long long g_attach_hits = 0;  /* attaches served from registry */
+static unsigned long long g_map_calls = 0;    /* actual mmap/MapViewOfFile ops */
+
+static void registry_remove(shard_segment_t *seg) {
+    if (!seg->in_registry) return;
+    shard_segment_t **pp = &g_attach_registry;
+    while (*pp && *pp != seg) pp = &(*pp)->reg_next;
+    if (*pp) *pp = seg->reg_next;
+    seg->in_registry = 0;
+    seg->reg_next = NULL;
+}
+
 /* Initialize subsystem */
 void shard_shm_init(void) {
     /* Seed the counter with current time */
@@ -240,6 +286,8 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
         return NULL;
     }
 
+    seg->refcount = 1;
+    g_map_calls++;
     return seg;
 }
 
@@ -325,11 +373,32 @@ shard_segment_t *shard_segment_open(const char *path, shard_backing_t backing,
         }
     }
 
+    seg->refcount = 1;
+    g_map_calls++;
     return seg;
+}
+
+/*
+ * Windows: conservative pass-through (no registry caching). There is no
+ * cheap dev/inode staleness validation here, and named mappings are already
+ * deduplicated by the kernel object namespace. Counters still record the
+ * attach so diagnostics stay meaningful cross-platform.
+ */
+shard_segment_t *shard_segment_attach(const char *path, shard_backing_t backing,
+                                      int readonly) {
+    g_attach_calls++;
+    return shard_segment_open(path, backing, readonly);
 }
 
 void shard_segment_close(shard_segment_t *seg, int unlink) {
     if (!seg) return;
+
+    /* Shared handle (attach registry): drop one reference only. */
+    if (seg->refcount > 1) {
+        seg->refcount--;
+        return;
+    }
+    registry_remove(seg);
 
     if (seg->addr) {
         UnmapViewOfFile(seg->addr);
@@ -492,51 +561,70 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
         return NULL;
     }
 
+    seg->refcount = 1;
+    g_map_calls++;
     return seg;
 }
 
-shard_segment_t *shard_segment_open(const char *path, shard_backing_t backing,
-                                    int readonly) {
+/*
+ * Phase 3.5: advisory paging hints for freshly mapped readonly segments.
+ * Return values are deliberately ignored -- madvise is purely advisory and
+ * failure must never affect correctness.
+ */
+static void segment_advise_readonly(shard_segment_t *seg) {
+    if (!seg || !seg->addr || !seg->readonly || seg->size == 0) return;
+#ifdef MADV_WILLNEED
+    (void)madvise(seg->addr, seg->size, MADV_WILLNEED);
+#endif
+#ifdef MADV_HUGEPAGE
+    /* Linux only: transparent huge pages for large segments (>= 2 MB)
+     * cut TLB pressure on first full scans. */
+    if (seg->size >= (size_t)2 * 1024 * 1024) {
+        (void)madvise(seg->addr, seg->size, MADV_HUGEPAGE);
+    }
+#endif
+}
+
+/* Open the fd for an existing segment (shm_open or open by backing). */
+static int segment_open_fd(const char *path, shard_backing_t backing,
+                           int readonly) {
+    int flags = readonly ? O_RDONLY : O_RDWR;
+#ifdef HAVE_SHM_OPEN
+    if (backing == SHARD_BACKING_SHM) {
+        return shm_open(path, flags, 0);
+    }
+#endif
+    return open(path, flags, 0);
+}
+
+/*
+ * Build a segment handle around an already-open fd (takes ownership of fd:
+ * on failure the fd is closed). `st` must be the result of fstat(fd).
+ */
+static shard_segment_t *segment_map_fd(int fd, const char *path,
+                                       shard_backing_t backing, int readonly,
+                                       const struct stat *st) {
     shard_segment_t *seg = (shard_segment_t *)calloc(1, sizeof(shard_segment_t));
-    if (!seg) return NULL;
+    if (!seg) {
+        close(fd);
+        return NULL;
+    }
 
     seg->backing = backing;
     seg->readonly = readonly;
     seg->owns_shm = 0;
+    seg->fd = fd;
+    seg->size = (size_t)st->st_size;
+    seg->id_dev = (unsigned long long)st->st_dev;
+    seg->id_ino = (unsigned long long)st->st_ino;
+    seg->refcount = 1;
     seg->path = strdup(path);
     if (!seg->path) {
+        close(fd);
         free(seg);
         return NULL;
     }
 
-    int flags = readonly ? O_RDONLY : O_RDWR;
-
-#ifdef HAVE_SHM_OPEN
-    if (backing == SHARD_BACKING_SHM) {
-        seg->fd = shm_open(path, flags, 0);
-    } else
-#endif
-    {
-        seg->fd = open(path, flags, 0);
-    }
-
-    if (seg->fd < 0) {
-        free(seg->path);
-        free(seg);
-        return NULL;
-    }
-
-    /* Get size from file */
-    struct stat st;
-    if (fstat(seg->fd, &st) < 0) {
-        close(seg->fd);
-        free(seg->path);
-        free(seg);
-        return NULL;
-    }
-    seg->size = (size_t)st.st_size;
-
-    /* Map the segment */
     int prot = readonly ? PROT_READ : (PROT_READ | PROT_WRITE);
     seg->addr = mmap(NULL, seg->size, prot, MAP_SHARED, seg->fd, 0);
     if (seg->addr == MAP_FAILED) {
@@ -546,11 +634,82 @@ shard_segment_t *shard_segment_open(const char *path, shard_backing_t backing,
         return NULL;
     }
 
+    g_map_calls++;
+    segment_advise_readonly(seg);
+    return seg;
+}
+
+shard_segment_t *shard_segment_open(const char *path, shard_backing_t backing,
+                                    int readonly) {
+    int fd = segment_open_fd(path, backing, readonly);
+    if (fd < 0) return NULL;
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        close(fd);
+        return NULL;
+    }
+
+    return segment_map_fd(fd, path, backing, readonly, &st);
+}
+
+/*
+ * Phase 3.4: registry-backed attach. See the registry comment block at the
+ * top of this file for the keying/staleness invariants.
+ */
+shard_segment_t *shard_segment_attach(const char *path, shard_backing_t backing,
+                                      int readonly) {
+    g_attach_calls++;
+
+    int fd = segment_open_fd(path, backing, readonly);
+    if (fd < 0) return NULL;
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        close(fd);
+        return NULL;
+    }
+
+    /*
+     * Registry lookup. A hit requires the exact same path string, backing,
+     * and access mode, AND the same (dev, ino) as when the entry was mapped.
+     * The entry's open fd pins its inode, so (dev, ino) equality with a
+     * freshly opened fd proves the path still names the same file object;
+     * an unlink+recreate at the same path yields a new inode and misses.
+     */
+    for (shard_segment_t *e = g_attach_registry; e; e = e->reg_next) {
+        if (e->backing == backing && e->readonly == readonly &&
+            e->id_dev == (unsigned long long)st.st_dev &&
+            e->id_ino == (unsigned long long)st.st_ino &&
+            e->path && strcmp(e->path, path) == 0) {
+            close(fd);
+            e->refcount++;
+            g_attach_hits++;
+            return e;
+        }
+    }
+
+    /* Miss: map from the fd we already hold and register the entry. */
+    shard_segment_t *seg = segment_map_fd(fd, path, backing, readonly, &st);
+    if (!seg) return NULL;
+
+    seg->in_registry = 1;
+    seg->reg_next = g_attach_registry;
+    g_attach_registry = seg;
     return seg;
 }
 
 void shard_segment_close(shard_segment_t *seg, int unlink_seg) {
     if (!seg) return;
+
+    /* Shared handle (attach registry): drop one reference only. The mapping
+     * stays valid for the remaining handles; unlink requests are moot here
+     * because registry entries never own the underlying file (owns_shm=0). */
+    if (seg->refcount > 1) {
+        seg->refcount--;
+        return;
+    }
+    registry_remove(seg);
 
     if (seg->addr && seg->addr != MAP_FAILED) {
         munmap(seg->addr, seg->size);
@@ -673,13 +832,14 @@ SEXP C_shard_segment_create(SEXP size, SEXP backing, SEXP path, SEXP readonly) {
     return shard_segment_wrap_xptr(seg);
 }
 
-/* Open existing segment */
+/* Open existing segment (via the attach registry: repeated opens of the
+ * same live segment share one mapping, see shard_segment_attach) */
 SEXP C_shard_segment_open(SEXP path, SEXP backing, SEXP readonly) {
     const char *cpath = CHAR(STRING_ELT(path, 0));
     shard_backing_t back = (shard_backing_t)INTEGER(backing)[0];
     int ro = LOGICAL(readonly)[0];
 
-    shard_segment_t *seg = shard_segment_open(cpath, back, ro);
+    shard_segment_t *seg = shard_segment_attach(cpath, back, ro);
     if (!seg) {
         error("Failed to open shared memory segment");
     }
@@ -833,6 +993,36 @@ SEXP C_shard_segment_info(SEXP seg_ptr) {
 
     setAttrib(result, R_NamesSymbol, names);
 
+    UNPROTECT(2);
+    return result;
+}
+
+/* Attach registry diagnostics (Phase 3.4). Counters are cumulative for the
+ * process; live_segments/live_refs reflect the current registry contents. */
+SEXP C_shard_shm_registry_stats(void) {
+    double live_segments = 0;
+    double live_refs = 0;
+    for (shard_segment_t *e = g_attach_registry; e; e = e->reg_next) {
+        live_segments += 1;
+        live_refs += (double)e->refcount;
+    }
+
+    SEXP result = PROTECT(allocVector(VECSXP, 5));
+    SEXP names = PROTECT(allocVector(STRSXP, 5));
+
+    SET_STRING_ELT(names, 0, mkChar("attach_calls"));
+    SET_STRING_ELT(names, 1, mkChar("attach_hits"));
+    SET_STRING_ELT(names, 2, mkChar("map_calls"));
+    SET_STRING_ELT(names, 3, mkChar("live_segments"));
+    SET_STRING_ELT(names, 4, mkChar("live_refs"));
+
+    SET_VECTOR_ELT(result, 0, ScalarReal((double)g_attach_calls));
+    SET_VECTOR_ELT(result, 1, ScalarReal((double)g_attach_hits));
+    SET_VECTOR_ELT(result, 2, ScalarReal((double)g_map_calls));
+    SET_VECTOR_ELT(result, 3, ScalarReal(live_segments));
+    SET_VECTOR_ELT(result, 4, ScalarReal(live_refs));
+
+    setAttrib(result, R_NamesSymbol, names);
     UNPROTECT(2);
     return result;
 }
