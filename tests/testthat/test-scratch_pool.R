@@ -69,6 +69,10 @@ test_that("scratch_diagnostics returns complete structure", {
 test_that("scratch_matrix validates dimensions", {
   expect_error(scratch_matrix(-1, 10), "nrow must be >= 0")
   expect_error(scratch_matrix(10, -1), "ncol must be >= 0")
+  expect_error(
+    shard:::.scratch_get_matrix(.Machine$integer.max, 2L, "too_big"),
+    "n must be >= 0"
+  )
 })
 
 test_that("scratch_matrix uses custom key when provided", {

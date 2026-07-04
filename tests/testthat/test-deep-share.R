@@ -62,6 +62,21 @@ test_that("deep share detects cycles with environments and errors by default", {
     )
 })
 
+test_that("deep share rejects forbidden bindings in kept environments", {
+    env <- new.env(parent = emptyenv())
+    con <- textConnection("hi")
+    on.exit(close(con), add = TRUE)
+    env$conn <- con
+
+    err <- tryCatch(
+        share(list(x = 1, e = env), deep = TRUE),
+        error = function(e) e
+    )
+    expect_s3_class(err, "error")
+    expect_match(conditionMessage(err), "Cannot share connection objects", fixed = TRUE)
+    expect_match(conditionMessage(err), "Found at: <root>$e$conn", fixed = TRUE)
+})
+
 test_that("deep share with cycle='skip' - list self-assignment creates copy not cycle", {
     # In R, lst$self <- lst creates a COPY, not a true cycle
     # So this actually creates an alias scenario, not a cycle

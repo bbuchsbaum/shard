@@ -64,6 +64,18 @@ share_validation_reset_diagnostics <- function() {
     invisible(NULL)
 }
 
+.validate_environment_bindings_shallow <- function(e, path = "x") {
+    nms <- ls(envir = e, all.names = TRUE)
+    if (length(nms) == 0L) return(invisible(NULL))
+
+    vals <- mget(nms, envir = e, inherits = FALSE)
+    for (nm in names(vals)) {
+        .validate_serializable_forbidden(vals[[nm]], paste0(path, "$", nm))
+    }
+
+    invisible(NULL)
+}
+
 # Internal helper: check for non-serializable objects
 # Returns NULL on success, stops with error on failure
 validate_serializable <- function(x, path = "x", seen = NULL) {
@@ -308,6 +320,7 @@ share_deep_traverse <- function(x,
                  "  Hint: Use mode='balanced' to skip environment slots.",
                  call. = FALSE)
         }
+        .validate_environment_bindings_shallow(x, path)
         if (cycle_policy == "error" && env_has_self_cycle_(x)) {
             stop("Cycle detected during deep sharing.\n",
                  "  Path: ", path, "\n",

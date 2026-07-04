@@ -96,7 +96,11 @@ scratch_diagnostics <- function() {
 .scratch_get_matrix <- function(nrow, ncol, key) {
   nrow <- as.integer(nrow)
   ncol <- as.integer(ncol)
-  n <- as.integer(nrow * ncol)
+  n <- as.double(nrow) * as.double(ncol)
+  if (is.na(n) || !is.finite(n) || n < 0 || n > .Machine$integer.max) {
+    stop("n must be >= 0", call. = FALSE)
+  }
+  n <- as.integer(n)
   key <- as.character(key)
 
   if (exists(key, envir = .scratch_env$pool, inherits = FALSE)) {
