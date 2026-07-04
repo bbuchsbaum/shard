@@ -1045,7 +1045,7 @@ validate_fun_bindings <- function(fun, borrow, out) {
     stop(
       "fun does not accept borrowed input(s): ",
       paste(bad_borrow, collapse = ", "),
-      ". Add matching formal(s) after the shard argument or include ...",
+      ". Add exact matching formal name(s) after the shard argument or include ...",
       call. = FALSE
     )
   }
@@ -1055,7 +1055,7 @@ validate_fun_bindings <- function(fun, borrow, out) {
     stop(
       "fun does not accept output object(s): ",
       paste(bad_out, collapse = ", "),
-      ". Add matching formal(s) after the shard argument or include ...",
+      ". Add exact matching formal name(s) after the shard argument or include ...",
       call. = FALSE
     )
   }
