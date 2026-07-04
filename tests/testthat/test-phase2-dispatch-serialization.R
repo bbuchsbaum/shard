@@ -86,9 +86,22 @@ test_that("strided shards are compact on the wire and expanded for user code", {
   expect_equal(chunks[[1]]$shards[[1]]$len, blocks$shards[[1]]$len)
   expect_lt(length(serialize(chunks[[1]], NULL)), 10 * 1024)
 
-  ex <- make_chunk_executor(auto_table = FALSE, fun = function(sh) sh$idx)
+  # The kernel-visible shard must be identical() to the public descriptor:
+  # same field order and same idx storage type. Integer idx where the public
+  # object has double silently overflows to NA in kernels doing integer index
+  # arithmetic past 2^31.
+  ex <- make_chunk_executor(auto_table = FALSE, fun = function(sh) sh)
   got <- ex(chunks[[1]])
-  expect_equal(got[[1]], blocks$shards[[1]]$idx)
+  expect_identical(got[[1]], blocks$shards[[1]])
+  expect_identical(got[[1]]$idx, blocks$shards[[1]]$idx)
+
+  # Boundary shards (n not divisible by stride, single-element tail) must
+  # round-trip identically too, whatever type seq() gave them originally.
+  blocks2 <- shards(11, block_size = 1, strategy = "strided", workers = 1)
+  chunks2 <- create_shard_chunks(blocks2, 1L, borrow = list(), out = list())
+  for (k in seq_along(chunks2)) {
+    expect_identical(ex(chunks2[[k]])[[1]], blocks2$shards[[k]], label = paste("shard", k))
+  }
 })
 
 test_that("results identical with diagnostics=TRUE and diagnostics=FALSE", {

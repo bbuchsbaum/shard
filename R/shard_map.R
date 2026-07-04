@@ -1070,8 +1070,8 @@ seed_block_size_ <- function(n) {
 
 #' Set Worker Seeds (legacy)
 #'
-#' Sets per-worker RNG seeds. Only used by the shm_queue fast path and
-#' [shard_reduce()]; the default rpc_chunked path uses per-shard
+#' Sets per-worker RNG seeds. Only used by the shm_queue fast path; both
+#' [shard_map()] (rpc_chunked) and [shard_reduce()] use per-shard
 #' L'Ecuyer-CMRG streams (see `make_shard_seed_streams_()`), which are
 #' reproducible under dynamic shard-to-worker assignment.
 #'
@@ -1270,12 +1270,25 @@ reset_worker_diagnostics_ <- function(pool) {
   invisible(NULL)
 }
 
+# Strided shard descriptors are compacted for the wire (the materialized idx
+# vector dominates the chunk payload) and reconstructed worker-side before any
+# user code sees the shard. The round trip must be identical() to the original
+# public descriptor: same field order AND same idx storage type -- integer idx
+# reconstructed where the original was double would silently overflow to NA in
+# kernels doing integer index arithmetic past 2^31 (exactly the long-vector
+# workloads shard targets), so the original type travels in `.ixt`.
 shard_wire_compact_ <- function(shard) {
   if (!is.list(shard)) return(shard)
-  if (!is.null(shard$stride) && !is.null(shard$start) && !is.null(shard$len)) {
-    out <- shard[intersect(names(shard), c("id", "start", "stride", "len"))]
-    out$wire <- "strided"
-    return(out)
+  if (!is.null(shard$stride) && !is.null(shard$start) && !is.null(shard$len) &&
+      !is.null(shard$idx) &&
+      setequal(names(shard), c("id", "start", "stride", "idx", "len"))) {
+    return(list(
+      id = shard$id,
+      start = shard$start,
+      stride = shard$stride,
+      len = shard$len,
+      .ixt = if (is.integer(shard$idx)) "integer" else "double"
+    ))
   }
   shard
 }
@@ -1283,11 +1296,15 @@ shard_wire_compact_ <- function(shard) {
 shard_wire_expand_ <- function(shard) {
   if (!is.list(shard)) return(shard)
   if (is.null(shard$idx) && !is.null(shard$start) && !is.null(shard$stride) && !is.null(shard$len)) {
-    shard$idx <- seq.int(
-      from = as.integer(shard$start),
-      by = as.integer(shard$stride),
-      length.out = as.integer(shard$len)
-    )
+    idx <- as.double(shard$start) + (seq_len(shard$len) - 1) * as.double(shard$stride)
+    if (identical(shard$.ixt, "integer")) idx <- as.integer(idx)
+    return(list(
+      id = shard$id,
+      start = shard$start,
+      stride = shard$stride,
+      idx = idx,
+      len = shard$len
+    ))
   }
   if (is.null(shard$len) && !is.null(shard$idx)) {
     shard$len <- length(shard$idx)
