@@ -79,6 +79,35 @@ test_that("shards() respects memory constraints", {
   expect_equal(sort(all_idx), 1:10000)
 })
 
+test_that("autotune_block_size clamps excessive shard counts", {
+  block_size <- autotune_block_size(
+    1000,
+    workers = 1,
+    min_shards_per_worker = 500,
+    max_shards_per_worker = 256
+  )
+
+  expect_equal(block_size, 4L)
+  expect_lte(ceiling(1000 / block_size), 256)
+})
+
+test_that("autotune_block_size warns when scratch budget conflicts with max shards", {
+  expect_warning(
+    block_size <- autotune_block_size(
+      1000,
+      workers = 1,
+      min_shards_per_worker = 1,
+      max_shards_per_worker = 256,
+      scratch_bytes_per_item = 1,
+      scratch_budget = 3
+    ),
+    "scratch_budget requires more than max_shards_per_worker shards"
+  )
+
+  expect_equal(block_size, 3L)
+  expect_gt(ceiling(1000 / block_size), 256)
+})
+
 test_that("shards() parses count strings", {
   desc <- shards(10000, block_size = "1K")
   expect_equal(desc$block_size, 1000)

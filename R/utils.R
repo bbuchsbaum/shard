@@ -15,12 +15,36 @@ NULL
   if (is.null(x)) y else x
 }
 
+.worker_override <- function(value, source) {
+  if (is.null(value)) return(NULL)
+  if (is.character(value)) {
+    value <- trimws(value[1L])
+    if (is.na(value)) return(NULL)
+    if (!nzchar(value)) return(NULL)
+  }
+
+  n <- suppressWarnings(as.integer(value[1L]))
+  if (length(n) == 0L || is.na(n) || n < 1L) {
+    warning("Ignoring invalid ", source, " worker override; expected a positive integer.",
+            call. = FALSE)
+    return(NULL)
+  }
+
+  n
+}
+
 # Returns the default worker count, capped at 2 during R CMD check
 # (CRAN policy: no more than 2 parallel processes).
 .default_workers <- function() {
-  dc <- parallel::detectCores()
-  if (is.na(dc) || dc < 1L) dc <- 1L
-  n <- max(dc - 1L, 1L)
+  n <- .worker_override(getOption("shard.workers", NULL), "shard.workers")
+  if (is.null(n)) {
+    n <- .worker_override(Sys.getenv("SHARD_WORKERS", unset = ""), "SHARD_WORKERS")
+  }
+  if (is.null(n)) {
+    dc <- parallel::detectCores()
+    if (is.na(dc) || dc < 1L) dc <- 1L
+    n <- max(dc - 1L, 1L)
+  }
   if (isTRUE(as.logical(Sys.getenv("_R_CHECK_LIMIT_CORES_", "FALSE")))) {
     n <- min(n, 2L)
   }

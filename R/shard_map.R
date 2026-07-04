@@ -213,9 +213,10 @@ shard_map <- function(shards,
     }, add = TRUE)
   }
   out <- validate_out(out)
+  validate_fun_bindings(fun, borrow, out)
 
   # Ensure pool exists with correct worker count
- pool <- ensure_pool(
+  pool <- ensure_pool(
     workers = workers,
     mem_cap = mem_cap,
     rss_drift_threshold = rss_drift_threshold,
@@ -1017,6 +1018,49 @@ validate_out <- function(out) {
   }
 
   out
+}
+
+#' Validate Function Bindings
+#'
+#' Fails before pool creation when borrowed inputs or outputs cannot bind to
+#' worker function arguments.
+#'
+#' @param fun Worker function.
+#' @param borrow Validated borrow list.
+#' @param out Validated output list.
+#' @return Invisibly NULL.
+#' @keywords internal
+#' @noRd
+validate_fun_bindings <- function(fun, borrow, out) {
+  fmls <- names(formals(fun))
+  if (is.null(fmls) || "..." %in% fmls) return(invisible(NULL))
+
+  accepted <- fmls[nzchar(fmls)]
+  if (length(accepted) > 0L) {
+    accepted <- accepted[-1L]
+  }
+
+  bad_borrow <- setdiff(names(borrow), accepted)
+  if (length(bad_borrow) > 0L) {
+    stop(
+      "fun does not accept borrowed input(s): ",
+      paste(bad_borrow, collapse = ", "),
+      ". Add matching formal(s) after the shard argument or include ...",
+      call. = FALSE
+    )
+  }
+
+  bad_out <- setdiff(names(out), accepted)
+  if (length(bad_out) > 0L) {
+    stop(
+      "fun does not accept output object(s): ",
+      paste(bad_out, collapse = ", "),
+      ". Add matching formal(s) after the shard argument or include ...",
+      call. = FALSE
+    )
+  }
+
+  invisible(NULL)
 }
 
 #' Per-Shard L'Ecuyer-CMRG Streams

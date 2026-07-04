@@ -35,6 +35,32 @@ test_that("null coalescing operator works", {
   expect_equal(NA %||% 5, NA)  # NA is not NULL
 })
 
+test_that(".default_workers honors option and environment overrides", {
+  old_option <- getOption("shard.workers", NULL)
+  old_env <- Sys.getenv("SHARD_WORKERS", unset = NA_character_)
+  old_limit <- Sys.getenv("_R_CHECK_LIMIT_CORES_", unset = NA_character_)
+  on.exit({
+    options(shard.workers = old_option)
+    if (is.na(old_env)) Sys.unsetenv("SHARD_WORKERS") else Sys.setenv(SHARD_WORKERS = old_env)
+    if (is.na(old_limit)) {
+      Sys.unsetenv("_R_CHECK_LIMIT_CORES_")
+    } else {
+      Sys.setenv("_R_CHECK_LIMIT_CORES_" = old_limit)
+    }
+  }, add = TRUE)
+
+  Sys.unsetenv("_R_CHECK_LIMIT_CORES_")
+  options(shard.workers = NULL)
+  Sys.setenv(SHARD_WORKERS = "3")
+  expect_equal(.default_workers(), 3L)
+
+  options(shard.workers = 5)
+  expect_equal(.default_workers(), 5L)
+
+  Sys.setenv("_R_CHECK_LIMIT_CORES_" = "TRUE")
+  expect_equal(.default_workers(), 2L)
+})
+
 test_that("safe_div handles zero divisors", {
   expect_equal(safe_div(10, 2), 5)
   expect_true(is.na(safe_div(10, 0)))

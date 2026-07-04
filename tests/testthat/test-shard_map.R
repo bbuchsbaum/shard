@@ -172,6 +172,19 @@ test_that("shard_map() validates input", {
     "named"
   )
 
+  # Mismatched worker function names should fail before pool creation.
+  expect_error(
+    shard_map(10, function(shard) NULL, borrow = list(X = list(1L)), workers = 1),
+    "fun does not accept borrowed input"
+  )
+
+  out <- buffer("double", dim = 10)
+  on.exit(buffer_close(out), add = TRUE)
+  expect_error(
+    shard_map(10, function(shard) NULL, out = list(out = out), workers = 1),
+    "fun does not accept output object"
+  )
+
   pool_stop()
 })
 
