@@ -65,9 +65,27 @@ Phase 4A was kept to the low-risk R-side batch from the review handoff:
     The warnings are the expected CRAN incoming version `0.1.1` warning and the
     Homebrew clang/R `Boolean.h` warning.
 
+## Phase 4A Review Follow-Up
+
+After review, commit `0bf7de3` (`Preserve deep environment validation`) was
+added and pushed on `efficiency-phase4a-data-plane`.
+
+- Balanced deep share now shallow-scans direct bindings in kept environments and
+  rejects forbidden objects such as connections at paths like
+  `<root>$e$conn`.
+- `.scratch_get_matrix()` now rejects overflow before allocation with the same
+  `"n must be >= 0"` validation contract as `.scratch_get_double()`.
+- Focused regression tests passed:
+  `test-deep-share.R`, `test-scratch_pool.R`.
+- Full suite after the review follow-up:
+  `FAIL 0 | WARN 1 | SKIP 24 | PASS 1704`.
+- Locale-pinned `R CMD check --as-cran --no-manual` after the review follow-up:
+  `0 errors / 2 warnings / 0 notes`.
+
 ## Remaining Phase 4 Work
 
-- **Phase 4B:** 4.4 C gather/scatter buffer I/O on its own branch.
+- **Phase 4B:** 4.4 C gather/scatter buffer I/O on its own branch. See
+  `.planning/2026-07-04-phase4b-c-buffer-io-handoff.md`.
 - **Phase 4C:** 4.7/4.8 table cleanup after buffer behavior is stable.
 - **Phase 4.5:** `fetch(..., materialize = FALSE)` remains a separate API
   branch. Do not flip `fetch()` laziness by default.
