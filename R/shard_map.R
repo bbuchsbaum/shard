@@ -78,7 +78,15 @@ NULL
 #'   If numeric, specifies drift threshold (default 0.5 = 50% growth).
 #' @param cow Copy-on-write policy for borrowed inputs: `"deny"` (error on mutation),
 #'   `"audit"` (detect and flag), or `"allow"` (permit with tracking).
-#' @param seed Integer. RNG seed for reproducibility. If NULL, no seed is set.
+#' @param seed Integer. RNG seed for reproducibility. When supplied, each
+#'   shard gets its own L'Ecuyer-CMRG stream derived from `seed` (via
+#'   [parallel::nextRNGStream()]), installed immediately before the kernel
+#'   runs on that shard. RNG-using kernels therefore return identical results
+#'   for the same `seed` regardless of `workers=`, `chunk_size=`, or dynamic
+#'   shard-to-worker assignment (including worker restarts). With
+#'   `shard_map(N, ...)`, a deterministic worker-count-independent shard
+#'   decomposition is used and online autotuning is disabled. If NULL
+#'   (default), RNG state is not touched.
 #' @param diagnostics Logical. Collect detailed diagnostics (default TRUE).
 #' @param packages Character vector. Additional packages to load in workers.
 #' @param init_expr Expression to evaluate in each worker on startup.
@@ -255,10 +263,16 @@ shard_map <- function(shards,
     if (diagnostics) diag$dispatch_mode <- dispatch_mode
   }
 
-  # Set seed in workers if specified
-  if (!is.null(seed)) {
-    # When shards are auto-generated online, we don't know num_shards yet.
-    # Use total items as a stable substream spacing.
+  # RNG reproducibility (seed=):
+  # - rpc_chunked (default): per-shard L'Ecuyer-CMRG streams derived from
+  #   `seed` are attached to the chunks and installed immediately before each
+  #   shard's kernel call (see make_shard_seed_streams_() and
+  #   make_chunk_executor()). Because the stream travels with the shard, the
+  #   results are identical regardless of `workers=`, `chunk_size=`, or the
+  #   dynamic shard-to-worker assignment, and survive worker restarts.
+  # - shm_queue: legacy per-worker seeding (best-effort; this fire-and-forget
+  #   mode does not gather results).
+  if (!is.null(seed) && identical(dispatch_mode, "shm_queue")) {
     set_worker_seeds(pool, seed, if (shards_is_scalar_n) n_items else shards$num_shards)
   }
 
@@ -271,9 +285,9 @@ shard_map <- function(shards,
   }
 
   # Optional: auto table sink for tibble/data.frame return values.
-  if (!is.null(auto_table_sink)) {
-    export_auto_table_sink_to_workers(pool, auto_table_sink)
-  }
+  # Called unconditionally: a NULL sink clears any stale manifest entry from a
+  # previous auto_table run.
+  export_auto_table_sink_to_workers(pool, auto_table_sink)
 
   if (isTRUE(diagnostics)) {
     reset_worker_diagnostics_(pool)
@@ -397,6 +411,16 @@ shard_map <- function(shards,
   }
   if (!nzchar(autotune_mode)) autotune_mode <- "none"
 
+  if (!is.null(seed) && identical(autotune_mode, "online")) {
+    # Online autotuning derives shard boundaries from observed timing, which
+    # is inherently non-reproducible. With seed= we use a deterministic,
+    # worker-count-independent decomposition instead.
+    autotune_mode <- "none"
+    if (diagnostics) {
+      diag$autotune <- list(mode = "none", reason = "disabled_for_seed_reproducibility")
+    }
+  }
+
   if (shards_is_scalar_n && identical(autotune_mode, "online")) {
     tuned <- shard_map_online_(
       n = n_items,
@@ -429,9 +453,25 @@ shard_map <- function(shards,
   } else {
     # Create chunk batches if chunk_size > 1
     if (shards_is_scalar_n) {
-      shards <- shards(n_items, workers = workers)
+      shards <- if (!is.null(seed)) {
+        # Deterministic decomposition independent of the worker count so that
+        # the same seed= gives identical results for any workers=.
+        shards(n_items, block_size = seed_block_size_(n_items))
+      } else {
+        shards(n_items, workers = workers)
+      }
     }
-    chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out, kernel_meta = kernel_meta)
+
+    # Per-shard RNG streams (7 ints each), computed once on the master.
+    seed_streams <- if (!is.null(seed)) {
+      make_shard_seed_streams_(seed, shards$num_shards)
+    } else {
+      NULL
+    }
+
+    chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out,
+                                  kernel_meta = kernel_meta,
+                                  seed_streams = seed_streams)
 
     # Dispatch chunks to workers with supervision
     dispatch_result <- dispatch_chunks(
@@ -957,9 +997,79 @@ validate_out <- function(out) {
   out
 }
 
-#' Set Worker Seeds
+#' Per-Shard L'Ecuyer-CMRG Streams
 #'
-#' Sets reproducible RNG seeds in workers.
+#' Derives one independent L'Ecuyer-CMRG RNG stream per shard from a base
+#' seed, computed once on the master with [parallel::nextRNGStream()]. The
+#' streams are attached to chunk descriptors (7 integers per shard) and
+#' installed in the worker immediately before each shard's kernel call, so
+#' RNG-using kernels are reproducible regardless of worker count, chunk size,
+#' or dynamic shard-to-worker assignment. The caller's `.Random.seed` and RNG
+#' kind are left exactly as found.
+#'
+#' @param seed Integer base seed.
+#' @param n_shards Number of shards.
+#' @return List of `.Random.seed` vectors, one per shard.
+#' @keywords internal
+#' @noRd
+make_shard_seed_streams_ <- function(seed, n_shards) {
+  n_shards <- as.integer(n_shards)
+  if (is.na(n_shards) || n_shards < 1L) return(list())
+
+  has_old <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  old_seed <- if (has_old) get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
+  old_kind <- RNGkind()
+
+  on.exit({
+    if (has_old) {
+      assign(".Random.seed", old_seed, envir = globalenv())
+    } else {
+      # Restore the RNG kind (set.seed(kind=) changed it), then drop the seed
+      # so the session is left exactly as found (unseeded).
+      suppressWarnings(do.call(RNGkind, as.list(old_kind)))
+      if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+        rm(".Random.seed", envir = globalenv())
+      }
+    }
+  }, add = TRUE)
+
+  set.seed(as.integer(seed), kind = "L'Ecuyer-CMRG")
+  s <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+
+  streams <- vector("list", n_shards)
+  streams[[1L]] <- s
+  if (n_shards > 1L) {
+    for (i in 2:n_shards) {
+      s <- parallel::nextRNGStream(s)
+      streams[[i]] <- s
+    }
+  }
+  streams
+}
+
+#' Deterministic Block Size for Seeded Scalar-N Runs
+#'
+#' When `seed=` is supplied with `shard_map(N, ...)`, the shard decomposition
+#' must not depend on the worker count or on timing, otherwise per-shard RNG
+#' streams cannot give identical results across `workers=`. This picks a
+#' block size from `n` alone (at most 64 shards, which load-balances well for
+#' typical worker counts).
+#'
+#' @param n Total number of items.
+#' @return Integer block size.
+#' @keywords internal
+#' @noRd
+seed_block_size_ <- function(n) {
+  n <- as.integer(n)
+  as.integer(max(1L, ceiling(n / min(n, 64L))))
+}
+
+#' Set Worker Seeds (legacy)
+#'
+#' Sets per-worker RNG seeds. Only used by the shm_queue fast path and
+#' [shard_reduce()]; the default rpc_chunked path uses per-shard
+#' L'Ecuyer-CMRG streams (see `make_shard_seed_streams_()`), which are
+#' reproducible under dynamic shard-to-worker assignment.
 #'
 #' @param pool Worker pool.
 #' @param seed Base seed.
@@ -986,7 +1096,16 @@ set_worker_seeds <- function(pool, seed, num_shards) {
 #' @keywords internal
 #' @noRd
 export_borrow_to_workers <- function(pool, borrow) {
-  if (length(borrow) == 0) return(invisible(NULL))
+  if (length(borrow) == 0) {
+    # Drop any stale entry from a previous run so recycled workers don't get
+    # obsolete borrow data replayed.
+    pool_manifest_clear_(pool, ".shard_borrow")
+    return(invisible(NULL))
+  }
+
+  # Record in the worker bootstrap manifest so restarted/recycled workers get
+  # the borrow re-exported (see pool_bootstrap_worker_()).
+  pool_manifest_record_(pool, ".shard_borrow", borrow)
 
   # Create an environment with the borrowed data
   export_env <- new.env(parent = emptyenv())
@@ -1016,7 +1135,10 @@ export_borrow_to_workers <- function(pool, borrow) {
 #' @keywords internal
 #' @noRd
 export_out_to_workers <- function(pool, out) {
-  if (length(out) == 0) return(invisible(NULL))
+  if (length(out) == 0) {
+    pool_manifest_clear_(pool, ".shard_out")
+    return(invisible(NULL))
+  }
 
   # Export reopenable descriptors rather than shard_buffer objects. The raw
   # segment externalptr does not survive PSOCK serialization.
@@ -1061,6 +1183,9 @@ export_out_to_workers <- function(pool, out) {
 
   out_desc <- lapply(out, describe_one)
 
+  # Record in the worker bootstrap manifest for restart/recycle replay.
+  pool_manifest_record_(pool, ".shard_out", out_desc)
+
   export_env <- new.env(parent = emptyenv())
   export_env$.shard_out <- out_desc
 
@@ -1079,18 +1204,26 @@ export_out_to_workers <- function(pool, out) {
 }
 
 export_auto_table_sink_to_workers <- function(pool, sink) {
-  if (is.null(sink)) return(invisible(NULL))
+  if (is.null(sink)) {
+    pool_manifest_clear_(pool, ".shard_auto_table_sink")
+    return(invisible(NULL))
+  }
   if (!inherits(sink, "shard_table_sink")) {
     stop("sink must be a shard_table_sink", call. = FALSE)
   }
 
-  export_env <- new.env(parent = emptyenv())
-  export_env$.shard_auto_table_sink <- list(
+  sink_desc <- list(
     schema = sink$schema,
     mode = sink$mode,
     path = sink$path,
     format = sink$format
   )
+
+  # Record in the worker bootstrap manifest for restart/recycle replay.
+  pool_manifest_record_(pool, ".shard_auto_table_sink", sink_desc)
+
+  export_env <- new.env(parent = emptyenv())
+  export_env$.shard_auto_table_sink <- sink_desc
 
   for (i in seq_len(pool$n)) {
     w <- pool$workers[[i]]
@@ -1143,10 +1276,15 @@ reset_worker_diagnostics_ <- function(pool) {
 #' @param fun User function.
 #' @param borrow Borrowed inputs.
 #' @param out Output buffers.
+#' @param kernel_meta Optional kernel metadata (footprint hints).
+#' @param seed_streams Optional list of per-shard `.Random.seed` vectors
+#'   (parallel to `shards$shards`). Each chunk carries the streams for its
+#'   shards, so requeued chunks reproduce identically on any worker.
 #' @return List of chunk descriptors.
 #' @keywords internal
 #' @noRd
-create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_meta = NULL) {
+create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_meta = NULL,
+                                seed_streams = NULL) {
   chunk_size <- max(as.integer(chunk_size), 1L)
   num_chunks <- ceiling(shards$num_shards / chunk_size)
 
@@ -1206,7 +1344,8 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_met
       borrow_names = borrow_names,
       out_names = out_names,
       footprint_class = fp_class,
-      footprint_bytes = fp_bytes
+      footprint_bytes = fp_bytes,
+      rng_streams = if (!is.null(seed_streams)) seed_streams[start_idx:end_idx] else NULL
     )
   }
 
@@ -1350,6 +1489,19 @@ make_chunk_executor <- function(auto_table = FALSE) {
     borrow_names <- chunk$borrow_names
     out_names <- chunk$out_names
 
+    # Per-shard RNG streams (seed= reproducibility). The stream for shard k is
+    # installed immediately before invoking the kernel on shard k, so results
+    # do not depend on which worker runs the shard or in what order.
+    rng_streams <- chunk$rng_streams
+    set_shard_stream_ <- function(k) {
+      if (is.null(rng_streams)) return(invisible(NULL))
+      s <- if (k <= length(rng_streams)) rng_streams[[k]] else NULL
+      if (!is.null(s)) {
+        assign(".Random.seed", s, envir = globalenv())
+      }
+      invisible(NULL)
+    }
+
     if (isTRUE(auto_table)) {
       # Low-ceremony table outputs: if the user function returns a data.frame,
       # write it as a row-group partition (one file per shard id). This avoids
@@ -1363,11 +1515,13 @@ make_chunk_executor <- function(auto_table = FALSE) {
         class = "shard_table_sink"
       )
 
-      for (shard in chunk$shards) {
+      for (k in seq_along(chunk$shards)) {
+        shard <- chunk$shards[[k]]
         args <- list(shard)
         for (name in borrow_names) args[[name]] <- borrow[[name]]
         for (name in out_names) args[[name]] <- out[[name]]
 
+        set_shard_stream_(k)
         val <- do.call(fun, args, quote = TRUE)
         if (is.null(val)) next
         if (!is.data.frame(val)) {
@@ -1381,10 +1535,12 @@ make_chunk_executor <- function(auto_table = FALSE) {
     }
 
     # Execute for each shard in the chunk (return values gathered to master).
-    lapply(chunk$shards, function(shard) {
+    lapply(seq_along(chunk$shards), function(k) {
+      shard <- chunk$shards[[k]]
       args <- list(shard)
       for (name in borrow_names) args[[name]] <- borrow[[name]]
       for (name in out_names) args[[name]] <- out[[name]]
+      set_shard_stream_(k)
       # `do.call()` has a sharp edge: if an argument value is a language object,
       # it will be spliced into the call and evaluated (surprising for "data"
       # being passed through borrow/out). Using quote=TRUE ensures language

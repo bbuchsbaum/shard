@@ -70,7 +70,12 @@ dispatch_chunks <- function(chunks, fun, ...,
   )
 
   # Export fun + args to workers once to avoid per-chunk re-export overhead.
-  # Each worker runs a small wrapper via sendCall/recv that references these globals.
+  # Each worker runs a small wrapper via sendCall/recv that references these
+  # globals. Both are recorded in the pool's bootstrap manifest so that any
+  # worker restarted or recycled mid-run gets them replayed automatically
+  # (see pool_bootstrap_worker_()).
+  pool_manifest_record_(pool, ".shard_dispatch_fun", fun)
+  pool_manifest_record_(pool, ".shard_dispatch_args", extra_args)
   for (i in seq_len(pool$n)) {
     w <- pool$workers[[i]]
     if (!is.null(w) && worker_is_alive(w)) {
@@ -266,17 +271,9 @@ dispatch_chunks <- function(chunks, fun, ...,
           idle[action$worker_id] <- TRUE
           inflight[action$worker_id] <- list(NULL)
           inflight_class[action$worker_id] <- NA_character_
-
-          # Ensure the replacement worker has the dispatch globals.
-          w_new <- pool$workers[[action$worker_id]]
-          if (!is.null(w_new)) {
-            export_env <- new.env(parent = emptyenv())
-            export_env$.shard_dispatch_fun <- fun
-            export_env$.shard_dispatch_args <- extra_args
-            parallel::clusterExport(w_new$cluster,
-                                    c(".shard_dispatch_fun", ".shard_dispatch_args"),
-                                    envir = export_env)
-          }
+          # Replacement workers are re-provisioned (dispatch globals, borrow,
+          # out, sink) by pool_bootstrap_worker_() inside the restart/recycle
+          # paths of pool_health_check()/pool_restart_worker_().
         }
       }
     }
@@ -302,15 +299,9 @@ dispatch_chunks <- function(chunks, fun, ...,
 
       w <- pool$workers[[worker_id]]
       if (is.null(w) || !worker_is_alive(w)) {
+        # pool_restart_worker_() replays the bootstrap manifest to the fresh worker.
         pool <- pool_restart_worker_(pool, worker_id)
         w <- pool$workers[[worker_id]]
-
-        # Re-export globals to the restarted worker
-        export_env <- new.env(parent = emptyenv())
-        export_env$.shard_dispatch_fun <- fun
-        export_env$.shard_dispatch_args <- extra_args
-        parallel::clusterExport(w$cluster, c(".shard_dispatch_fun", ".shard_dispatch_args"),
-                                envir = export_env)
       }
 
       # If this worker was flagged for recycle while busy, do it now (safe point).
@@ -330,11 +321,8 @@ dispatch_chunks <- function(chunks, fun, ...,
           .pool_env$pool <- pool
           w <- pool$workers[[worker_id]]
 
-          export_env <- new.env(parent = emptyenv())
-          export_env$.shard_dispatch_fun <- fun
-          export_env$.shard_dispatch_args <- extra_args
-          parallel::clusterExport(w$cluster, c(".shard_dispatch_fun", ".shard_dispatch_args"),
-                                  envir = export_env)
+          # Replay exported worker state (dispatch fun/args, borrow, out, sink).
+          pool_bootstrap_worker_(pool, worker_id)
         }
       }
 
@@ -367,15 +355,8 @@ dispatch_chunks <- function(chunks, fun, ...,
                             chunk_id, retry_count, "timeout"))
           }
 
+          # pool_restart_worker_() replays the bootstrap manifest to the fresh worker.
           pool <- pool_restart_worker_(pool, worker_id, graceful = FALSE)
-
-          # Re-export globals to the restarted worker
-          export_env <- new.env(parent = emptyenv())
-          export_env$.shard_dispatch_fun <- fun
-          export_env$.shard_dispatch_args <- extra_args
-          parallel::clusterExport(pool$workers[[worker_id]]$cluster,
-                                  c(".shard_dispatch_fun", ".shard_dispatch_args"),
-                                  envir = export_env)
 
           idle[worker_id] <- TRUE
           inflight[worker_id] <- list(NULL)
@@ -412,14 +393,8 @@ dispatch_chunks <- function(chunks, fun, ...,
         }
       }
 
+      # pool_restart_worker_() replays the bootstrap manifest to the fresh worker.
       pool <- pool_restart_worker_(pool, worker_id, graceful = FALSE)
-
-      export_env <- new.env(parent = emptyenv())
-      export_env$.shard_dispatch_fun <- fun
-      export_env$.shard_dispatch_args <- extra_args
-      parallel::clusterExport(pool$workers[[worker_id]]$cluster,
-                              c(".shard_dispatch_fun", ".shard_dispatch_args"),
-                              envir = export_env)
 
       idle[worker_id] <- TRUE
       inflight[worker_id] <- list(NULL)
