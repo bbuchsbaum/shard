@@ -364,8 +364,16 @@ void shard_segment_close(shard_segment_t *seg, int unlink) {
 int shard_segment_protect(shard_segment_t *seg) {
     if (!seg || !seg->addr) return -1;
 
-    /* Windows doesn't support changing protection easily after mapping */
-    /* The segment is effectively protected by not sharing write access */
+    /*
+     * Change the protection of the mapped view to read-only, mirroring the
+     * mprotect(PROT_READ) semantics of the Unix implementation. This is
+     * valid for views created with MapViewOfFile: PAGE_READONLY is
+     * compatible with mappings created as PAGE_READWRITE.
+     */
+    DWORD old_protect = 0;
+    if (!VirtualProtect(seg->addr, seg->size, PAGE_READONLY, &old_protect)) {
+        return -1;
+    }
     seg->readonly = 1;
     return 0;
 }
@@ -720,7 +728,9 @@ SEXP C_shard_segment_write_raw(SEXP seg_ptr, SEXP data, SEXP offset) {
     if (seg->readonly) error("Segment is read-only");
 
     size_t off = (size_t)REAL(offset)[0];
-    size_t len = LENGTH(data);
+    /* Use XLENGTH: LENGTH() truncates (or errors) for long vectors (> 2^31-1
+     * elements), which are exactly the workload shared segments target. */
+    size_t len = (size_t)XLENGTH(data);
 
     if (TYPEOF(data) == RAWSXP) {
         if (shard_segment_write(seg, RAW(data), off, len) < 0) {

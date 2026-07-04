@@ -14,6 +14,9 @@ A list with diagnostic information:
 \describe{
 \item{dataptr_calls}{Number of times DATAPTR was accessed}
 \item{materialize_calls}{Number of times vector was copied to standard R vector}
+\item{coerce_calls}{Number of times a type coercion was requested
+(coercion allocates a new vector of the target type; it does not
+materialize the shared data)}
 \item{length}{Number of elements}
 \item{offset}{Byte offset into underlying segment}
 \item{readonly}{Whether write access is prevented}
