@@ -124,7 +124,15 @@ If numeric, specifies drift threshold (default 0.5 = 50\% growth).}
 \item{cow}{Copy-on-write policy for borrowed inputs: \code{"deny"} (error on mutation),
 \code{"audit"} (detect and flag), or \code{"allow"} (permit with tracking).}
 
-\item{seed}{Integer. RNG seed for reproducibility. If NULL, no seed is set.}
+\item{seed}{Integer. RNG seed for reproducibility. When supplied, each
+shard gets its own L'Ecuyer-CMRG stream derived from \code{seed} (via
+\code{\link[parallel:RngStream]{parallel::nextRNGStream()}}), installed immediately before the kernel
+runs on that shard. RNG-using kernels therefore return identical results
+for the same \code{seed} regardless of \verb{workers=}, \verb{chunk_size=}, or dynamic
+shard-to-worker assignment (including worker restarts). With
+\code{shard_map(N, ...)}, a deterministic worker-count-independent shard
+decomposition is used and online autotuning is disabled. If NULL
+(default), RNG state is not touched.}
 
 \item{diagnostics}{Logical. Collect detailed diagnostics (default TRUE).}
 

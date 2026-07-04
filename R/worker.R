@@ -122,12 +122,17 @@ worker_is_alive <- function(worker) {
   }
 
   # Prefer a PID-level check: cluster round-trips can fail when the worker is
-  # legitimately busy (e.g. during async sendCall/recv dispatch).
-  if (!is.na(worker$pid) && isTRUE(pid_is_alive(worker$pid))) {
-    return(TRUE)
+  # legitimately busy (e.g. during async sendCall/recv dispatch). When the PID
+  # is known, trust it in BOTH directions: pinging a dead worker's socket
+  # writes to a closed connection, which raises SIGPIPE on the master. R can
+  # turn that pending signal into an error inside serialization C code
+  # ("ignoring SIGPIPE signal"), corrupting the PROTECT stack and crashing the
+  # master (observed on macOS with kill-mid-dispatch workloads).
+  if (!is.na(worker$pid)) {
+    return(isTRUE(pid_is_alive(worker$pid)))
   }
 
-  # Fallback: try a simple ping.
+  # PID unknown: fall back to a simple ping.
   tryCatch({
     result <- parallel::clusterCall(worker$cluster, function() TRUE)
     isTRUE(result[[1]])
