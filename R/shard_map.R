@@ -1270,6 +1270,31 @@ reset_worker_diagnostics_ <- function(pool) {
   invisible(NULL)
 }
 
+shard_wire_compact_ <- function(shard) {
+  if (!is.list(shard)) return(shard)
+  if (!is.null(shard$stride) && !is.null(shard$start) && !is.null(shard$len)) {
+    out <- shard[intersect(names(shard), c("id", "start", "stride", "len"))]
+    out$wire <- "strided"
+    return(out)
+  }
+  shard
+}
+
+shard_wire_expand_ <- function(shard) {
+  if (!is.list(shard)) return(shard)
+  if (is.null(shard$idx) && !is.null(shard$start) && !is.null(shard$stride) && !is.null(shard$len)) {
+    shard$idx <- seq.int(
+      from = as.integer(shard$start),
+      by = as.integer(shard$stride),
+      length.out = as.integer(shard$len)
+    )
+  }
+  if (is.null(shard$len) && !is.null(shard$idx)) {
+    shard$len <- length(shard$idx)
+  }
+  shard
+}
+
 #' Create Shard Chunks
 #'
 #' Groups shards into chunks for dispatch. Chunks carry only ids, shard
@@ -1344,7 +1369,7 @@ create_shard_chunks <- function(shards, chunk_size, borrow, out, kernel_meta = N
     chunks[[i]] <- list(
       id = i,
       shard_ids = start_idx:end_idx,
-      shards = chunk_shards,
+      shards = lapply(chunk_shards, shard_wire_compact_),
       borrow_names = borrow_names,
       out_names = out_names,
       footprint_class = fp_class,
@@ -1537,7 +1562,7 @@ make_chunk_executor <- function(auto_table = FALSE, fun = NULL) {
       )
 
       for (k in seq_along(chunk$shards)) {
-        shard <- chunk$shards[[k]]
+        shard <- shard_wire_expand_(chunk$shards[[k]])
         args <- list(shard)
         for (name in borrow_names) args[[name]] <- borrow[[name]]
         for (name in out_names) args[[name]] <- out[[name]]
@@ -1557,7 +1582,7 @@ make_chunk_executor <- function(auto_table = FALSE, fun = NULL) {
 
     # Execute for each shard in the chunk (return values gathered to master).
     lapply(seq_along(chunk$shards), function(k) {
-      shard <- chunk$shards[[k]]
+      shard <- shard_wire_expand_(chunk$shards[[k]])
       args <- list(shard)
       for (name in borrow_names) args[[name]] <- borrow[[name]]
       for (name in out_names) args[[name]] <- out[[name]]

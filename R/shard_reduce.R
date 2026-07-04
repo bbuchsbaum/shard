@@ -385,7 +385,7 @@ make_chunk_reducer_ <- function(map_fun, combine_fun) {
     acc <- NULL
     have_acc <- FALSE
     for (k in seq_along(chunk$shards)) {
-      shard <- chunk$shards[[k]]
+      shard <- shard_wire_expand_(chunk$shards[[k]])
       args <- list(shard)
       for (name in borrow_names) args[[name]] <- borrow[[name]]
       for (name in out_names) args[[name]] <- out[[name]]

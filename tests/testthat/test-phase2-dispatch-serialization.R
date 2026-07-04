@@ -76,6 +76,21 @@ test_that("chunks no longer embed the user kernel", {
   expect_identical(parent.env(environment(ex)), asNamespace("shard"))
 })
 
+test_that("strided shards are compact on the wire and expanded for user code", {
+  blocks <- shards(50000, block_size = 12500L, strategy = "strided", workers = 1)
+  chunks <- create_shard_chunks(blocks, 1L, borrow = list(), out = list())
+
+  expect_null(chunks[[1]]$shards[[1]]$idx)
+  expect_equal(chunks[[1]]$shards[[1]]$start, blocks$shards[[1]]$start)
+  expect_equal(chunks[[1]]$shards[[1]]$stride, blocks$shards[[1]]$stride)
+  expect_equal(chunks[[1]]$shards[[1]]$len, blocks$shards[[1]]$len)
+  expect_lt(length(serialize(chunks[[1]], NULL)), 10 * 1024)
+
+  ex <- make_chunk_executor(auto_table = FALSE, fun = function(sh) sh$idx)
+  got <- ex(chunks[[1]])
+  expect_equal(got[[1]], blocks$shards[[1]]$idx)
+})
+
 test_that("results identical with diagnostics=TRUE and diagnostics=FALSE", {
   skip_on_cran()
   skip_if_conn_exhausted()
@@ -206,3 +221,4 @@ test_that("shard_reduce map fun travels via the dispatch channel", {
   pool_stop()
   expect_identical(res$value, as.numeric(sum(1:100)))
 })
+
