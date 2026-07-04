@@ -1,4 +1,6 @@
 on:
+  push:
+    branches: [efficiency-phase1, main, master]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
