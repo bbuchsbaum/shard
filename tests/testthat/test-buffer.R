@@ -237,15 +237,36 @@ test_that("buffer matrix idx_range selectors read and write expected blocks", {
     ref <- matrix(as.integer(1:20), nrow = 5)
     buf[] <- as.vector(ref)
 
+    shard:::buffer_reset_diagnostics()
     expect_equal(buf[idx_range(2, 4), idx_range(2, 3)], ref[2:4, 2:3])
+    d <- buffer_diagnostics()
+    expect_equal(d$reads, 2L)
+    expect_equal(d$read_bytes, 6L * 4L)
 
     value <- matrix(as.integer(101:106), nrow = 3)
     shard:::buffer_reset_diagnostics()
     buf[idx_range(2, 4), idx_range(2, 3)] <- value
     ref[2:4, 2:3] <- value
     d <- buffer_diagnostics()
-    expect_equal(d$writes, 1L)
+    expect_equal(d$writes, 2L)
     expect_equal(d$bytes, length(value) * 4L)
+    expect_equal(as.matrix(buf), ref)
+
+    buffer_close(buf)
+})
+
+test_that("buffer matrix negative selectors match base matrix semantics", {
+    buf <- buffer("double", dim = c(5, 4))
+    ref <- matrix(as.double(1:20), nrow = 5)
+    buf[] <- as.vector(ref)
+
+    expect_equal(buf[-1, ], ref[-1, ])
+    expect_equal(buf[, -2], ref[, -2])
+    expect_equal(buf[-1, -2], ref[-1, -2])
+
+    value <- matrix(seq_len(length(ref[-1, -2])) * 10, nrow = 4)
+    buf[-1, -2] <- value
+    ref[-1, -2] <- value
     expect_equal(as.matrix(buf), ref)
 
     buffer_close(buf)

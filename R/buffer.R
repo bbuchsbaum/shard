@@ -479,6 +479,29 @@ dim.shard_buffer <- function(x) {
     as.integer(as.vector(outer(row_idx, (col_idx - 1L) * nrow, `+`)))
 }
 
+.buffer_read_matrix_column_ranges <- function(x, rows, cols, nrow) {
+    result <- .buffer_empty(x$type)
+    length(result) <- rows$len * cols$len
+
+    col_idx <- .buffer_selector_indices(cols)
+    for (k in seq_along(col_idx)) {
+        start <- (col_idx[k] - 1L) * nrow + .buffer_selector_first(rows)
+        pos <- ((k - 1L) * rows$len + 1L):(k * rows$len)
+        result[pos] <- .buffer_read_range(x, start, rows$len)
+    }
+    result
+}
+
+.buffer_write_matrix_column_ranges <- function(x, rows, cols, nrow, values) {
+    col_idx <- .buffer_selector_indices(cols)
+    for (k in seq_along(col_idx)) {
+        start <- (col_idx[k] - 1L) * nrow + .buffer_selector_first(rows)
+        pos <- ((k - 1L) * rows$len + 1L):(k * rows$len)
+        .buffer_write_range(x, start, values[pos])
+    }
+    invisible(NULL)
+}
+
 .buffer_matrix_values <- function(type, value, nrow, ncol) {
     n <- as.numeric(nrow) * as.numeric(ncol)
     if (n == 0) return(.buffer_empty(type))
@@ -641,6 +664,8 @@ dim.shard_buffer <- function(x) {
         } else if (.buffer_selector_contiguous(rows) && cols$len == 1L) {
             start <- (.buffer_selector_first(cols) - 1L) * nrow + .buffer_selector_first(rows)
             result <- .buffer_read_range(x, start, rows$len)
+        } else if (.buffer_selector_contiguous(rows) && .buffer_selector_contiguous(cols)) {
+            result <- .buffer_read_matrix_column_ranges(x, rows, cols, nrow)
         } else {
             linear_idx <- .buffer_matrix_linear_idx(rows, cols, nrow)
             result <- .buffer_read_indices(x, linear_idx)
@@ -740,6 +765,11 @@ dim.shard_buffer <- function(x) {
       if (.buffer_selector_contiguous(rows) && cols$len == 1L) {
         start_lin <- (.buffer_selector_first(cols) - 1L) * nrow + .buffer_selector_first(rows)
         .buffer_write_range(x, start_lin, values)
+        return(invisible(x))
+      }
+
+      if (.buffer_selector_contiguous(rows) && .buffer_selector_contiguous(cols)) {
+        .buffer_write_matrix_column_ranges(x, rows, cols, nrow, values)
         return(invisible(x))
       }
 
