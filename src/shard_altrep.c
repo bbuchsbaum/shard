@@ -43,6 +43,7 @@ typedef struct shard_altrep_info {
     /* Diagnostic counters */
     R_xlen_t dataptr_calls;      /* Times a data pointer was requested */
     R_xlen_t materialize_calls;  /* Times vector was materialized */
+    R_xlen_t coerce_calls;       /* Times a type coercion was requested */
 } shard_altrep_info_t;
 
 /* ALTREP class objects - one per supported type */
@@ -218,6 +219,7 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
     memcpy(new_info, info, sizeof(shard_altrep_info_t));
     new_info->dataptr_calls = 0;
     new_info->materialize_calls = 0;
+    new_info->coerce_calls = 0;
     new_info->parent = x;
 
     /* Protect segment reference */
@@ -244,10 +246,13 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
     return result;
 }
 
-/* Coerce method - materialize when coercing */
+/* Coerce method - track coercions without claiming a materialization.
+ * The default coercion allocates a NEW vector of the target type; it does
+ * not materialize this vector's shared data into data2, so bumping
+ * materialize_calls here would misreport COW activity. */
 static SEXP altrep_coerce(SEXP x, int type) {
     shard_altrep_info_t *info = get_info(x);
-    if (info) info->materialize_calls++;
+    if (info) info->coerce_calls++;
     return NULL; /* Use default coercion */
 }
 
@@ -379,6 +384,7 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
     info->sexp_type = sexp_type;
     info->dataptr_calls = 0;
     info->materialize_calls = 0;
+    info->coerce_calls = 0;
 
     R_PreserveObject(seg_xptr);
 
@@ -414,6 +420,26 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
 static void *altvec_dataptr(SEXP x, Rboolean writable) {
     shard_altrep_info_t *info = get_info(x);
     if (!info) return NULL;
+
+    /*
+     * cow='deny' (info->deny_write): writes must never reach the shared
+     * bytes. We would like to Rf_error() on any writable request here, but
+     * base R requests writable DATAPTR from many purely read-only paths
+     * (verified empirically on R 4.x: identical(), range(), relops like
+     * `==`, which.max() all call Dataptr with writable=TRUE), so a hard
+     * error would make deny vectors unusable for ordinary reads -- including
+     * worker-side borrows, which unserialize with deny_write=1.
+     *
+     * Enforcement therefore has three cooperating layers:
+     *   1. The segment itself is mprotect(PROT_READ) / VirtualProtect
+     *      PAGE_READONLY, so the shared bytes physically cannot change.
+     *   2. R-level replacement methods ([<-, names<-, dim<-, ...) error
+     *      with cow='deny' for classed access.
+     *   3. Here, a writable request is served from a PRIVATE materialized
+     *      copy in data2 (never the shared mapping), so even a bypassed
+     *      write (e.g. after unclass()) can only touch a transient copy,
+     *      never the shared segment.
+     */
 
     /*
      * Enforce readonly via copy-on-write: when writable access is requested
@@ -551,6 +577,7 @@ static SEXP altvec_extract_subset(SEXP x, SEXP indx, SEXP call) {
         new_info->sexp_type = info->sexp_type;
         new_info->dataptr_calls = 0;
         new_info->materialize_calls = 0;
+        new_info->coerce_calls = 0;
 
         /* Protect segment reference */
         R_PreserveObject(new_info->segment_ptr);
@@ -830,6 +857,7 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
     info->sexp_type = sexp_type;
     info->dataptr_calls = 0;
     info->materialize_calls = 0;
+    info->coerce_calls = 0;
 
     /* Protect segment from GC */
     R_PreserveObject(seg);
@@ -901,6 +929,7 @@ SEXP C_shard_altrep_view(SEXP x, SEXP start, SEXP length) {
     new_info->sexp_type = info->sexp_type;
     new_info->dataptr_calls = 0;
     new_info->materialize_calls = 0;
+    new_info->coerce_calls = 0;
 
     /* Protect segment reference */
     R_PreserveObject(new_info->segment_ptr);
@@ -937,22 +966,24 @@ SEXP C_shard_altrep_diagnostics(SEXP x) {
         error("Invalid shard ALTREP vector");
     }
 
-    SEXP result = PROTECT(allocVector(VECSXP, 6));
-    SEXP names = PROTECT(allocVector(STRSXP, 6));
+    SEXP result = PROTECT(allocVector(VECSXP, 7));
+    SEXP names = PROTECT(allocVector(STRSXP, 7));
 
     SET_STRING_ELT(names, 0, mkChar("dataptr_calls"));
     SET_STRING_ELT(names, 1, mkChar("materialize_calls"));
-    SET_STRING_ELT(names, 2, mkChar("length"));
-    SET_STRING_ELT(names, 3, mkChar("offset"));
-    SET_STRING_ELT(names, 4, mkChar("readonly"));
-    SET_STRING_ELT(names, 5, mkChar("type"));
+    SET_STRING_ELT(names, 2, mkChar("coerce_calls"));
+    SET_STRING_ELT(names, 3, mkChar("length"));
+    SET_STRING_ELT(names, 4, mkChar("offset"));
+    SET_STRING_ELT(names, 5, mkChar("readonly"));
+    SET_STRING_ELT(names, 6, mkChar("type"));
 
     SET_VECTOR_ELT(result, 0, ScalarReal((double)info->dataptr_calls));
     SET_VECTOR_ELT(result, 1, ScalarReal((double)info->materialize_calls));
-    SET_VECTOR_ELT(result, 2, ScalarReal((double)info->length));
-    SET_VECTOR_ELT(result, 3, ScalarReal((double)info->offset));
-    SET_VECTOR_ELT(result, 4, ScalarLogical(info->readonly));
-    SET_VECTOR_ELT(result, 5, ScalarString(mkChar(type2char(info->sexp_type))));
+    SET_VECTOR_ELT(result, 2, ScalarReal((double)info->coerce_calls));
+    SET_VECTOR_ELT(result, 3, ScalarReal((double)info->length));
+    SET_VECTOR_ELT(result, 4, ScalarReal((double)info->offset));
+    SET_VECTOR_ELT(result, 5, ScalarLogical(info->readonly));
+    SET_VECTOR_ELT(result, 6, ScalarString(mkChar(type2char(info->sexp_type))));
 
     setAttrib(result, R_NamesSymbol, names);
     UNPROTECT(2);
@@ -995,6 +1026,7 @@ SEXP C_shard_altrep_reset_diagnostics(SEXP x) {
 
     info->dataptr_calls = 0;
     info->materialize_calls = 0;
+    info->coerce_calls = 0;
 
     return R_NilValue;
 }
