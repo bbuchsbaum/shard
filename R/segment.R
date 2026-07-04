@@ -289,3 +289,10 @@ is_windows <- function() {
 available_backings <- function() {
     .Call("C_shard_available_backings", PACKAGE = "shard")
 }
+
+# Internal: per-process attach registry diagnostics (Phase 3.4).
+# Returns cumulative attach/map/hit counters and current registry contents.
+# Used by tests and benchmarks; not part of the public API.
+shard_shm_registry_stats_ <- function() {
+    .Call("C_shard_shm_registry_stats", PACKAGE = "shard")
+}

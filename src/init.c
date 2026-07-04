@@ -24,6 +24,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_segment_protect",   (DL_FUNC) &C_shard_segment_protect,   1},
     {"C_shard_segment_info",      (DL_FUNC) &C_shard_segment_info,      1},
     {"C_shard_is_windows",        (DL_FUNC) &C_shard_is_windows,        0},
+    {"C_shard_shm_registry_stats",(DL_FUNC) &C_shard_shm_registry_stats,0},
     {"C_shard_available_backings",(DL_FUNC) &C_shard_available_backings,0},
     /* ALTREP functions */
     {"C_shard_altrep_create",           (DL_FUNC) &C_shard_altrep_create,           6},
