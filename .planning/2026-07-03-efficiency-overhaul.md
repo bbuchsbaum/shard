@@ -143,9 +143,27 @@ full `testthat` suite passed (1671 pass, 0 fail, 24 expected/env skips), and
 environmental warnings (CRAN incoming version 0.1.1; Homebrew clang/R `Boolean.h`
 warning). Remote native smoke run `28710384759` passed on both `ubuntu-latest` and
 `windows-latest`, covering the compile-blind `/dev/shm`, `madvise`, taskq atomics, and
-`VirtualProtect` paths. Remaining before merging onward: fresh-context review. Phase 3.3
-remains intentionally unstarted and should stay on its own branch with read-side-first
-byte-identity stress tests.
+`VirtualProtect` paths. Phase 3.3 remains intentionally unstarted and should stay on its
+own branch with read-side-first byte-identity stress tests.
+
+**Fresh-context review (2026-07-04): DONE — three parallel adversarial reviewers, each
+in its own worktree with runnable evidence.** Verdicts: **3.1 taskq MERGE-SAFE** (no code
+defect; ThreadSanitizer + ASAN/UBSAN clean, 500-iter × 24-worker standalone harness and
+30× cross-process exactly-once with injected failures — no lost/double/hang interleaving
+found); **3.4/3.6/3.7 lifetime MERGE-SAFE** (no UAF/leak/double-free; ASAN registry
+harness clean, drop-all-parents-then-gc×8 keeps 200-deep views correct); **3.2/3.5/backing
+PASS** (HAVE_SHM_OPEN genuinely defined so the Linux tmpfs branch is live; shm_unlink
+cleanup correct; madvise properly guarded). One **BLOCKER** — the `phase3-native-smoke`
+CI was structurally false-green (`testthat::test_file()` sets no non-zero exit, so a real
+regression stayed green; and it was the *only* CI on the working branch) — **fixed**: the
+workflow now collects results and `stop()`s on any failure, and sets
+`_R_CHECK_LIMIT_CORES_`. MINORs fixed: `taskq_supported()` now gates on
+`ATOMIC_INT_LOCK_FREE==2` (cross-process soundness); a degenerate `(dev,ino)==(0,0)`
+identity now bypasses the attach registry (closes a theoretical same-path-recreate
+wrong-hit, unreachable in practice but now provably safe) with the overclaiming comment
+corrected; a parameter-clobber (`n <- w$cluster[[1]]`) in the shm_queue drain loop
+renamed. Deferred (documented, low risk): `-lrt` in Makevars for pre-glibc-2.34 Linux
+targets (currently links via libc; CI/CRAN fine).
 
 ---
 

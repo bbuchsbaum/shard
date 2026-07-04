@@ -103,7 +103,13 @@ static size_t taskq_required_size(int n_tasks) {
 
 SEXP C_shard_taskq_supported(void) {
 #if SHARD_HAVE_ATOMICS
-    return ScalarLogical(1);
+    /* The queue synchronizes master and workers through atomics in a mapped
+     * (cross-process) region. That is only sound if atomic_int is genuinely
+     * lock-free and address-free; a lock-backed fallback synchronizes on a
+     * per-process mutex embedded in the object and would silently fail to
+     * coordinate across processes. Require lock-free before advertising
+     * support so callers fall back to rpc_chunked on such an ABI. */
+    return ScalarLogical(ATOMIC_INT_LOCK_FREE == 2 ? 1 : 0);
 #else
     return ScalarLogical(0);
 #endif

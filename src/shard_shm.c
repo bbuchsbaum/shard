@@ -74,13 +74,23 @@ static unsigned int shard_unique_id(void) {
  *
  * Registry key: exact path string + backing + readonly mode, validated by
  * (st_dev, st_ino) of a freshly opened fd against the identity captured at
- * map time. The entry's own fd stays open for its lifetime and therefore
- * pins the inode: the kernel cannot recycle (dev, ino) into a different
- * file while the entry lives, so dev/ino equality proves identity and a
- * recreated file at the same path (new inode) can never produce a stale
- * hit. The path string is part of the key as defense-in-depth so that
- * filesystems/objects with degenerate inode numbering (e.g. POSIX shm on
- * some platforms) can only ever cause a MISS, never a wrong hit.
+ * map time. On a real-inode filesystem the entry's own fd stays open for its
+ * lifetime and therefore pins the inode: the kernel cannot recycle (dev, ino)
+ * into a different file while the entry lives, so dev/ino equality proves
+ * identity and a recreated file at the same path (new inode) can never
+ * produce a stale hit. This is the default file-backed mmap path everywhere,
+ * and Linux /dev/shm (the real POSIX shm platform), which have genuine
+ * inodes.
+ *
+ * Degenerate identity: some platforms report (dev, ino) == (0, 0) for POSIX
+ * shm objects (e.g. macOS), so an unlink+recreate at the same path would
+ * match every key field and wrong-hit a stale mapping. Such objects bypass
+ * the registry entirely (mapped directly, never registered), so the
+ * cross-process reuse optimization simply does not apply to them and
+ * correctness is preserved. In practice this case is unreachable through the
+ * package API (macOS shm segment creation fails outright, generated shm names
+ * are unique per process, and explicit paths downgrade to file-backed mmap);
+ * the guard is belt-and-suspenders.
  *
  * Single-threaded by design: all attach/close calls run on the R main
  * thread of one process (each worker process has its own registry).
@@ -668,6 +678,16 @@ shard_segment_t *shard_segment_attach(const char *path, shard_backing_t backing,
     if (fstat(fd, &st) < 0) {
         close(fd);
         return NULL;
+    }
+
+    /*
+     * Degenerate (dev, ino) == (0, 0) cannot serve as an identity key (an
+     * unlink+recreate at the same path would match every field), so bypass
+     * the registry entirely: map directly and do not register. See the
+     * registry comment block for why this case does not arise in practice.
+     */
+    if ((unsigned long long)st.st_dev == 0 && (unsigned long long)st.st_ino == 0) {
+        return segment_map_fd(fd, path, backing, readonly, &st);
     }
 
     /*

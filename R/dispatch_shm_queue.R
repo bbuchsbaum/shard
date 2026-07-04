@@ -409,8 +409,8 @@ dispatch_shards_shm_queue_ <- function(n,
   for (i in seq_len(pool$n)) {
     w <- pool$workers[[i]]
     if (is.null(w) || is.null(w$cluster) || length(w$cluster) < 1L) next
-    n <- w$cluster[[1]]
-    con <- n$con %||% NULL
+    node <- w$cluster[[1]]
+    con <- node$con %||% NULL
     if (is.null(con) || !isOpen(con)) next
     ready <- tryCatch(socketSelect(list(con), timeout = 0.1), error = function(e) FALSE)
     if (isTRUE(ready)) {
