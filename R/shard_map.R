@@ -279,10 +279,10 @@ shard_map <- function(shards,
   # Export borrowed inputs to workers (once, not per shard)
   export_borrow_to_workers(pool, borrow)
 
-  # Export output buffer references if any
-  if (length(out) > 0) {
-    export_out_to_workers(pool, out)
-  }
+  # Export output buffer references. Called unconditionally: an empty `out`
+  # clears any stale manifest entry from a previous run, so a worker recycled
+  # during this run is not replayed a descriptor for a now-closed segment.
+  export_out_to_workers(pool, out)
 
   # Optional: auto table sink for tibble/data.frame return values.
   # Called unconditionally: a NULL sink clears any stale manifest entry from a

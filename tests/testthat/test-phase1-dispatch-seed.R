@@ -217,3 +217,45 @@ test_that("worker bootstrap manifest records and clears exports", {
   expect_true(".shard_dispatch_fun" %in% names(m$exports))
   expect_identical(m$exports[[".shard_dispatch_args"]], list(mult = 10))
 })
+
+test_that("shard_map clears stale .shard_out manifest entry when a later run has no out=", {
+  # Regression for M1: export_out_to_workers() was called under
+  # `if (length(out) > 0)`, so its clear-on-empty branch was unreachable from
+  # shard_map. A run with out= followed by a run without out= would leave a
+  # stale .shard_out descriptor in the manifest, which a worker recycled during
+  # the second run would replay and try to reopen (a now-possibly-closed
+  # segment). The exporter is now called unconditionally.
+  skip_on_cran()
+  skip_if_conn_exhausted()
+
+  pool_stop()
+  pool <- pool_create(2)
+  on.exit(pool_stop(), add = TRUE)
+  m <- pool_manifest_(pool)
+
+  out <- buffer("double", dim = 4L)
+  blocks <- shards(4L, block_size = 1, workers = 2)
+
+  # Run 1: with out= -> .shard_out recorded in the manifest.
+  res1 <- shard_map(
+    blocks,
+    out = list(out = out),
+    fun = function(sh, out) {
+      i <- sh$idx[[1]]
+      out[i] <- i * 1.0
+      NULL
+    },
+    workers = 2
+  )
+  expect_true(succeeded(res1))
+  expect_true(".shard_out" %in% names(m$exports))
+
+  # Run 2: no out= -> stale .shard_out must be cleared, not replayed.
+  res2 <- shard_map(
+    blocks,
+    fun = function(sh) sh$idx[[1]] * 2,
+    workers = 2
+  )
+  expect_true(succeeded(res2))
+  expect_false(".shard_out" %in% names(m$exports))
+})
