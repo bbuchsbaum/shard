@@ -100,6 +100,11 @@ contiguous shard block sizing.
 log to disk to aid debugging failed tasks (default FALSE).
 \item \code{error_log_max_lines}: integer. Maximum lines per worker in the error
 log (default 100).
+\item \code{claim_batch}: integer. Number of task ids a worker claims per
+shared-queue call (default 1, i.e. classic one-at-a-time claiming;
+also settable globally via \code{options(shard.shm_queue_claim_batch=)}).
+Small batches (4-8) amortize per-claim overhead for very cheap tasks
+at a slight cost in tail load balancing.
 }
 }}
 

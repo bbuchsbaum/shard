@@ -126,6 +126,7 @@ worker_shm_queue_loop_ <- function(queue_desc,
                                   max_retries,
                                   error_log = FALSE,
                                   error_log_max_lines = 100L,
+                                  claim_batch = 1L,
                                   poll_sleep = 0.0005) {
   # Open queue segment (writable).
   seg <- segment_open(queue_desc$path, backing = queue_desc$backing, readonly = FALSE)
@@ -164,15 +165,29 @@ worker_shm_queue_loop_ <- function(queue_desc,
     assign(".shard_shm_queue_error_count", 0L, envir = .shard_worker_env)
   }
 
+  claim_batch <- as.integer(claim_batch)
+  if (is.na(claim_batch) || claim_batch < 1L) claim_batch <- 1L
+
   repeat {
     st <- taskq_stats(seg)
     if ((st$done %||% 0L) + (st$failed %||% 0L) >= (st$n_tasks %||% 0L)) break
 
-    task_id <- as.integer(taskq_claim(seg, worker_id))
-    if (is.na(task_id) || task_id < 1L) {
+    # Claim one task (default) or a small batch to amortize the R-level
+    # per-claim overhead. Batched claims are all marked claimed_by this
+    # worker, so crash recovery via taskq_reset_claims() covers the whole
+    # batch exactly as it covers a single claim.
+    task_ids <- if (claim_batch > 1L) {
+      as.integer(taskq_claim_range(seg, worker_id, claim_batch))
+    } else {
+      tid <- as.integer(taskq_claim(seg, worker_id))
+      if (is.na(tid) || tid < 1L) integer(0) else tid
+    }
+    if (length(task_ids) == 0L) {
       Sys.sleep(poll_sleep)
       next
     }
+
+    for (task_id in task_ids) {
 
     shard <- NULL
     if (identical(mode, "scalar_n")) {
@@ -243,6 +258,8 @@ worker_shm_queue_loop_ <- function(queue_desc,
       }
       taskq_error(seg, task_id, max_retries = max_retries)
     }
+
+    } # end for (task_id in task_ids)
   }
 
   # Return final queue stats (small).
@@ -260,7 +277,8 @@ dispatch_shards_shm_queue_ <- function(n,
                                       timeout = 3600,
                                       queue_backing = c("mmap", "shm"),
                                       error_log = FALSE,
-                                      error_log_max_lines = 100L) {
+                                      error_log_max_lines = 100L,
+                                      claim_batch = 1L) {
   n <- as.integer(n)
   block_size <- as.integer(block_size)
   if (is.na(n) || n < 1L) stop("n must be >= 1", call. = FALSE)
@@ -269,6 +287,9 @@ dispatch_shards_shm_queue_ <- function(n,
   error_log <- isTRUE(error_log)
   error_log_max_lines <- as.integer(error_log_max_lines)
   if (is.na(error_log_max_lines) || error_log_max_lines < 0L) error_log_max_lines <- 0L
+  claim_batch <- as.integer(claim_batch)
+  if (is.na(claim_batch) || claim_batch < 1L) claim_batch <- 1L
+  if (claim_batch > 1024L) claim_batch <- 1024L
 
   mode <- if (is.null(shards)) "scalar_n" else "descriptor"
   if (!is.null(shards) && !inherits(shards, "shard_descriptor")) {
@@ -333,7 +354,7 @@ dispatch_shards_shm_queue_ <- function(n,
     parallel_sendCall(
       w$cluster[[1]],
       fun = worker_shm_queue_loop_,
-      args = list(qdesc, worker_id, mode, n, block_size, fun, borrow_names, out_names, max_retries, error_log, error_log_max_lines),
+      args = list(qdesc, worker_id, mode, n, block_size, fun, borrow_names, out_names, max_retries, error_log, error_log_max_lines, claim_batch),
       return = TRUE,
       tag = paste0("shm_queue_", worker_id)
     )

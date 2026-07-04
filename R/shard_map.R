@@ -63,6 +63,11 @@ NULL
 #'       log to disk to aid debugging failed tasks (default FALSE).
 #'     - `error_log_max_lines`: integer. Maximum lines per worker in the error
 #'       log (default 100).
+#'     - `claim_batch`: integer. Number of task ids a worker claims per
+#'       shared-queue call (default 1, i.e. classic one-at-a-time claiming;
+#'       also settable globally via `options(shard.shm_queue_claim_batch=)`).
+#'       Small batches (4-8) amortize per-claim overhead for very cheap tasks
+#'       at a slight cost in tail load balancing.
 #' @param workers Integer. Number of worker processes. If NULL, uses existing
 #'   pool or creates one with `detectCores() - 1`.
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
@@ -311,6 +316,17 @@ shard_map <- function(shards,
 
     queue_backing <- dispatch_opts$queue_backing %||% "mmap"
 
+    # Batched task claiming (Phase 3): workers claim up to claim_batch task
+    # ids per C call, amortizing the R-level per-claim overhead. Default 1
+    # preserves the historical claim-one-at-a-time behavior; opt in via
+    # dispatch_opts$claim_batch or options(shard.shm_queue_claim_batch=).
+    claim_batch <- as.integer(
+      dispatch_opts$claim_batch %||% getOption("shard.shm_queue_claim_batch", 1L)
+    )
+    if (is.na(claim_batch) || claim_batch < 1L) {
+      stop("dispatch_opts$claim_batch must be >= 1", call. = FALSE)
+    }
+
     if (shards_is_scalar_n) {
       block_size <- dispatch_opts$block_size %||% autotune_block_size(
           n = n_items,
@@ -335,7 +351,8 @@ shard_map <- function(shards,
         timeout = timeout,
         queue_backing = queue_backing,
         error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
-        error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L
+        error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L,
+        claim_batch = claim_batch
       )
     } else {
       if (!inherits(shards, "shard_descriptor")) {
@@ -354,7 +371,8 @@ shard_map <- function(shards,
         timeout = timeout,
         queue_backing = queue_backing,
         error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
-        error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L
+        error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L,
+        claim_batch = claim_batch
       )
     }
 
