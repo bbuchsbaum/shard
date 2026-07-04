@@ -16,8 +16,9 @@ current-HEAD tests for Phase 2 dispatch/reduce and Phase 3 taskq/ALTREP passed, 
 `testthat` suite passed (1671 pass, 0 fail, 24 expected/env skips), and
 `R CMD check --as-cran --no-manual` passed with 0 errors/0 notes and only the two known
 environmental warnings (CRAN incoming version 0.1.1; Homebrew clang/R `Boolean.h`
-warning). Remaining gate: fresh-context review and Linux/Windows CI coverage for the
-compile-blind C paths.
+warning). Remote native smoke run `28710384759` passed on both `ubuntu-latest` and
+`windows-latest`, including the Phase 3 regression files for the compile-blind C paths.
+Remaining gate: fresh-context review.
 
 ## State at handoff
 

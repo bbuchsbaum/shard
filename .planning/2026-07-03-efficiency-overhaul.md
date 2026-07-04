@@ -141,10 +141,11 @@ Current local validation on the merged head: focused Phase 2/3 regression files 
 full `testthat` suite passed (1671 pass, 0 fail, 24 expected/env skips), and
 `R CMD check --as-cran --no-manual` passed with 0 errors/0 notes and only the two known
 environmental warnings (CRAN incoming version 0.1.1; Homebrew clang/R `Boolean.h`
-warning). Remaining before merging onward: fresh-context review plus remote Linux/Windows
-CI results for the compile-blind `/dev/shm`, `madvise`, taskq atomics, and
-`VirtualProtect` paths. Phase 3.3 remains intentionally unstarted and should stay on its
-own branch with read-side-first byte-identity stress tests.
+warning). Remote native smoke run `28710384759` passed on both `ubuntu-latest` and
+`windows-latest`, covering the compile-blind `/dev/shm`, `madvise`, taskq atomics, and
+`VirtualProtect` paths. Remaining before merging onward: fresh-context review. Phase 3.3
+remains intentionally unstarted and should stay on its own branch with read-side-first
+byte-identity stress tests.
 
 ---
 
