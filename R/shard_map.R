@@ -391,8 +391,10 @@ shard_map <- function(shards,
   }
   }
 
-  # Create self-contained executor function for workers
-  chunk_executor <- make_chunk_executor(auto_table = auto_table)
+  # Create self-contained executor function for workers. The user kernel is
+  # captured by the executor closure, so it travels to each worker exactly
+  # once per dispatch (as .shard_dispatch_fun) instead of once per chunk.
+  chunk_executor <- make_chunk_executor(auto_table = auto_table, fun = fun)
 
   # Optional: online shard sizing autotune for scalar-N sharding. This is opt-in
   # by default for shard_map(N, ...) (low ceremony), and off for precomputed
@@ -469,7 +471,7 @@ shard_map <- function(shards,
       NULL
     }
 
-    chunks <- create_shard_chunks(shards, chunk_size, fun, borrow, out,
+    chunks <- create_shard_chunks(shards, chunk_size, borrow, out,
                                   kernel_meta = kernel_meta,
                                   seed_streams = seed_streams)
 
@@ -482,7 +484,8 @@ shard_map <- function(shards,
       max_retries = max_retries,
       timeout = timeout,
       scheduler_policy = scheduler_policy,
-      store_results = !auto_table
+      store_results = !auto_table,
+      diagnostics = diagnostics
     )
 
     if (auto_table) {
@@ -641,7 +644,7 @@ shard_map_online_ <- function(n,
       class = "shard_descriptor"
     )
 
-    chunks <- create_shard_chunks(phase_desc, use_chunk_size, fun, borrow, out, kernel_meta = kernel_meta)
+    chunks <- create_shard_chunks(phase_desc, use_chunk_size, borrow, out, kernel_meta = kernel_meta)
 
     rss_before <- tryCatch(mem_report(pool)$peak_rss, error = function(e) NA_real_)
     t0 <- proc.time()[["elapsed"]]
@@ -653,7 +656,8 @@ shard_map_online_ <- function(n,
       max_retries = max_retries,
       timeout = timeout,
       scheduler_policy = scheduler_policy,
-      store_results = !isTRUE(auto_table)
+      store_results = !isTRUE(auto_table),
+      diagnostics = diagnostics
     )
     t1 <- proc.time()[["elapsed"]]
     rss_after <- tryCatch(mem_report(pool)$peak_rss, error = function(e) NA_real_)
@@ -1268,12 +1272,13 @@ reset_worker_diagnostics_ <- function(pool) {
 
 #' Create Shard Chunks
 #'
-#' Groups shards into chunks for dispatch. Each chunk contains a self-contained
-#' executor function that can run in a worker without needing package functions.
+#' Groups shards into chunks for dispatch. Chunks carry only ids, shard
+#' descriptors, RNG streams, and small metadata; the user kernel travels
+#' separately, once per dispatch, inside the chunk executor closure
+#' (see make_chunk_executor()) — never embedded per chunk.
 #'
 #' @param shards Shard descriptor.
 #' @param chunk_size Shards per chunk.
-#' @param fun User function.
 #' @param borrow Borrowed inputs.
 #' @param out Output buffers.
 #' @param kernel_meta Optional kernel metadata (footprint hints).
@@ -1283,7 +1288,7 @@ reset_worker_diagnostics_ <- function(pool) {
 #' @return List of chunk descriptors.
 #' @keywords internal
 #' @noRd
-create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_meta = NULL,
+create_shard_chunks <- function(shards, chunk_size, borrow, out, kernel_meta = NULL,
                                 seed_streams = NULL) {
   chunk_size <- max(as.integer(chunk_size), 1L)
   num_chunks <- ceiling(shards$num_shards / chunk_size)
@@ -1340,7 +1345,6 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_met
       id = i,
       shard_ids = start_idx:end_idx,
       shards = chunk_shards,
-      fun = fun,
       borrow_names = borrow_names,
       out_names = out_names,
       footprint_class = fp_class,
@@ -1358,10 +1362,26 @@ create_shard_chunks <- function(shards, chunk_size, fun, borrow, out, kernel_met
 #' This function is passed to dispatch_chunks and runs entirely within
 #' the worker process.
 #'
+#' The executor closure deliberately captures only this function's small
+#' frame (`auto_table`, `fun`, and three local helpers) with the package
+#' namespace as its enclosure — never a caller frame. It is exported to
+#' each worker once per dispatch as `.shard_dispatch_fun` (and recorded in
+#' the pool bootstrap manifest for recycle replay), so the user kernel
+#' `fun` travels once per dispatch rather than once per chunk.
+#'
+#' @param auto_table Logical; enable the auto table sink path.
+#' @param fun The user kernel function. If NULL, falls back to `chunk$fun`
+#'   (legacy chunk format).
 #' @return A function that executes chunks.
 #' @keywords internal
 #' @noRd
-make_chunk_executor <- function(auto_table = FALSE) {
+make_chunk_executor <- function(auto_table = FALSE, fun = NULL) {
+  # Force both arguments now: an unforced promise serializes as its
+  # expression plus the CALLER's environment, which would drag the entire
+  # shard_map() frame into the executor's export.
+  force(auto_table)
+  force(fun)
+
   out_desc_key_ <- function(d) {
     # A stable identifier for deciding whether a cached out handle can be reused.
     kind <- d$kind %||% "buffer"
@@ -1484,8 +1504,9 @@ make_chunk_executor <- function(auto_table = FALSE) {
       }
     }
 
-    # Get the user function from the chunk
-    fun <- chunk$fun
+    # The user kernel is captured in the executor's enclosure (exported once
+    # per dispatch); chunk$fun is a legacy fallback for hand-built chunks.
+    fun <- fun %||% chunk$fun
     borrow_names <- chunk$borrow_names
     out_names <- chunk$out_names
 

@@ -17,6 +17,11 @@ NULL
 #' @param timeout Numeric. Seconds to wait for each chunk (default 3600).
 #' @param scheduler_policy Optional list of scheduling hints (advanced). Currently:
 #'   - `max_huge_concurrency`: cap concurrent chunks with `footprint_class=="huge"`.
+#' @param diagnostics Logical. Collect per-chunk worker diagnostics (view/
+#'   buffer/table/scratch deltas) and aggregate them on the master (default
+#'   TRUE). When FALSE, workers skip the per-chunk diagnostic snapshots and
+#'   return a minimal result envelope; memory-safety signals (scratch
+#'   recycle requests) are still honored.
 #' @param on_result Optional callback (advanced). If provided, called on the
 #'   master process as `on_result(tag, value, worker_id)` for each successful
 #'   chunk completion. Used by [shard_reduce()] to stream reductions.
@@ -42,7 +47,8 @@ dispatch_chunks <- function(chunks, fun, ...,
                             scheduler_policy = NULL,
                             on_result = NULL,
                             store_results = TRUE,
-                            retain_chunks = TRUE) {
+                            retain_chunks = TRUE,
+                            diagnostics = TRUE) {
   if (is.null(pool)) {
     pool <- pool_get()
   }
@@ -87,91 +93,11 @@ dispatch_chunks <- function(chunks, fun, ...,
     }
   }
 
-  dispatch_wrapper <- function(chunk) {
-    vd0 <- tryCatch(view_diagnostics(), error = function(e) NULL)
-    cd0 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
-    td0 <- tryCatch(table_diagnostics(), error = function(e) NULL)
-    sd0 <- tryCatch(scratch_diagnostics(), error = function(e) NULL)
-    res <- tryCatch(
-      {
-        f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
-        a <- get(".shard_dispatch_args", envir = globalenv(), inherits = FALSE)
-        list(ok = TRUE, value = do.call(f, c(list(chunk), a)))
-      },
-      error = function(e) list(ok = FALSE, error = conditionMessage(e))
-    )
-    vd1 <- tryCatch(view_diagnostics(), error = function(e) NULL)
-    cd1 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
-    td1 <- tryCatch(table_diagnostics(), error = function(e) NULL)
-    sd1 <- tryCatch(scratch_diagnostics(), error = function(e) NULL)
-
-    if (is.list(vd0) && is.list(vd1)) {
-      res$view_delta <- list(
-        created = (vd1$created %||% 0L) - (vd0$created %||% 0L),
-        materialized = (vd1$materialized %||% 0L) - (vd0$materialized %||% 0L),
-        materialized_bytes = (vd1$materialized_bytes %||% 0) - (vd0$materialized_bytes %||% 0),
-        packed = (vd1$packed %||% 0L) - (vd0$packed %||% 0L),
-        packed_bytes = (vd1$packed_bytes %||% 0) - (vd0$packed_bytes %||% 0)
-      )
-    }
-
-    # Best-effort attribution: only compute hotspot deltas when materialization occurred.
-    if (is.list(res$view_delta) && (res$view_delta$materialized %||% 0L) > 0L) {
-      hs1 <- tryCatch(view_materialize_hotspots_snapshot_(), error = function(e) NULL)
-      if (is.list(hs1)) {
-        hs0 <- if (exists(".shard_view_hotspot_snapshot", envir = .shard_worker_env, inherits = FALSE)) {
-          get(".shard_view_hotspot_snapshot", envir = .shard_worker_env)
-        } else {
-          list()
-        }
-
-        delta <- list()
-        keys <- unique(c(names(hs0), names(hs1)))
-        for (k in keys) {
-          v1 <- hs1[[k]] %||% list()
-          v0 <- hs0[[k]] %||% list()
-          b1 <- v1$bytes %||% 0
-          c1 <- v1$count %||% 0L
-          b0 <- v0$bytes %||% 0
-          c0 <- v0$count %||% 0L
-          db <- as.double(b1) - as.double(b0)
-          dc <- as.integer(c1) - as.integer(c0)
-          if (is.finite(db) && db > 0) {
-            delta[[k]] <- list(bytes = db, count = dc)
-          }
-        }
-
-        assign(".shard_view_hotspot_snapshot", hs1, envir = .shard_worker_env)
-        if (length(delta) > 0) res$view_hotspots_delta <- delta
-      }
-    }
-
-    if (is.list(cd0) && is.list(cd1)) {
-      res$copy_delta <- list(
-        buffer_writes = (cd1$writes %||% 0L) - (cd0$writes %||% 0L),
-        buffer_bytes = (cd1$bytes %||% 0) - (cd0$bytes %||% 0)
-      )
-    }
-
-    if (is.list(td0) && is.list(td1)) {
-      res$table_delta <- list(
-        table_writes = (td1$writes %||% 0L) - (td0$writes %||% 0L),
-        table_rows = (td1$rows %||% 0L) - (td0$rows %||% 0L),
-        table_bytes = (td1$bytes %||% 0) - (td0$bytes %||% 0)
-      )
-    }
-
-    if (is.list(sd0) && is.list(sd1)) {
-      res$scratch_delta <- list(
-        hits = (sd1$hits %||% 0L) - (sd0$hits %||% 0L),
-        misses = (sd1$misses %||% 0L) - (sd0$misses %||% 0L),
-        high_water = sd1$high_water %||% 0
-      )
-      res$scratch_needs_recycle <- isTRUE(sd1$needs_recycle)
-    }
-
-    res
-  }
+  # Worker-side wrapper: shard_dispatch_wrapper_() is a top-level package
+  # function, so each sendCall serializes only a small body plus a namespace
+  # reference. (A closure defined here would drag this entire frame — chunks,
+  # queue, pool — over the wire on EVERY send: O(chunks^2) wire volume.)
+  collect_diag <- isTRUE(diagnostics)
 
   # Async scheduling state
   idle <- rep(TRUE, pool$n)
@@ -327,7 +253,8 @@ dispatch_chunks <- function(chunks, fun, ...,
       }
 
       # Async send
-      parallel_sendCall(w$cluster[[1]], fun = dispatch_wrapper, args = list(chunk),
+      parallel_sendCall(w$cluster[[1]], fun = shard_dispatch_wrapper_,
+                        args = list(chunk, collect_diag),
                         return = TRUE, tag = as.character(chunk$id))
       idle[worker_id] <- FALSE
       inflight[[worker_id]] <- list(chunk_id = as.character(chunk$id), start_time = Sys.time())
@@ -427,43 +354,45 @@ dispatch_chunks <- function(chunks, fun, ...,
       }
     }
 
-    if (is.list(payload) && is.list(payload$view_delta)) {
-      vd <- payload$view_delta
-      view_stats$created <- view_stats$created + (vd$created %||% 0L)
-      view_stats$materialized <- view_stats$materialized + (vd$materialized %||% 0L)
-      view_stats$materialized_bytes <- view_stats$materialized_bytes + (vd$materialized_bytes %||% 0)
-      view_stats$packed <- view_stats$packed + (vd$packed %||% 0L)
-      view_stats$packed_bytes <- view_stats$packed_bytes + (vd$packed_bytes %||% 0)
-    }
-
-    if (is.list(payload) && is.list(payload$view_hotspots_delta)) {
-      hsd <- payload$view_hotspots_delta
-      for (k in names(hsd)) {
-        cur <- view_hotspots[[k]] %||% list(bytes = 0, count = 0L)
-        cur$bytes <- (cur$bytes %||% 0) + (hsd[[k]]$bytes %||% 0)
-        cur$count <- as.integer((cur$count %||% 0L) + (hsd[[k]]$count %||% 0L))
-        view_hotspots[[k]] <- cur
+    if (collect_diag && is.list(payload)) {
+      if (is.list(payload$view_delta)) {
+        vd <- payload$view_delta
+        view_stats$created <- view_stats$created + (vd$created %||% 0L)
+        view_stats$materialized <- view_stats$materialized + (vd$materialized %||% 0L)
+        view_stats$materialized_bytes <- view_stats$materialized_bytes + (vd$materialized_bytes %||% 0)
+        view_stats$packed <- view_stats$packed + (vd$packed %||% 0L)
+        view_stats$packed_bytes <- view_stats$packed_bytes + (vd$packed_bytes %||% 0)
       }
-    }
 
-    if (is.list(payload) && is.list(payload$copy_delta)) {
-      cd <- payload$copy_delta
-      copy_stats$buffer_writes <- copy_stats$buffer_writes + (cd$buffer_writes %||% 0L)
-      copy_stats$buffer_bytes <- copy_stats$buffer_bytes + (cd$buffer_bytes %||% 0)
-    }
+      if (is.list(payload$view_hotspots_delta)) {
+        hsd <- payload$view_hotspots_delta
+        for (k in names(hsd)) {
+          cur <- view_hotspots[[k]] %||% list(bytes = 0, count = 0L)
+          cur$bytes <- (cur$bytes %||% 0) + (hsd[[k]]$bytes %||% 0)
+          cur$count <- as.integer((cur$count %||% 0L) + (hsd[[k]]$count %||% 0L))
+          view_hotspots[[k]] <- cur
+        }
+      }
 
-    if (is.list(payload) && is.list(payload$table_delta)) {
-      td <- payload$table_delta
-      table_stats$writes <- table_stats$writes + (td$table_writes %||% 0L)
-      table_stats$rows <- table_stats$rows + (td$table_rows %||% 0L)
-      table_stats$bytes <- table_stats$bytes + (td$table_bytes %||% 0)
-    }
+      if (is.list(payload$copy_delta)) {
+        cd <- payload$copy_delta
+        copy_stats$buffer_writes <- copy_stats$buffer_writes + (cd$buffer_writes %||% 0L)
+        copy_stats$buffer_bytes <- copy_stats$buffer_bytes + (cd$buffer_bytes %||% 0)
+      }
 
-    if (is.list(payload) && is.list(payload$scratch_delta)) {
-      sd <- payload$scratch_delta
-      scratch_stats$hits <- scratch_stats$hits + (sd$hits %||% 0L)
-      scratch_stats$misses <- scratch_stats$misses + (sd$misses %||% 0L)
-      scratch_stats$high_water <- max(as.double(scratch_stats$high_water), as.double(sd$high_water %||% 0))
+      if (is.list(payload$table_delta)) {
+        td <- payload$table_delta
+        table_stats$writes <- table_stats$writes + (td$table_writes %||% 0L)
+        table_stats$rows <- table_stats$rows + (td$table_rows %||% 0L)
+        table_stats$bytes <- table_stats$bytes + (td$table_bytes %||% 0)
+      }
+
+      if (is.list(payload$scratch_delta)) {
+        sd <- payload$scratch_delta
+        scratch_stats$hits <- scratch_stats$hits + (sd$hits %||% 0L)
+        scratch_stats$misses <- scratch_stats$misses + (sd$misses %||% 0L)
+        scratch_stats$high_water <- max(as.double(scratch_stats$high_water), as.double(sd$high_water %||% 0))
+      }
     }
 
     if (isTRUE(payload$scratch_needs_recycle)) {
@@ -506,6 +435,130 @@ dispatch_chunks <- function(chunks, fun, ...,
   )
 }
 
+# --- Worker-side dispatch wrapper --------------------------------------------
+#
+# These run inside worker processes. They are defined at package top level so
+# that parallel's sendCall serializes them as a compact body + a namespace
+# reference (~600 B) instead of capturing the master's dispatch frame. The
+# heavy diagnostics code lives in separate namespace functions that the
+# wrapper references by name, keeping the per-send payload minimal.
+
+shard_dispatch_wrapper_ <- function(chunk, collect_diag = TRUE) {
+  snap <- if (isTRUE(collect_diag)) shard_dispatch_diag_snapshot_() else NULL
+  res <- tryCatch(
+    {
+      f <- get(".shard_dispatch_fun", envir = globalenv(), inherits = FALSE)
+      a <- get(".shard_dispatch_args", envir = globalenv(), inherits = FALSE)
+      list(ok = TRUE, value = do.call(f, c(list(chunk), a)))
+    },
+    error = function(e) list(ok = FALSE, error = conditionMessage(e))
+  )
+  if (isTRUE(collect_diag)) {
+    res <- shard_dispatch_diag_deltas_(res, snap)
+  } else {
+    # Memory safety is not diagnostics: keep the scratch high-water recycle
+    # signal alive even when diagnostics collection is off.
+    sd1 <- tryCatch(scratch_diagnostics(), error = function(e) NULL)
+    if (is.list(sd1) && isTRUE(sd1$needs_recycle)) res$scratch_needs_recycle <- TRUE
+  }
+  res
+}
+
+shard_dispatch_diag_snapshot_ <- function() {
+  list(
+    vd = tryCatch(view_diagnostics(), error = function(e) NULL),
+    cd = tryCatch(buffer_diagnostics(), error = function(e) NULL),
+    td = tryCatch(table_diagnostics(), error = function(e) NULL),
+    sd = tryCatch(scratch_diagnostics(), error = function(e) NULL)
+  )
+}
+
+shard_dispatch_diag_deltas_ <- function(res, snap) {
+  vd0 <- snap$vd
+  cd0 <- snap$cd
+  td0 <- snap$td
+  sd0 <- snap$sd
+  vd1 <- tryCatch(view_diagnostics(), error = function(e) NULL)
+  cd1 <- tryCatch(buffer_diagnostics(), error = function(e) NULL)
+  td1 <- tryCatch(table_diagnostics(), error = function(e) NULL)
+  sd1 <- tryCatch(scratch_diagnostics(), error = function(e) NULL)
+
+  if (is.list(vd0) && is.list(vd1)) {
+    res$view_delta <- list(
+      created = (vd1$created %||% 0L) - (vd0$created %||% 0L),
+      materialized = (vd1$materialized %||% 0L) - (vd0$materialized %||% 0L),
+      materialized_bytes = (vd1$materialized_bytes %||% 0) - (vd0$materialized_bytes %||% 0),
+      packed = (vd1$packed %||% 0L) - (vd0$packed %||% 0L),
+      packed_bytes = (vd1$packed_bytes %||% 0) - (vd0$packed_bytes %||% 0)
+    )
+  }
+
+  # Best-effort attribution: only compute hotspot deltas when materialization occurred.
+  if (is.list(res$view_delta) && (res$view_delta$materialized %||% 0L) > 0L) {
+    hs1 <- tryCatch(view_materialize_hotspots_snapshot_(), error = function(e) NULL)
+    if (is.list(hs1)) {
+      hs0 <- if (exists(".shard_view_hotspot_snapshot", envir = .shard_worker_env, inherits = FALSE)) {
+        get(".shard_view_hotspot_snapshot", envir = .shard_worker_env)
+      } else {
+        list()
+      }
+
+      delta <- list()
+      keys <- unique(c(names(hs0), names(hs1)))
+      for (k in keys) {
+        v1 <- hs1[[k]] %||% list()
+        v0 <- hs0[[k]] %||% list()
+        b1 <- v1$bytes %||% 0
+        c1 <- v1$count %||% 0L
+        b0 <- v0$bytes %||% 0
+        c0 <- v0$count %||% 0L
+        db <- as.double(b1) - as.double(b0)
+        dc <- as.integer(c1) - as.integer(c0)
+        if (is.finite(db) && db > 0) {
+          delta[[k]] <- list(bytes = db, count = dc)
+        }
+      }
+
+      assign(".shard_view_hotspot_snapshot", hs1, envir = .shard_worker_env)
+      if (length(delta) > 0) res$view_hotspots_delta <- delta
+    }
+  }
+
+  if (is.list(cd0) && is.list(cd1)) {
+    res$copy_delta <- list(
+      buffer_writes = (cd1$writes %||% 0L) - (cd0$writes %||% 0L),
+      buffer_bytes = (cd1$bytes %||% 0) - (cd0$bytes %||% 0)
+    )
+  }
+
+  if (is.list(td0) && is.list(td1)) {
+    res$table_delta <- list(
+      table_writes = (td1$writes %||% 0L) - (td0$writes %||% 0L),
+      table_rows = (td1$rows %||% 0L) - (td0$rows %||% 0L),
+      table_bytes = (td1$bytes %||% 0) - (td0$bytes %||% 0)
+    )
+  }
+
+  if (is.list(sd0) && is.list(sd1)) {
+    res$scratch_delta <- list(
+      hits = (sd1$hits %||% 0L) - (sd0$hits %||% 0L),
+      misses = (sd1$misses %||% 0L) - (sd0$misses %||% 0L),
+      high_water = sd1$high_water %||% 0
+    )
+    res$scratch_needs_recycle <- isTRUE(sd1$needs_recycle)
+  }
+
+  res
+}
+
+# Chunk executor for pool_lapply(). Top level for the same reason as
+# shard_dispatch_wrapper_: it must not capture the pool_lapply frame (X,
+# chunks, ...). FUN and extra_args travel once per dispatch via the
+# .shard_dispatch_args channel, not once per chunk.
+pool_lapply_chunk_fun_ <- function(chunk, FUN, extra_args) {
+  lapply(chunk$elements, function(x) do.call(FUN, c(list(x), extra_args)))
+}
+
 #' Parallel Dispatch with Async Workers
 #'
 #' An alternative dispatch that uses parallel::parLapply-style execution
@@ -537,7 +590,9 @@ pool_lapply <- function(X, FUN, ..., pool = NULL, chunk_size = 1L) {
   # Capture extra args
   extra_args <- list(...)
 
-  # Create chunks with the actual function embedded
+  # Create chunks carrying only their data slice. FUN and extra_args are
+  # exported once per dispatch (via .shard_dispatch_args), not embedded in
+  # every chunk payload.
   n <- length(X)
   chunks <- lapply(seq_len(ceiling(n / chunk_size)), function(i) {
     start <- (i - 1L) * chunk_size + 1L
@@ -545,21 +600,12 @@ pool_lapply <- function(X, FUN, ..., pool = NULL, chunk_size = 1L) {
     list(
       id = i,
       indices = start:end,
-      elements = X[start:end],
-      FUN = FUN,
-      extra_args = extra_args
+      elements = X[start:end]
     )
   })
 
-  # Wrapper function that processes a chunk
-  chunk_fun <- function(chunk) {
-    FUN <- chunk$FUN
-    extra_args <- chunk$extra_args
-    lapply(chunk$elements, function(x) do.call(FUN, c(list(x), extra_args)))
-  }
-
   # Dispatch
-  result <- dispatch_chunks(chunks, chunk_fun, pool = pool)
+  result <- dispatch_chunks(chunks, pool_lapply_chunk_fun_, FUN, extra_args, pool = pool)
 
   # Flatten results
   unlist(result$results, recursive = FALSE)

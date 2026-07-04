@@ -129,12 +129,15 @@ shard_reduce <- function(shards,
 
   # Create chunk descriptors. We reuse the same chunk format as shard_map, but
   # the executor will reduce inside the worker and return a single partial.
-  chunks <- create_shard_chunks(shards, chunk_size, fun = map, borrow = borrow, out = out, kernel_meta = NULL)
+  # The map function is NOT embedded per chunk; it travels once per dispatch
+  # inside the chunk_reducer closure below (.shard_dispatch_fun channel).
+  chunks <- create_shard_chunks(shards, chunk_size, borrow = borrow, out = out, kernel_meta = NULL)
 
   # Worker-side chunk reducer.
   chunk_reducer <- local({
     combine_fun <- combine
     init_val <- init
+    map_fun <- map
     function(chunk) {
       borrow <- if (exists(".shard_borrow", envir = globalenv())) {
         get(".shard_borrow", envir = globalenv())
@@ -194,7 +197,6 @@ shard_reduce <- function(shards,
         }
       }
 
-      map_fun <- chunk$fun
       borrow_names <- chunk$borrow_names
       out_names <- chunk$out_names
 
@@ -234,7 +236,8 @@ shard_reduce <- function(shards,
     timeout = timeout,
     on_result = on_partial,
     store_results = FALSE,
-    retain_chunks = FALSE
+    retain_chunks = FALSE,
+    diagnostics = diagnostics
   )
 
   if (diagnostics) {
