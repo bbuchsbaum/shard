@@ -94,6 +94,178 @@ test_that("buffer slice reading works", {
     buffer_close(buf)
 })
 
+test_that("buffer sparse gather reads requested elements for all types", {
+    cases <- list(
+        double = list(values = as.double(1:8), idx = c(7L, 2L, 5L), size = 8L),
+        integer = list(values = as.integer(1:8), idx = c(7L, 2L, 5L), size = 4L),
+        logical = list(values = c(TRUE, FALSE, TRUE, TRUE, FALSE, FALSE, TRUE, FALSE),
+                       idx = c(7L, 2L, 5L), size = 4L),
+        raw = list(values = as.raw(1:8), idx = c(7L, 2L, 5L), size = 1L)
+    )
+
+    for (type in names(cases)) {
+        case <- cases[[type]]
+        buf <- buffer(type, dim = length(case$values))
+        buf[] <- case$values
+
+        shard:::buffer_reset_diagnostics()
+        expect_equal(buf[case$idx], case$values[case$idx])
+        d <- buffer_diagnostics()
+        expect_equal(d$reads, 1L)
+        expect_equal(d$read_bytes, length(case$idx) * case$size)
+
+        buffer_close(buf)
+    }
+})
+
+test_that("buffer sparse scatter writes requested elements for all types", {
+    cases <- list(
+        double = list(values = c(10, 20, 30), expected = c(20, 30, 10), size = 8L),
+        integer = list(values = c(10L, 20L, 30L), expected = c(20L, 30L, 10L), size = 4L),
+        logical = list(values = c(TRUE, FALSE, TRUE), expected = c(FALSE, TRUE, TRUE), size = 4L),
+        raw = list(values = as.raw(c(10, 20, 30)), expected = as.raw(c(20, 30, 10)), size = 1L)
+    )
+    idx <- c(6L, 1L, 4L)
+
+    for (type in names(cases)) {
+        case <- cases[[type]]
+        buf <- buffer(type, dim = 8)
+
+        shard:::buffer_reset_diagnostics()
+        buf[idx] <- case$values
+        d <- buffer_diagnostics()
+        expect_equal(d$writes, 1L)
+        expect_equal(d$bytes, length(idx) * case$size)
+        expect_equal(buf[c(1L, 4L, 6L)], case$expected)
+
+        buffer_close(buf)
+    }
+})
+
+test_that("buffer scatter preserves duplicate last-write-wins semantics", {
+    buf <- buffer("integer", dim = 6)
+
+    shard:::buffer_reset_diagnostics()
+    buf[c(2L, 2L, 4L, 2L)] <- c(10L, 20L, 40L, 30L)
+    d <- buffer_diagnostics()
+
+    expect_equal(d$writes, 1L)
+    expect_equal(d$bytes, 4L * 4L)
+    expect_equal(buf[c(2L, 4L)], c(30L, 40L))
+
+    buffer_close(buf)
+})
+
+test_that("buffer sparse indexing rejects NA and out-of-bounds indices", {
+    buf <- buffer("double", dim = 5)
+    expect_error(buf[NA_integer_], "Index out of bounds")
+    expect_error(buf[c(1L, 6L)], "Index out of bounds")
+    expect_error(buf[NA_integer_] <- 1, "Index out of bounds")
+    expect_error(buf[c(1L, 6L)] <- 1:2, "Index out of bounds")
+    buffer_close(buf)
+
+    mat <- buffer("double", dim = c(3, 3))
+    expect_error(mat[4L, 1L], "Index out of bounds")
+    expect_error(mat[1L, NA_integer_], "Index out of bounds")
+    expect_error(mat[4L, 1L] <- 1, "Index out of bounds")
+    expect_error(mat[1L, NA_integer_] <- 1, "Index out of bounds")
+    buffer_close(mat)
+})
+
+test_that("buffer zero-length sparse read and write are no-ops", {
+    buf <- buffer("double", dim = 5)
+    expect_equal(buf[integer(0)], double(0))
+
+    shard:::buffer_reset_diagnostics()
+    buf[integer(0)] <- numeric(0)
+    d <- buffer_diagnostics()
+    expect_equal(d$writes, 0L)
+    expect_equal(d$bytes, 0)
+    expect_equal(buf[], rep(0, 5))
+
+    buffer_close(buf)
+})
+
+test_that("buffer accepts idx_range selectors without sparse materialization", {
+    buf <- buffer("integer", dim = 10)
+    buf[] <- 1:10
+
+    shard:::buffer_reset_diagnostics()
+    expect_equal(buf[idx_range(3, 6)], 3L:6L)
+    d <- buffer_diagnostics()
+    expect_equal(d$reads, 1L)
+    expect_equal(d$read_bytes, 4L * 4L)
+
+    shard:::buffer_reset_diagnostics()
+    buf[idx_range(3, 6)] <- 11:14
+    d <- buffer_diagnostics()
+    expect_equal(d$writes, 1L)
+    expect_equal(d$bytes, 4L * 4L)
+    expect_equal(buf[1:8], c(1L, 2L, 11L, 12L, 13L, 14L, 7L, 8L))
+
+    buffer_close(buf)
+})
+
+test_that("buffer matrix sparse reads and writes use gathered linear indices", {
+    buf <- buffer("double", dim = c(4, 5))
+    ref <- matrix(as.double(1:20), nrow = 4)
+    buf[] <- as.vector(ref)
+
+    rows <- c(4L, 1L)
+    cols <- c(5L, 2L)
+
+    shard:::buffer_reset_diagnostics()
+    expect_equal(buf[rows, cols], ref[rows, cols])
+    d <- buffer_diagnostics()
+    expect_equal(d$reads, 1L)
+    expect_equal(d$read_bytes, length(rows) * length(cols) * 8L)
+
+    value <- matrix(c(100, 200, 300, 400), nrow = 2)
+    shard:::buffer_reset_diagnostics()
+    buf[rows, cols] <- value
+    ref[rows, cols] <- value
+    d <- buffer_diagnostics()
+    expect_equal(d$writes, 1L)
+    expect_equal(d$bytes, length(rows) * length(cols) * 8L)
+    expect_equal(as.matrix(buf), ref)
+
+    buffer_close(buf)
+})
+
+test_that("buffer matrix idx_range selectors read and write expected blocks", {
+    buf <- buffer("integer", dim = c(5, 4))
+    ref <- matrix(as.integer(1:20), nrow = 5)
+    buf[] <- as.vector(ref)
+
+    expect_equal(buf[idx_range(2, 4), idx_range(2, 3)], ref[2:4, 2:3])
+
+    value <- matrix(as.integer(101:106), nrow = 3)
+    shard:::buffer_reset_diagnostics()
+    buf[idx_range(2, 4), idx_range(2, 3)] <- value
+    ref[2:4, 2:3] <- value
+    d <- buffer_diagnostics()
+    expect_equal(d$writes, 1L)
+    expect_equal(d$bytes, length(value) * 4L)
+    expect_equal(as.matrix(buf), ref)
+
+    buffer_close(buf)
+})
+
+test_that("buffer sparse writes record one logical write operation", {
+    buf <- buffer("double", dim = 100)
+    idx <- seq.int(1L, 99L, by = 2L)
+
+    shard:::buffer_reset_diagnostics()
+    buf[idx] <- seq_along(idx)
+    d <- buffer_diagnostics()
+
+    expect_equal(d$writes, 1L)
+    expect_equal(d$bytes, length(idx) * 8L)
+    expect_equal(buf[idx], as.double(seq_along(idx)))
+
+    buffer_close(buf)
+})
+
 test_that("buffer full extraction with [] works", {
     buf <- buffer("double", dim = 10)
     buf[1:5] <- 1:5

@@ -798,6 +798,48 @@ int shard_segment_write(shard_segment_t *seg, const void *data, size_t offset,
     return 0;
 }
 
+static size_t shard_segment_type_size(int type) {
+    switch (type) {
+        case REALSXP: return sizeof(double);
+        case INTSXP: return sizeof(int);
+        case LGLSXP: return sizeof(int);
+        case RAWSXP: return sizeof(Rbyte);
+        default:
+            error("Unsupported buffer type");
+    }
+    return 0; /* unreachable */
+}
+
+static void shard_segment_check_type(SEXP values, int type) {
+    if (TYPEOF(values) != type) {
+        error("Values do not match requested buffer type");
+    }
+}
+
+static size_t shard_segment_index_offset(shard_segment_t *seg, SEXP idx,
+                                         R_xlen_t pos, size_t elem_size) {
+    if (TYPEOF(idx) != INTSXP) {
+        error("idx must be an integer vector");
+    }
+
+    int one_based = INTEGER(idx)[pos];
+    if (one_based == NA_INTEGER || one_based < 1) {
+        error("Index out of bounds");
+    }
+
+    size_t zero_based = (size_t)(one_based - 1);
+    if (elem_size != 0 && zero_based > SIZE_MAX / elem_size) {
+        error("Index offset overflow");
+    }
+
+    size_t offset = zero_based * elem_size;
+    if (offset > seg->size || elem_size > seg->size - offset) {
+        error("Index out of bounds");
+    }
+
+    return offset;
+}
+
 /*
  * R interface functions
  */
@@ -964,6 +1006,89 @@ SEXP C_shard_segment_read_raw(SEXP seg_ptr, SEXP offset, SEXP size) {
     UNPROTECT(1);
 
     return result;
+}
+
+/* Gather typed elements at 1-based indices from a segment. */
+SEXP C_shard_segment_gather_read(SEXP seg_ptr, SEXP idx, SEXP type) {
+    shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(seg_ptr);
+    if (!seg || !seg->addr) error("Invalid segment");
+
+    int sexp_type = asInteger(type);
+    size_t elem_size = shard_segment_type_size(sexp_type);
+    R_xlen_t nidx = XLENGTH(idx);
+
+    for (R_xlen_t k = 0; k < nidx; k++) {
+        (void)shard_segment_index_offset(seg, idx, k, elem_size);
+    }
+
+    SEXP result = PROTECT(allocVector(sexp_type, nidx));
+    char *base = (char *)seg->addr;
+
+    for (R_xlen_t k = 0; k < nidx; k++) {
+        size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+        switch (sexp_type) {
+            case REALSXP:
+                memcpy(&REAL(result)[k], base + off, sizeof(double));
+                break;
+            case INTSXP:
+                memcpy(&INTEGER(result)[k], base + off, sizeof(int));
+                break;
+            case LGLSXP:
+                memcpy(&LOGICAL(result)[k], base + off, sizeof(int));
+                break;
+            case RAWSXP:
+                memcpy(&RAW(result)[k], base + off, sizeof(Rbyte));
+                break;
+            default:
+                error("Unsupported buffer type");
+        }
+    }
+
+    UNPROTECT(1);
+    return result;
+}
+
+/* Scatter typed values to 1-based indices in input order. */
+SEXP C_shard_segment_scatter_write(SEXP seg_ptr, SEXP idx, SEXP values, SEXP type) {
+    shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(seg_ptr);
+    if (!seg || !seg->addr) error("Invalid segment");
+    if (seg->readonly) error("Segment is read-only");
+
+    int sexp_type = asInteger(type);
+    shard_segment_check_type(values, sexp_type);
+
+    size_t elem_size = shard_segment_type_size(sexp_type);
+    R_xlen_t nidx = XLENGTH(idx);
+    if (XLENGTH(values) != nidx) {
+        error("values length must match idx length");
+    }
+
+    for (R_xlen_t k = 0; k < nidx; k++) {
+        (void)shard_segment_index_offset(seg, idx, k, elem_size);
+    }
+
+    char *base = (char *)seg->addr;
+    for (R_xlen_t k = 0; k < nidx; k++) {
+        size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+        switch (sexp_type) {
+            case REALSXP:
+                memcpy(base + off, &REAL(values)[k], sizeof(double));
+                break;
+            case INTSXP:
+                memcpy(base + off, &INTEGER(values)[k], sizeof(int));
+                break;
+            case LGLSXP:
+                memcpy(base + off, &LOGICAL(values)[k], sizeof(int));
+                break;
+            case RAWSXP:
+                memcpy(base + off, &RAW(values)[k], sizeof(Rbyte));
+                break;
+            default:
+                error("Unsupported buffer type");
+        }
+    }
+
+    return ScalarReal((double)nidx * (double)elem_size);
 }
 
 /* Make segment read-only */

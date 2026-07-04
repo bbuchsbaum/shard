@@ -159,6 +159,8 @@ attribute_visible SEXP C_shard_segment_size(SEXP seg_ptr);
 attribute_visible SEXP C_shard_segment_path(SEXP seg_ptr);
 attribute_visible SEXP C_shard_segment_write_raw(SEXP seg_ptr, SEXP data, SEXP offset);
 attribute_visible SEXP C_shard_segment_read_raw(SEXP seg_ptr, SEXP offset, SEXP size);
+attribute_visible SEXP C_shard_segment_gather_read(SEXP seg_ptr, SEXP idx, SEXP type);
+attribute_visible SEXP C_shard_segment_scatter_write(SEXP seg_ptr, SEXP idx, SEXP values, SEXP type);
 attribute_visible SEXP C_shard_segment_protect(SEXP seg_ptr);
 
 /* Wrap an already-open shard_segment_t* in an externalptr with finalizer */
