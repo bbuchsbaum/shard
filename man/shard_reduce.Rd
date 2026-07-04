@@ -12,7 +12,7 @@ shard_reduce(
   borrow = list(),
   out = list(),
   workers = NULL,
-  chunk_size = 1L,
+  chunk_size = "auto",
   profile = c("default", "memory", "speed"),
   mem_cap = "2GB",
   recycle = TRUE,
@@ -32,10 +32,13 @@ shard_reduce(
 \item{map}{Function executed per shard. Receives shard descriptor as first
 argument, followed by borrowed inputs and outputs.}
 
-\item{combine}{Function \verb{(acc, value) -> acc} used to combine results. Should
-be associative for deterministic behavior under chunking.}
+\item{combine}{Function \verb{(acc, value) -> acc} used to combine results. Must
+be associative, and must accept two mapped values as arguments (worker
+partials start from a chunk's first mapped value; see
+\emph{Initial value semantics}).}
 
-\item{init}{Initial accumulator value.}
+\item{init}{Initial accumulator value, combined exactly once on the master
+(see \emph{Initial value semantics}).}
 
 \item{borrow}{Named list of shared inputs (same semantics as \code{\link[=shard_map]{shard_map()}}).}
 
@@ -43,7 +46,11 @@ be associative for deterministic behavior under chunking.}
 
 \item{workers}{Number of worker processes.}
 
-\item{chunk_size}{Shards to batch per worker dispatch (default 1).}
+\item{chunk_size}{Shards to batch per worker dispatch. The default
+\code{"auto"} targets roughly four chunks per worker,
+\code{max(1, ceiling(num_shards / (workers * 4)))}, which amortizes dispatch
+round trips while retaining load balance. Supply an integer to control
+batching explicitly.}
 
 \item{profile}{Execution profile (same semantics as \code{\link[=shard_map]{shard_map()}}).}
 
@@ -53,7 +60,21 @@ be associative for deterministic behavior under chunking.}
 
 \item{cow}{Copy-on-write policy for borrowed inputs (same semantics as \code{\link[=shard_map]{shard_map()}}).}
 
-\item{seed}{RNG seed for reproducibility.}
+\item{seed}{RNG seed for reproducibility. When non-\code{NULL}, one independent
+L'Ecuyer-CMRG stream per shard is derived on the master and installed in
+the worker immediately before each \code{map()} call, so per-shard RNG draws
+are reproducible regardless of worker count, \code{chunk_size}, or dynamic
+shard-to-worker assignment. The master's RNG state and \code{RNGkind()} are
+left exactly as found (\code{seed = NULL} touches no RNG state). Note on
+floating-point results: partials are combined in chunk order, which is
+deterministic given identical chunking, so a given
+(\code{seed}, chunking, \code{chunk_size}) is exactly reproducible for any
+\verb{workers=}; across \emph{different} \code{chunk_size} values the combine order
+differs, so non-associative floating-point rounding may differ even
+though the per-shard RNG draws are identical. When \code{shards} is a scalar
+N and \code{seed} is set, the shard decomposition is chosen independently of
+the worker count so the same seed gives identical results for any
+\verb{workers=}.}
 
 \item{diagnostics}{Logical; collect diagnostics (default TRUE).}
 
@@ -88,9 +109,21 @@ complete.
 For performance and memory efficiency, reduction is performed in two stages:
 \enumerate{
 \item per-chunk partial reduction inside each worker, and
-\item streaming combine of partials on the master.
+\item streaming combine of partials on the master, folded in chunk order.
 }
 }
+\section{Initial value semantics}{
+
+\code{init} is combined exactly once, on the master, at the start of the final
+fold: the result is \code{combine(combine(combine(init, p1), p2), ...)} where
+\verb{p1, p2, ...} are per-chunk partials in chunk order. Worker-side partials
+are built without \code{init}: each chunk's partial starts from the chunk's
+first mapped value. A non-neutral \code{init} (e.g. \code{init = 10} with \code{+})
+therefore contributes exactly once, regardless of \code{chunk_size} or
+\code{workers}. This requires \code{combine} to be associative and able to combine
+two mapped values (not just an accumulator with a value).
+}
+
 \examples{
 \donttest{
 res <- shard_reduce(
