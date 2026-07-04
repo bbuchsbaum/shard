@@ -444,6 +444,22 @@ dispatch_chunks <- function(chunks, fun, ...,
 # wrapper references by name, keeping the per-send payload minimal.
 
 shard_dispatch_wrapper_ <- function(chunk, collect_diag = TRUE) {
+  old_hotspots <- if (exists(".shard_view_hotspots_enabled", envir = .shard_worker_env, inherits = FALSE)) {
+    get(".shard_view_hotspots_enabled", envir = .shard_worker_env, inherits = FALSE)
+  } else {
+    NULL
+  }
+  assign(".shard_view_hotspots_enabled", isTRUE(collect_diag), envir = .shard_worker_env)
+  on.exit({
+    if (is.null(old_hotspots)) {
+      if (exists(".shard_view_hotspots_enabled", envir = .shard_worker_env, inherits = FALSE)) {
+        rm(".shard_view_hotspots_enabled", envir = .shard_worker_env)
+      }
+    } else {
+      assign(".shard_view_hotspots_enabled", old_hotspots, envir = .shard_worker_env)
+    }
+  }, add = TRUE)
+
   snap <- if (isTRUE(collect_diag)) shard_dispatch_diag_snapshot_() else NULL
   res <- tryCatch(
     {

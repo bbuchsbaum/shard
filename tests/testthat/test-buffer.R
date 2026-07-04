@@ -40,6 +40,34 @@ test_that("buffer with custom init value", {
     buffer_close(buf)
 })
 
+test_that("buffer skips full initialization writes for zero-filled buffers", {
+    shard:::buffer_reset_diagnostics()
+    buf <- buffer("double", dim = 100, init = NULL)
+    expect_equal(buf[], rep(0, 100))
+    d <- buffer_diagnostics()
+    expect_equal(d$init_writes, 0L)
+    expect_equal(d$init_bytes, 0)
+    buffer_close(buf)
+
+    shard:::buffer_reset_diagnostics()
+    buf <- buffer("integer", dim = 50, init = 0L)
+    expect_equal(buf[], rep(0L, 50))
+    d <- buffer_diagnostics()
+    expect_equal(d$init_writes, 0L)
+    expect_equal(d$init_bytes, 0)
+    buffer_close(buf)
+})
+
+test_that("buffer preserves nonzero initialization writes", {
+    shard:::buffer_reset_diagnostics()
+    buf <- buffer("double", dim = 10, init = 42)
+    expect_equal(buf[], rep(42, 10))
+    d <- buffer_diagnostics()
+    expect_equal(d$init_writes, 1L)
+    expect_equal(d$init_bytes, 10 * 8)
+    buffer_close(buf)
+})
+
 test_that("buffer slice assignment works", {
     buf <- buffer("double", dim = 100)
 

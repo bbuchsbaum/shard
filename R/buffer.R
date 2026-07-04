@@ -50,21 +50,26 @@ NULL
 .buffer_diag_env <- new.env(parent = emptyenv())
 .buffer_diag_env$writes <- 0L
 .buffer_diag_env$bytes <- 0
+.buffer_diag_env$init_writes <- 0L
+.buffer_diag_env$init_bytes <- 0
 
 #' Buffer Diagnostics
 #'
 #' Returns per-process counters for shard buffer writes. shard_map uses these
 #' internally to report write volume/operations in copy_report().
 #'
-#' @return A list with elements \code{writes} (integer count) and \code{bytes}
-#'   (total bytes written) accumulated in the current process.
+#' @return A list with elements \code{writes} (integer count), \code{bytes}
+#'   (total bytes written), \code{init_writes}, and \code{init_bytes}
+#'   accumulated in the current process.
 #' @export
 #' @examples
 #' buffer_diagnostics()
 buffer_diagnostics <- function() {
     list(
         writes = .buffer_diag_env$writes,
-        bytes = .buffer_diag_env$bytes
+        bytes = .buffer_diag_env$bytes,
+        init_writes = .buffer_diag_env$init_writes,
+        init_bytes = .buffer_diag_env$init_bytes
     )
 }
 
@@ -72,7 +77,29 @@ buffer_diagnostics <- function() {
 buffer_reset_diagnostics <- function() {
     .buffer_diag_env$writes <- 0L
     .buffer_diag_env$bytes <- 0
+    .buffer_diag_env$init_writes <- 0L
+    .buffer_diag_env$init_bytes <- 0
     invisible(NULL)
+}
+
+.buffer_is_zero_init <- function(type, init, init_was_null) {
+    if (isTRUE(init_was_null)) return(TRUE)
+    if (length(init) == 0L) return(FALSE)
+
+    vals <- switch(type,
+        "double"  = as.double(init),
+        "integer" = as.integer(init),
+        "logical" = as.logical(init),
+        "raw"     = as.raw(init)
+    )
+
+    if (anyNA(vals)) return(FALSE)
+    switch(type,
+        "double"  = all(vals == 0),
+        "integer" = all(vals == 0L),
+        "logical" = all(!vals),
+        "raw"     = all(vals == as.raw(0))
+    )
 }
 
 #' Create a Shared Memory Buffer
@@ -126,8 +153,10 @@ buffer <- function(type = c("double", "integer", "logical", "raw"),
     # Create underlying segment
     seg <- segment_create(byte_size, backing = backing)
 
-    # Initialize buffer contents
-    if (is.null(init)) {
+    # Initialize buffer contents. Newly created mappings are zero-filled by the
+    # OS, so NULL/type-zero initialization can skip an otherwise full-size copy.
+    init_was_null <- is.null(init)
+    if (init_was_null) {
         init <- switch(type,
             "double"  = 0,
             "integer" = 0L,
@@ -136,14 +165,17 @@ buffer <- function(type = c("double", "integer", "logical", "raw"),
         )
     }
 
-    # Write initial value
-    init_data <- switch(type,
-        "double"  = rep(as.double(init), n),
-        "integer" = rep(as.integer(init), n),
-        "logical" = rep(as.logical(init), n),
-        "raw"     = rep(as.raw(init), n)
-    )
-    segment_write(seg, init_data, offset = 0)
+    if (!.buffer_is_zero_init(type, init, init_was_null)) {
+        init_data <- switch(type,
+            "double"  = rep(as.double(init), n),
+            "integer" = rep(as.integer(init), n),
+            "logical" = rep(as.logical(init), n),
+            "raw"     = rep(as.raw(init), n)
+        )
+        segment_write(seg, init_data, offset = 0)
+        .buffer_diag_env$init_writes <- .buffer_diag_env$init_writes + 1L
+        .buffer_diag_env$init_bytes <- .buffer_diag_env$init_bytes + byte_size
+    }
 
     structure(
         list(

@@ -7,8 +7,9 @@
 buffer_diagnostics()
 }
 \value{
-A list with elements \code{writes} (integer count) and \code{bytes}
-(total bytes written) accumulated in the current process.
+A list with elements \code{writes} (integer count), \code{bytes}
+(total bytes written), \code{init_writes}, and \code{init_bytes}
+accumulated in the current process.
 }
 \description{
 Returns per-process counters for shard buffer writes. shard_map uses these

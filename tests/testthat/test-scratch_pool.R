@@ -86,6 +86,37 @@ test_that("scratch_matrix uses custom key when provided", {
   expect_true(sd$hits >= 1)
 })
 
+test_that("scratch_matrix stores dim-applied matrices for exact reuse", {
+  shard:::scratch_reset_diagnostics()
+
+  x1 <- scratch_matrix(3, 4, key = "shape_reuse")
+  id1 <- shard:::object_identity(x1)
+  x2 <- scratch_matrix(3, 4, key = "shape_reuse")
+  id2 <- shard:::object_identity(x2)
+
+  expect_equal(dim(x2), c(3L, 4L))
+  expect_identical(id2, id1)
+
+  sd <- scratch_diagnostics()
+  expect_equal(sd$misses, 1L)
+  expect_equal(sd$hits, 1L)
+})
+
+test_that("scratch_matrix custom-key shape changes allocate exact length", {
+  shard:::scratch_reset_diagnostics()
+
+  x1 <- scratch_matrix(4, 4, key = "shape_change")
+  x2 <- scratch_matrix(2, 2, key = "shape_change")
+
+  expect_equal(dim(x1), c(4L, 4L))
+  expect_equal(dim(x2), c(2L, 2L))
+  expect_equal(length(x2), 4L)
+
+  sd <- scratch_diagnostics()
+  expect_equal(sd$misses, 2L)
+  expect_equal(sd$hits, 0L)
+})
+
 test_that("scratch_matrix creates double matrices", {
   x <- scratch_matrix(3, 4)
 

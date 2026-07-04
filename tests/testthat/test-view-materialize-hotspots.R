@@ -34,3 +34,31 @@ test_that("view materialization hotspots are attributed in diagnostics", {
   expect_gt(length(hs), 0L)
 })
 
+test_that("view hotspot attribution is gated by option for local materialization", {
+  shard:::view_reset_diagnostics()
+  withr::local_options(shard.view_hotspots = FALSE)
+
+  X <- matrix(as.double(1:30), nrow = 5)
+  Xsh <- share(X, backing = "mmap")
+  v <- view_block(Xsh, cols = idx_range(2, 4))
+
+  expect_equal(materialize(v), X[, 2:4, drop = FALSE])
+  vd <- view_diagnostics()
+  expect_equal(vd$materialized, 1L)
+  expect_gt(vd$materialized_bytes, 0)
+  expect_equal(shard:::view_materialize_hotspots_snapshot_(), list())
+})
+
+test_that("view hotspot attribution can be enabled explicitly", {
+  shard:::view_reset_diagnostics()
+  withr::local_options(shard.view_hotspots = TRUE)
+
+  X <- matrix(as.double(1:30), nrow = 5)
+  Xsh <- share(X, backing = "mmap")
+  v <- view_block(Xsh, cols = idx_range(2, 4))
+
+  expect_equal(materialize(v), X[, 2:4, drop = FALSE])
+  hs <- shard:::view_materialize_hotspots_snapshot_()
+  expect_true(is.list(hs))
+  expect_gt(length(hs), 0L)
+})

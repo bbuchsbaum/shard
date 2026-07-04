@@ -19,6 +19,12 @@ NULL
 .views_env$packed_bytes <- 0
 .views_env$materialize_hotspots <- new.env(parent = emptyenv())
 
+.view_hotspots_enabled_ <- function() {
+  isTRUE(getOption("shard.view_hotspots", FALSE)) ||
+    (exists(".shard_view_hotspots_enabled", envir = .shard_worker_env, inherits = FALSE) &&
+       isTRUE(get(".shard_view_hotspots_enabled", envir = .shard_worker_env, inherits = FALSE)))
+}
+
 elem_size_bytes <- function(x) {
   switch(
     typeof(x),
@@ -135,6 +141,7 @@ idx_print <- function(x) {
 .view_record_materialization_ <- function(nbytes) {
   nbytes <- as.double(nbytes)
   if (!is.finite(nbytes) || is.na(nbytes) || nbytes <= 0) return(invisible(NULL))
+  if (!.view_hotspots_enabled_()) return(invisible(NULL))
 
   key <- .view_hotspot_key_()
   if (!exists(key, envir = .views_env$materialize_hotspots, inherits = FALSE)) {

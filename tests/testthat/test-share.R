@@ -1,15 +1,31 @@
 # Tests for share() - zero-copy shared objects
 
 test_that("share returns an ALTREP-backed shared vector for atomic inputs", {
+    shard:::share_validation_reset_diagnostics()
+
     x <- 1:100
     shared <- share(x)
 
     expect_true(is_shared_vector(shared))
     expect_s3_class(shared, "shard_shared_vector")
+    expect_equal(shard:::share_validation_diagnostics()$walks, 0L)
 
     info <- shared_info(shared)
     expect_true(info$size > 0)
     expect_true(!is.null(info$path))
+})
+
+test_that("share with deep=TRUE lets traversal own validation", {
+    shard:::share_validation_reset_diagnostics()
+
+    x <- list(a = rnorm(1000), b = list(c = as.integer(1:1000)))
+    shared <- share(x, deep = TRUE, min_bytes = 1000)
+
+    expect_s3_class(shared, "shard_deep_shared")
+    expect_equal(shard:::share_validation_diagnostics()$walks, 0L)
+    expect_equal(fetch(shared), x)
+
+    close(shared)
 })
 
 test_that("share returns a shard_shared handle for non-shareable types", {
