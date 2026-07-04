@@ -234,4 +234,3 @@ test_that("shard_reduce map fun travels via the dispatch channel", {
   pool_stop()
   expect_identical(res$value, as.numeric(sum(1:100)))
 })
-

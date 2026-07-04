@@ -47,6 +47,7 @@ Thumbs.db
 .claude/
 .beads/
 .logs/
+.omc/
 
 # Local vendor checkouts (not part of the shard package source)
 vendor/
