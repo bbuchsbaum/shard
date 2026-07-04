@@ -44,6 +44,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_taskq_init",               (DL_FUNC) &C_shard_taskq_init,               2},
     {"C_shard_taskq_supported",          (DL_FUNC) &C_shard_taskq_supported,          0},
     {"C_shard_taskq_claim",              (DL_FUNC) &C_shard_taskq_claim,              2},
+    {"C_shard_taskq_claim_range",        (DL_FUNC) &C_shard_taskq_claim_range,        3},
     {"C_shard_taskq_mark_done",          (DL_FUNC) &C_shard_taskq_mark_done,          2},
     {"C_shard_taskq_mark_error",         (DL_FUNC) &C_shard_taskq_mark_error,         3},
     {"C_shard_taskq_reset_claims",       (DL_FUNC) &C_shard_taskq_reset_claims,       2},

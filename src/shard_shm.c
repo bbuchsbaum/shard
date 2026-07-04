@@ -394,10 +394,19 @@ shard_segment_t *shard_segment_create(size_t size, shard_backing_t backing,
 
     /* Choose backing type */
     if (backing == SHARD_BACKING_AUTO) {
-        /* Default to mmap for reliability across platforms.
-         * shm_open has restrictions on macOS and may fail.
-         * mmap works consistently on all Unix-like systems. */
+#if defined(__linux__) && defined(HAVE_SHM_OPEN)
+        /* On Linux, POSIX shm lives on /dev/shm (tmpfs): RAM-backed, no
+         * disk writeback for GB-scale segments. Only when the caller did
+         * not request an explicit file path; explicit paths must remain
+         * file-backed mmap. Cleanup goes through the existing
+         * SHARD_BACKING_SHM shm_unlink path in shard_segment_close(). */
+        backing = (path == NULL) ? SHARD_BACKING_SHM : SHARD_BACKING_MMAP;
+#else
+        /* Default to mmap elsewhere: shm_open has name/size restrictions
+         * on macOS and may fail; mmap works consistently on all
+         * Unix-like systems. (Windows resolves AUTO in its own branch.) */
         backing = SHARD_BACKING_MMAP;
+#endif
     }
     seg->backing = backing;
 

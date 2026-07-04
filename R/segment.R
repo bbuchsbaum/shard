@@ -53,11 +53,17 @@ segment_create <- function(size,
     ptr <- .Call("C_shard_segment_create", size, backing_int, path, readonly,
                  PACKAGE = "shard")
 
+    # Record the RESOLVED backing ("mmap" or "shm"), not the requested one:
+    # "auto" resolves platform-dependently in C (POSIX shm on Linux, mmap
+    # elsewhere), and descriptors built from $backing must be reopenable
+    # with segment_open(), which requires a concrete backing.
+    info <- .Call("C_shard_segment_info", ptr, PACKAGE = "shard")
+
     structure(
         list(
             ptr = ptr,
             size = size,
-            backing = backing,
+            backing = info$backing,
             readonly = readonly
         ),
         class = "shard_segment"

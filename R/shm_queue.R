@@ -52,6 +52,15 @@ taskq_claim <- function(seg, worker_id) {
   .Call("C_shard_taskq_claim", seg$ptr, as.integer(worker_id), PACKAGE = "shard")
 }
 
+# Batched claim: returns an integer vector of up to `max_tasks` claimed task
+# ids (length 0 = nothing claimable right now; check taskq_stats() to
+# distinguish "queue drained" from "tasks in flight elsewhere").
+taskq_claim_range <- function(seg, worker_id, max_tasks) {
+  stopifnot(inherits(seg, "shard_segment"))
+  .Call("C_shard_taskq_claim_range", seg$ptr, as.integer(worker_id),
+        as.integer(max_tasks), PACKAGE = "shard")
+}
+
 taskq_done <- function(seg, task_id) {
   stopifnot(inherits(seg, "shard_segment"))
   .Call("C_shard_taskq_mark_done", seg$ptr, as.integer(task_id), PACKAGE = "shard")
