@@ -3,7 +3,7 @@
 Date: 2026-07-04
 Plan: `.planning/2026-07-03-efficiency-overhaul.md` (read the Phase 2 amendment block and
 the Phase 1 status/follow-ups sections — they modify the original plan).
-Branch: `efficiency-phase1` (poorly named now; carries Phases 1 AND 2). Not pushed.
+Branch: `efficiency-phase1` (poorly named now; carries Phases 1-3 review fixes).
 Base for diffs: `main` is at `42c8c22` (CRAN 0.1.1 resubmission fixes).
 
 ## Current update from follow-up pass
@@ -18,7 +18,10 @@ current-HEAD tests for Phase 2 dispatch/reduce and Phase 3 taskq/ALTREP passed, 
 environmental warnings (CRAN incoming version 0.1.1; Homebrew clang/R `Boolean.h`
 warning). Remote native smoke run `28710384759` passed on both `ubuntu-latest` and
 `windows-latest`, including the Phase 3 regression files for the compile-blind C paths.
-Remaining gate: fresh-context review.
+Fresh-context review later found that this workflow was false-green because
+`testthat::test_file()` does not set process exit status. Commit `d53ede6` fixes that gate
+and hardens two Phase 3 edge cases; see `.planning/2026-07-04-phase4-review-handoff.md`
+before doing more work.
 
 ## State at handoff
 
