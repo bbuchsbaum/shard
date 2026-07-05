@@ -232,9 +232,18 @@ row_layout <- function(shards, rows_per_shard) {
         # Map to schema levels ordering
         match(as.character(x), lev)
       } else if (is.character(x)) {
-        match(x, lev)
+        out <- match(x, lev)
+        if (any(is.na(out) & !is.na(x))) {
+          stop("factor levels mismatch in write", call. = FALSE)
+        }
+        out
       } else if (is.integer(x) || is.numeric(x)) {
-        as.integer(x)
+        out <- as.integer(x)
+        bad <- !is.na(out) & (out < 1L | out > length(lev))
+        if (any(bad)) {
+          stop("Invalid factor code in write", call. = FALSE)
+        }
+        out
       } else {
         stop("Unsupported factor column input type", call. = FALSE)
       }

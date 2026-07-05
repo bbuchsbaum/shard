@@ -148,6 +148,52 @@ test_that("col_vars kernel computes correct results", {
   expect_equal(as.numeric(out[]), expected_vars, tolerance = 1e-10)
 })
 
+test_that("col_vars handles degenerate, non-finite, and near-constant columns", {
+  skip_on_cran()
+
+  pool_stop()
+  pool_create(2)
+  on.exit(pool_stop(), add = TRUE)
+
+  X0 <- cbind(
+    constant = rep(3, 6),
+    near_constant = 1e9 + c(-3, -2, -1, 1, 2, 3) * 1e-3,
+    has_na = c(1, 2, NA_real_, 4, 5, 6),
+    has_nan = c(1, NaN, 3, 4, 5, 6),
+    mixed = c(-2, -1, 0, 1, 2, 3)
+  )
+  storage.mode(X0) <- "double"
+  X <- share(X0, backing = "mmap")
+
+  v <- view_block(X, cols = idx_range(1, ncol(X0)))
+  actual_view <- shard:::view_col_vars(v)
+  expected <- apply(X0, 2, var)
+
+  ordinary <- c("constant", "mixed")
+  expect_equal(unname(actual_view[ordinary]), unname(expected[ordinary]), tolerance = 1e-12)
+  expect_lt(abs(actual_view[["near_constant"]] - expected[["near_constant"]]), 1e-9)
+  expect_true(all(is.na(actual_view[c("has_na", "has_nan")])))
+  expect_true(all(actual_view[c("constant", "near_constant", "mixed")] >= 0))
+
+  one_row <- shard:::view_col_vars(view_block(X, rows = idx_range(3, 3), cols = idx_range(1, ncol(X0))))
+  expect_true(all(is.na(one_row)))
+
+  out <- buffer("double", dim = ncol(X0), init = 0, backing = "mmap")
+  res <- shard_map(
+    shards(ncol(X0), block_size = 2L),
+    kernel = "col_vars",
+    borrow = list(X = X),
+    out = list(out = out),
+    workers = 2
+  )
+
+  expect_true(succeeded(res))
+  actual_kernel <- stats::setNames(as.numeric(out[]), colnames(X0))
+  expect_equal(unname(actual_kernel[ordinary]), unname(expected[ordinary]), tolerance = 1e-12)
+  expect_lt(abs(actual_kernel[["near_constant"]] - expected[["near_constant"]]), 1e-9)
+  expect_true(all(is.na(actual_kernel[c("has_na", "has_nan")])))
+})
+
 test_that("register_kernel records supports_views flag", {
   meta1 <- register_kernel("test_views_true", impl = function(x) x, supports_views = TRUE)
   expect_true(meta1$supports_views)

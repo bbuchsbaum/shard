@@ -1,7 +1,7 @@
 Package: shard
 Type: Package
 Title: Deterministic, Zero-Copy Parallel Execution for R
-Version: 0.1.1
+Version: 0.2.0
 Authors@R:
     person("Bradley", "Buchsbaum", email = "brad.buchsbaum@gmail.com", role = c("aut", "cre", "cph"))
 Description: Provides a parallel execution runtime for R that emphasizes

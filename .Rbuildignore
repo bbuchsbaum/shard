@@ -29,6 +29,7 @@
 ^PRD\.json$
 ^why-shard-is-different\.md$
 ^\.rcmdcheck_result\.rds$
+^\.covr_result\.rds$
 ^LICENSE\.md$
 ^cran-comments\.md$
 ^NEWS\.md$

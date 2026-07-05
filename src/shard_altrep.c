@@ -1262,8 +1262,9 @@ SEXP C_shard_mat_block_col_vars(SEXP x, SEXP row_start, SEXP row_end,
         int col_idx = c0 + j;
         R_xlen_t base = (R_xlen_t)col_idx * (R_xlen_t)nrow;
 
-        double sum = 0.0;
-        double sumsq = 0.0;
+        double mean = 0.0;
+        double m2 = 0.0;
+        int count = 0;
         int any_na = 0;
         for (int i = r0; i <= r1; i++) {
             double v = data[base + (R_xlen_t)i];
@@ -1271,16 +1272,20 @@ SEXP C_shard_mat_block_col_vars(SEXP x, SEXP row_start, SEXP row_end,
                 any_na = 1;
                 break;
             }
-            sum += v;
-            sumsq += v * v;
+            count++;
+            double delta = v - mean;
+            mean += delta / (double)count;
+            double delta2 = v - mean;
+            m2 += delta * delta2;
         }
 
         if (any_na) {
             outp[j] = NA_REAL;
-        } else if (nobs <= 1) {
+        } else if (count <= 1 || nobs <= 1) {
             outp[j] = NA_REAL;
         } else {
-            double var = (sumsq - (sum * sum) / (double)nobs) / (double)(nobs - 1);
+            double var = m2 / (double)(count - 1);
+            if (var < 0.0 && var > -1e-12) var = 0.0;
             outp[j] = var;
         }
     }

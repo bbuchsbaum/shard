@@ -36,3 +36,31 @@ test_that("row_layout computes disjoint ranges", {
   expect_equal(layout[[2]]$start, 5L)
   expect_equal(layout[[3]]$end, 10L)
 })
+
+test_that("table_buffer sparse row writes preserve order and validate factor codes", {
+  sch <- schema(id = int32(), grp = factor_col(c("a", "b")))
+  tbl <- table_buffer(sch, nrow = 5L, backing = "mmap")
+
+  table_write(
+    tbl,
+    c(5L, 2L, 5L, 1L),
+    data.frame(
+      id = c(10L, 20L, 30L, 40L),
+      grp = c(1L, 2L, 1L, NA_integer_)
+    )
+  )
+
+  df <- as.data.frame(table_finalize(tbl, materialize = "always"), stringsAsFactors = FALSE)
+
+  expect_equal(df$id[c(1, 2, 5)], c(40L, 20L, 30L))
+  expect_equal(as.character(df$grp[c(1, 2, 5)]), c(NA_character_, "b", "a"))
+
+  expect_error(
+    table_write(tbl, 3L, data.frame(id = 99L, grp = 3L)),
+    "Invalid factor code"
+  )
+  expect_error(
+    table_write(tbl, 3L, data.frame(id = 99L, grp = "z")),
+    "factor levels mismatch"
+  )
+})

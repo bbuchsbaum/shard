@@ -124,6 +124,7 @@ worker_shm_queue_loop_ <- function(queue_desc,
                                   borrow_names,
                                   out_names,
                                   max_retries,
+                                  seed_streams = NULL,
                                   error_log = FALSE,
                                   error_log_max_lines = 100L,
                                   claim_batch = 1L,
@@ -169,9 +170,6 @@ worker_shm_queue_loop_ <- function(queue_desc,
   if (is.na(claim_batch) || claim_batch < 1L) claim_batch <- 1L
 
   repeat {
-    st <- taskq_stats(seg)
-    if ((st$done %||% 0L) + (st$failed %||% 0L) >= (st$n_tasks %||% 0L)) break
-
     # Claim one task (default) or a small batch to amortize the R-level
     # per-claim overhead. Batched claims are all marked claimed_by this
     # worker, so crash recovery via taskq_reset_claims() covers the whole
@@ -183,6 +181,11 @@ worker_shm_queue_loop_ <- function(queue_desc,
       if (is.na(tid) || tid < 1L) integer(0) else tid
     }
     if (length(task_ids) == 0L) {
+      # Only allocate/read full queue stats when claiming finds no immediately
+      # available work. In the hot path, successful claims already prove that
+      # the queue is not drained.
+      st <- taskq_stats(seg)
+      if ((st$done %||% 0L) + (st$failed %||% 0L) >= (st$n_tasks %||% 0L)) break
       Sys.sleep(poll_sleep)
       next
     }
@@ -236,6 +239,11 @@ worker_shm_queue_loop_ <- function(queue_desc,
     for (nm in borrow_names) args[[nm]] <- borrow[[nm]]
     for (nm in out_names) args[[nm]] <- out[[nm]]
 
+    if (!is.null(seed_streams) && task_id <= length(seed_streams)) {
+      s <- seed_streams[[task_id]]
+      if (!is.null(s)) assign(".Random.seed", s, envir = globalenv())
+    }
+
     ok <- TRUE
     err_msg <- NULL
     tryCatch(
@@ -276,6 +284,7 @@ dispatch_shards_shm_queue_ <- function(n,
                                       max_retries,
                                       timeout = 3600,
                                       queue_backing = c("mmap", "shm"),
+                                      seed_streams = NULL,
                                       error_log = FALSE,
                                       error_log_max_lines = 100L,
                                       claim_batch = 1L) {
@@ -354,7 +363,7 @@ dispatch_shards_shm_queue_ <- function(n,
     parallel_sendCall(
       w$cluster[[1]],
       fun = worker_shm_queue_loop_,
-      args = list(qdesc, worker_id, mode, n, block_size, fun, borrow_names, out_names, max_retries, error_log, error_log_max_lines, claim_batch),
+      args = list(qdesc, worker_id, mode, n, block_size, fun, borrow_names, out_names, max_retries, seed_streams, error_log, error_log_max_lines, claim_batch),
       return = TRUE,
       tag = paste0("shm_queue_", worker_id)
     )

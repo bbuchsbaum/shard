@@ -54,3 +54,32 @@ test_that("shard_map gather views use a BLAS-3 packed path with zero view materi
 
   pool_stop()
 })
+
+test_that("gather view kernels preserve unsorted duplicate column selectors", {
+  shard:::view_reset_diagnostics()
+
+  X <- matrix(as.double(seq_len(48)), nrow = 8, ncol = 6)
+  Y <- matrix(as.double(seq_len(80)) / 10, nrow = 8, ncol = 10)
+  colnames(X) <- paste0("x", seq_len(ncol(X)))
+  colnames(Y) <- paste0("y", seq_len(ncol(Y)))
+
+  Xsh <- share(X, backing = "mmap")
+  Ysh <- share(Y, backing = "mmap")
+  idx <- c(7L, 2L, 7L, 4L)
+
+  vY <- view(Ysh, cols = idx, type = "auto")
+  expect_s3_class(vY, "shard_view_gather")
+  expect_equal(materialize(vY), Y[, idx, drop = FALSE])
+
+  shard:::view_reset_diagnostics()
+  actual <- shard:::view_xTy(Xsh, vY)
+  expected <- crossprod(X, Y[, idx, drop = FALSE])
+
+  expect_equal(actual, expected, tolerance = 1e-12)
+  expect_equal(colnames(actual), colnames(Y)[idx])
+
+  vd <- view_diagnostics()
+  expect_equal(vd$materialized, 0L)
+  expect_equal(vd$materialized_bytes, 0)
+  expect_gt(vd$packed_bytes, 0)
+})

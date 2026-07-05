@@ -28,6 +28,7 @@ coverage.html
 *.gcov
 *.gcda
 *.gcno
+.covr_result.rds
 
 # IDE
 .vscode/

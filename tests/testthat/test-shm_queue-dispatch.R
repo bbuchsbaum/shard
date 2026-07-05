@@ -118,6 +118,50 @@ test_that("shard_map(shard_descriptor) can run in shm_queue mode for out-buffer 
   expect_equal(as.integer(out[]), 1:n)
 })
 
+test_that("shm_queue seed= is reproducible across worker counts and claim batches", {
+  skip_on_cran()
+  skip_if_conn_exhausted()
+  if (!shard:::taskq_supported()) skip("shm_queue not supported (no atomics)")
+
+  pool_stop()
+  on.exit(pool_stop(), add = TRUE)
+
+  run <- function(workers, claim_batch, seed = 42L, block_size = 1L) {
+    pool_stop()
+    out <- buffer("double", dim = 24L, init = 0, backing = "mmap")
+    res <- shard_map(
+      24L,
+      out = list(out = out),
+      fun = function(sh, out) {
+        out[sh$idx] <- runif(length(sh$idx))
+        NULL
+      },
+      workers = workers,
+      chunk_size = 1L,
+      dispatch_mode = "shm_queue",
+      dispatch_opts = list(block_size = block_size, claim_batch = claim_batch),
+      seed = seed,
+      diagnostics = TRUE
+    )
+    vals <- as.numeric(out[])
+    pool_stop()
+    expect_true(succeeded(res))
+    vals
+  }
+
+  baseline <- run(workers = 1L, claim_batch = 1L)
+  expect_identical(baseline, run(workers = 2L, claim_batch = 1L))
+  expect_identical(baseline, run(workers = 2L, claim_batch = 4L))
+  expect_false(identical(baseline, run(workers = 2L, claim_batch = 1L, seed = 99L)))
+
+  blocked <- run(workers = 1L, claim_batch = 1L, block_size = 4L)
+  expect_identical(blocked, run(workers = 2L, claim_batch = 1L, block_size = 4L))
+  expect_identical(blocked, run(workers = 2L, claim_batch = 4L, block_size = 4L))
+
+  default_block <- run(workers = 1L, claim_batch = 1L, block_size = NULL)
+  expect_identical(default_block, run(workers = 2L, claim_batch = 4L, block_size = NULL))
+})
+
 test_that("shm_queue reports retry accounting and per-task retry_count for failures", {
   skip_on_cran()
   if (!shard:::taskq_supported()) skip("shm_queue not supported (no atomics)")

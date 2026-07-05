@@ -394,3 +394,83 @@ test_that("stream_group_count counts rows per group", {
   pool_stop()
 })
 
+test_that("stream helpers match collect() on messy native and RDS partitions", {
+  levels_grp <- c("A", "B", "C")
+  sch <- schema(
+    id = int32(),
+    grp = factor_col(levels_grp),
+    label = string_col(),
+    score = float64()
+  )
+
+  parts <- list(
+    data.frame(
+      id = c(1L, 2L, 3L),
+      grp = factor(c("A", "B", "A"), levels = levels_grp),
+      label = c("alpha", "beta", NA_character_),
+      score = c(NA_real_, 9, 5),
+      stringsAsFactors = FALSE
+    ),
+    data.frame(
+      id = integer(),
+      grp = factor(character(), levels = levels_grp),
+      label = character(),
+      score = numeric(),
+      stringsAsFactors = FALSE
+    ),
+    data.frame(
+      id = c(4L, 5L, 6L),
+      grp = factor(c("B", "C", "A"), levels = levels_grp),
+      label = c("tie", "missing-score", "negative"),
+      score = c(9, NA_real_, -1),
+      stringsAsFactors = FALSE
+    )
+  )
+
+  expected <- do.call(rbind, parts)
+  expected <- expected[order(expected$id), , drop = FALSE]
+  expected_group_sum <- c(
+    A = sum(expected$score[expected$grp == "A"], na.rm = TRUE),
+    B = sum(expected$score[expected$grp == "B"], na.rm = TRUE),
+    C = sum(expected$score[expected$grp == "C"], na.rm = TRUE)
+  )
+  expected_group_count <- tabulate(match(as.character(expected$grp), levels_grp), nbins = length(levels_grp))
+
+  for (fmt in c("rds", "native")) {
+    out_path <- file.path(tempdir(), paste0("shard_test_stream_messy_", fmt, "_", shard:::unique_id()))
+    on.exit(unlink(out_path, recursive = TRUE, force = TRUE), add = TRUE)
+
+    sink <- table_sink(sch, mode = "partitioned", path = out_path, format = fmt)
+    for (i in seq_along(parts)) {
+      table_write(sink, i, parts[[i]])
+    }
+    ds <- table_finalize(sink, materialize = "never")
+
+    collected <- as.data.frame(collect(ds), stringsAsFactors = FALSE)
+    collected <- collected[order(collected$id), , drop = FALSE]
+    row.names(collected) <- NULL
+    expected_cmp <- expected
+    row.names(expected_cmp) <- NULL
+
+    expect_equal(collected$id, expected_cmp$id, info = fmt)
+    expect_equal(as.character(collected$grp), as.character(expected_cmp$grp), info = fmt)
+    expect_equal(collected$label, expected_cmp$label, info = fmt)
+    expect_equal(collected$score, expected_cmp$score, info = fmt)
+
+    expect_equal(stream_count(ds), nrow(expected), info = fmt)
+    expect_equal(stream_sum(ds, "score"), sum(expected$score, na.rm = TRUE), info = fmt)
+    expect_true(is.na(stream_sum(ds, "score", na_rm = FALSE)), info = fmt)
+
+    gs <- as.data.frame(stream_group_sum(ds, group = "grp", value = "score"), stringsAsFactors = FALSE)
+    expect_equal(as.character(gs$group), levels_grp, info = fmt)
+    expect_equal(stats::setNames(gs$sum, as.character(gs$group)), expected_group_sum, info = fmt)
+
+    gc <- as.data.frame(stream_group_count(ds, group = "grp"), stringsAsFactors = FALSE)
+    expect_equal(as.character(gc$group), levels_grp, info = fmt)
+    expect_equal(gc$n, expected_group_count, info = fmt)
+
+    top <- as.data.frame(stream_top_k(ds, col = "score", k = 2L), stringsAsFactors = FALSE)
+    expect_equal(sort(top$id), c(2L, 4L), info = fmt)
+    expect_equal(top$score, c(9, 9), info = fmt)
+  }
+})

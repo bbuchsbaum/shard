@@ -64,10 +64,11 @@ NULL
 #'     - `error_log_max_lines`: integer. Maximum lines per worker in the error
 #'       log (default 100).
 #'     - `claim_batch`: integer. Number of task ids a worker claims per
-#'       shared-queue call (default 1, i.e. classic one-at-a-time claiming;
-#'       also settable globally via `options(shard.shm_queue_claim_batch=)`).
-#'       Small batches (4-8) amortize per-claim overhead for very cheap tasks
-#'       at a slight cost in tail load balancing.
+#'       shared-queue call (default 1, i.e. classic one-at-a-time claiming; 32
+#'       under `profile="speed"`; also settable globally via
+#'       `options(shard.shm_queue_claim_batch=)`). Small batches amortize
+#'       per-claim overhead for very cheap tasks at a slight cost in tail load
+#'       balancing.
 #' @param workers Integer. Number of worker processes. If NULL, uses existing
 #'   pool or creates one with `detectCores() - 1`.
 #' @param chunk_size Integer. Shards to batch per worker dispatch (default 1).
@@ -276,11 +277,8 @@ shard_map <- function(shards,
   #   make_chunk_executor()). Because the stream travels with the shard, the
   #   results are identical regardless of `workers=`, `chunk_size=`, or the
   #   dynamic shard-to-worker assignment, and survive worker restarts.
-  # - shm_queue: legacy per-worker seeding (best-effort; this fire-and-forget
-  #   mode does not gather results).
-  if (!is.null(seed) && identical(dispatch_mode, "shm_queue")) {
-    set_worker_seeds(pool, seed, if (shards_is_scalar_n) n_items else shards$num_shards)
-  }
+  # - shm_queue: per-task streams are passed to the long-lived worker loops
+  #   below and installed immediately before the task kernel runs.
 
   # Export borrowed inputs to workers (once, not per shard)
   export_borrow_to_workers(pool, borrow)
@@ -318,27 +316,40 @@ shard_map <- function(shards,
     queue_backing <- dispatch_opts$queue_backing %||% "mmap"
 
     # Batched task claiming (Phase 3): workers claim up to claim_batch task
-    # ids per C call, amortizing the R-level per-claim overhead. Default 1
-    # preserves the historical claim-one-at-a-time behavior; opt in via
-    # dispatch_opts$claim_batch or options(shard.shm_queue_claim_batch=).
+    # ids per C call, amortizing the R-level per-claim overhead. The default
+    # preserves one-at-a-time behavior unless profile="speed" opts into a more
+    # aggressive batch. Explicit dispatch_opts$claim_batch or
+    # options(shard.shm_queue_claim_batch=) win.
+    claim_batch_default <- if (identical(profile, "speed")) 32L else 1L
     claim_batch <- as.integer(
-      dispatch_opts$claim_batch %||% getOption("shard.shm_queue_claim_batch", 1L)
+      dispatch_opts$claim_batch %||% getOption("shard.shm_queue_claim_batch", claim_batch_default)
     )
     if (is.na(claim_batch) || claim_batch < 1L) {
       stop("dispatch_opts$claim_batch must be >= 1", call. = FALSE)
     }
 
     if (shards_is_scalar_n) {
-      block_size <- dispatch_opts$block_size %||% autotune_block_size(
+      if (!is.null(dispatch_opts$block_size)) {
+        block_size <- dispatch_opts$block_size
+      } else if (!is.null(seed)) {
+        block_size <- seed_block_size_(n_items)
+      } else {
+        block_size <- autotune_block_size(
           n = n_items,
           workers = workers,
           min_shards_per_worker = 4L,
           max_shards_per_worker = 64L
         )
+      }
       block_size <- as.integer(block_size)
       if (is.na(block_size) || block_size < 1L) stop("dispatch_opts$block_size must be >= 1", call. = FALSE)
 
       shards <- shards_lazy(n_items, block_size = block_size)
+      seed_streams <- if (!is.null(seed)) {
+        make_shard_seed_streams_(seed, as.integer(ceiling(n_items / block_size)))
+      } else {
+        NULL
+      }
 
       dispatch_result <- dispatch_shards_shm_queue_(
         n = n_items,
@@ -351,6 +362,7 @@ shard_map <- function(shards,
         max_retries = max_retries,
         timeout = timeout,
         queue_backing = queue_backing,
+        seed_streams = seed_streams,
         error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
         error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L,
         claim_batch = claim_batch
@@ -358,6 +370,11 @@ shard_map <- function(shards,
     } else {
       if (!inherits(shards, "shard_descriptor")) {
         stop("dispatch_mode='shm_queue' requires shard_map(N, ...) or a shard_descriptor", call. = FALSE)
+      }
+      seed_streams <- if (!is.null(seed)) {
+        make_shard_seed_streams_(seed, as.integer(shards$num_shards %||% length(shards$shards)))
+      } else {
+        NULL
       }
 
       dispatch_result <- dispatch_shards_shm_queue_(
@@ -371,6 +388,7 @@ shard_map <- function(shards,
         max_retries = max_retries,
         timeout = timeout,
         queue_backing = queue_backing,
+        seed_streams = seed_streams,
         error_log = isTRUE(dispatch_opts$error_log %||% FALSE),
         error_log_max_lines = dispatch_opts$error_log_max_lines %||% 100L,
         claim_batch = claim_batch
@@ -1128,29 +1146,6 @@ make_shard_seed_streams_ <- function(seed, n_shards) {
 seed_block_size_ <- function(n) {
   n <- as.integer(n)
   as.integer(max(1L, ceiling(n / min(n, 64L))))
-}
-
-#' Set Worker Seeds (legacy)
-#'
-#' Sets per-worker RNG seeds. Only used by the shm_queue fast path; both
-#' [shard_map()] (rpc_chunked) and [shard_reduce()] use per-shard
-#' L'Ecuyer-CMRG streams (see `make_shard_seed_streams_()`), which are
-#' reproducible under dynamic shard-to-worker assignment.
-#'
-#' @param pool Worker pool.
-#' @param seed Base seed.
-#' @param num_shards Number of shards for substream calculation.
-#' @keywords internal
-#' @noRd
-set_worker_seeds <- function(pool, seed, num_shards) {
-  for (i in seq_len(pool$n)) {
-    worker_seed <- seed + (i - 1L) * num_shards
-    tryCatch({
-      parallel::clusterCall(pool$workers[[i]]$cluster, function(s) {
-        set.seed(s)
-      }, worker_seed)
-    }, error = function(e) NULL)
-  }
 }
 
 #' Export Borrowed Inputs to Workers

@@ -5,11 +5,19 @@
 #ifndef SHARD_R_H
 #define SHARD_R_H
 
+#if defined(__clang__)
+# pragma clang diagnostic push
+# pragma clang diagnostic ignored "-Wunknown-warning-option"
+#endif
+
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/Visibility.h>
 #include <R_ext/Rdynload.h>
 #include <R_ext/Altrep.h>
 
-#endif /* SHARD_R_H */
+#if defined(__clang__)
+# pragma clang diagnostic pop
+#endif
 
+#endif /* SHARD_R_H */

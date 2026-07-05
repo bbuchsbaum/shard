@@ -391,16 +391,25 @@ stream_group_sum <- function(x, group, value, na_rm = TRUE) {
       ok <- !is.na(codes) & codes >= 1L & codes <= length(lev)
       if (isTRUE(na_rm)) ok <- ok & !is.na(vals)
       if (!any(ok)) next
-      rs <- rowsum(vals[ok], group = factor(codes[ok], levels = seq_len(length(lev))), reorder = FALSE)
-      acc <- acc + as.double(rs[, 1])
+      rs <- rowsum(vals[ok], group = codes[ok], reorder = FALSE)
+      idx <- suppressWarnings(as.integer(rownames(rs)))
+      part <- numeric(length(lev))
+      keep <- !is.na(idx) & idx >= 1L & idx <= length(lev)
+      if (any(keep)) part[idx[keep]] <- as.double(rs[keep, 1])
+      acc <- acc + part
     } else {
       g <- chunk[[group]]
       v <- as.double(chunk[[value]])
-      ok <- !is.na(g)
+      idx <- match(as.character(g), lev)
+      ok <- !is.na(idx)
       if (isTRUE(na_rm)) ok <- ok & !is.na(v)
       if (!any(ok)) next
-      rs <- rowsum(v[ok], group = factor(g[ok], levels = lev), reorder = FALSE)
-      acc <- acc + as.double(rs[, 1])
+      rs <- rowsum(v[ok], group = idx[ok], reorder = FALSE)
+      ids <- suppressWarnings(as.integer(rownames(rs)))
+      part <- numeric(length(lev))
+      keep <- !is.na(ids) & ids >= 1L & ids <= length(lev)
+      if (any(keep)) part[ids[keep]] <- as.double(rs[keep, 1])
+      acc <- acc + part
     }
   }
 
