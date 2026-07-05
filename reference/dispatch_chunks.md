@@ -18,7 +18,8 @@ dispatch_chunks(
   scheduler_policy = NULL,
   on_result = NULL,
   store_results = TRUE,
-  retain_chunks = TRUE
+  retain_chunks = TRUE,
+  diagnostics = TRUE
 )
 ```
 
@@ -77,6 +78,14 @@ dispatch_chunks(
 
   Logical (advanced). If FALSE, completed chunk descriptors are stored
   minimally (avoids retaining large shard lists in memory).
+
+- diagnostics:
+
+  Logical. Collect per-chunk worker diagnostics (view/
+  buffer/table/scratch deltas) and aggregate them on the master (default
+  TRUE). When FALSE, workers skip the per-chunk diagnostic snapshots and
+  return a minimal result envelope; memory-safety signals (scratch
+  recycle requests) are still honored.
 
 ## Value
 

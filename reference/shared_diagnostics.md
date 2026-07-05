@@ -26,6 +26,12 @@ A list with diagnostic information:
 
   Number of times vector was copied to standard R vector
 
+- coerce_calls:
+
+  Number of times a type coercion was requested (coercion allocates a
+  new vector of the target type; it does not materialize the shared
+  data)
+
 - length:
 
   Number of elements
@@ -58,6 +64,9 @@ shared_diagnostics(x)
 #> [1] 0
 #> 
 #> $materialize_calls
+#> [1] 0
+#> 
+#> $coerce_calls
 #> [1] 0
 #> 
 #> $length

@@ -20,7 +20,7 @@ shard_reduce(
   borrow = list(),
   out = list(),
   workers = NULL,
-  chunk_size = 1L,
+  chunk_size = "auto",
   profile = c("default", "memory", "speed"),
   mem_cap = "2GB",
   recycle = TRUE,
@@ -50,12 +50,15 @@ shard_reduce(
 
 - combine:
 
-  Function `(acc, value) -> acc` used to combine results. Should be
-  associative for deterministic behavior under chunking.
+  Function `(acc, value) -> acc` used to combine results. Must be
+  associative, and must accept two mapped values as arguments (worker
+  partials start from a chunk's first mapped value; see *Initial value
+  semantics*).
 
 - init:
 
-  Initial accumulator value.
+  Initial accumulator value, combined exactly once on the master (see
+  *Initial value semantics*).
 
 - borrow:
 
@@ -73,7 +76,11 @@ shard_reduce(
 
 - chunk_size:
 
-  Shards to batch per worker dispatch (default 1).
+  Shards to batch per worker dispatch. The default `"auto"` targets
+  roughly four chunks per worker,
+  `max(1, ceiling(num_shards / (workers * 4)))`, which amortizes
+  dispatch round trips while retaining load balance. Supply an integer
+  to control batching explicitly.
 
 - profile:
 
@@ -97,7 +104,21 @@ shard_reduce(
 
 - seed:
 
-  RNG seed for reproducibility.
+  RNG seed for reproducibility. When non-`NULL`, one independent
+  L'Ecuyer-CMRG stream per shard is derived on the master and installed
+  in the worker immediately before each `map()` call, so per-shard RNG
+  draws are reproducible regardless of worker count, `chunk_size`, or
+  dynamic shard-to-worker assignment. The master's RNG state and
+  [`RNGkind()`](https://rdrr.io/r/base/Random.html) are left exactly as
+  found (`seed = NULL` touches no RNG state). Note on floating-point
+  results: partials are combined in chunk order, which is deterministic
+  given identical chunking, so a given (`seed`, chunking, `chunk_size`)
+  is exactly reproducible for any `workers=`; across *different*
+  `chunk_size` values the combine order differs, so non-associative
+  floating-point rounding may differ even though the per-shard RNG draws
+  are identical. When `shards` is a scalar N and `seed` is set, the
+  shard decomposition is chosen independently of the worker count so the
+  same seed gives identical results for any `workers=`.
 
 - diagnostics:
 
@@ -142,7 +163,18 @@ stages:
 
 1.  per-chunk partial reduction inside each worker, and
 
-2.  streaming combine of partials on the master.
+2.  streaming combine of partials on the master, folded in chunk order.
+
+## Initial value semantics
+
+`init` is combined exactly once, on the master, at the start of the
+final fold: the result is `combine(combine(combine(init, p1), p2), ...)`
+where `p1, p2, ...` are per-chunk partials in chunk order. Worker-side
+partials are built without `init`: each chunk's partial starts from the
+chunk's first mapped value. A non-neutral `init` (e.g. `init = 10` with
+`+`) therefore contributes exactly once, regardless of `chunk_size` or
+`workers`. This requires `combine` to be associative and able to combine
+two mapped values (not just an accumulator with a value).
 
 ## Examples
 

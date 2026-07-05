@@ -144,6 +144,13 @@ shard_map(
     - `error_log_max_lines`: integer. Maximum lines per worker in the
       error log (default 100).
 
+    - `claim_batch`: integer. Number of task ids a worker claims per
+      shared-queue call (default 1, i.e. classic one-at-a-time claiming;
+      32 under `profile="speed"`; also settable globally via
+      `options(shard.shm_queue_claim_batch=)`). Small batches amortize
+      per-claim overhead for very cheap tasks at a slight cost in tail
+      load balancing.
+
 - workers:
 
   Integer. Number of worker processes. If NULL, uses existing pool or
@@ -180,7 +187,16 @@ shard_map(
 
 - seed:
 
-  Integer. RNG seed for reproducibility. If NULL, no seed is set.
+  Integer. RNG seed for reproducibility. When supplied, each shard gets
+  its own L'Ecuyer-CMRG stream derived from `seed` (via
+  [`parallel::nextRNGStream()`](https://rdrr.io/r/parallel/RngStream.html)),
+  installed immediately before the kernel runs on that shard. RNG-using
+  kernels therefore return identical results for the same `seed`
+  regardless of `workers=`, `chunk_size=`, or dynamic shard-to-worker
+  assignment (including worker restarts). With `shard_map(N, ...)`, a
+  deterministic worker-count-independent shard decomposition is used and
+  online autotuning is disabled. If NULL (default), RNG state is not
+  touched.
 
 - diagnostics:
 

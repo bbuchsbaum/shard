@@ -33,8 +33,8 @@ print(buf)
 #>   Type: double 
 #>   Length: 10 
 #>   Size: 80 bytes
-#>   Backing: mmap 
-#>   Path: /tmp/shard_7147_1775421920_1775421925 
+#>   Backing: shm 
+#>   Path: /shard_6747_1783250233_1783250239 
 buffer_close(buf)
 # }
 ```

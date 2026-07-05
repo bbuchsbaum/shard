@@ -26,8 +26,8 @@ x <- as_shared(1:100)
 shared_segment(x)
 #> <shard_segment>
 #>   Size: 400 bytes
-#>   Backing: mmap 
-#>   Path: /tmp/shard_7147_1775421951_1775421951 
+#>   Backing: shm 
+#>   Path: /shard_6747_1783250259_1783250265 
 #>   Read-only: TRUE 
 #>   Owns segment: TRUE 
 # }

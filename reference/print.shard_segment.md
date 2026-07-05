@@ -31,8 +31,8 @@ seg <- segment_create(1024)
 print(seg)
 #> <shard_segment>
 #>   Size: 1,024 bytes
-#>   Backing: mmap 
-#>   Path: /tmp/shard_7147_1775421930_1775421928 
+#>   Backing: shm 
+#>   Path: /shard_6747_1783250241_1783250242 
 #>   Read-only: FALSE 
 #>   Owns segment: TRUE 
 segment_close(seg)

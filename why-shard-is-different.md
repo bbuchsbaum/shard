@@ -75,21 +75,21 @@ Dataset sizes: T = **, P =** , V = \_\_
 
 ### Benchmark A: Many regressions (QR-once, chunked `QᵀY`)
 
-| Backend                     | Workers | Time (s) ↓ | Speedup ↑ | Peak RSS (GB) ↓ | End RSS (GB) ↓ | Hidden copies (MB) ↓ | Recycles |
-|-----------------------------|--------:|-----------:|----------:|----------------:|---------------:|---------------------:|---------:|
-| Serial baseline             |       1 |       \_\_ |      1.0× |            \_\_ |           \_\_ |                 \_\_ |        0 |
-| parallel::mclapply          |       8 |       \_\_ |     \_\_× |            \_\_ |           \_\_ |                 \_\_ |        0 |
-| future.apply (multisession) |       8 |       \_\_ |     \_\_× |            \_\_ |           \_\_ |                 \_\_ |        0 |
-| foreach + doParallel        |       8 |       \_\_ |     \_\_× |            \_\_ |           \_\_ |                 \_\_ |        0 |
-| **shard**                   |       8 |       \_\_ |     \_\_× |            \_\_ |           \_\_ |                 \_\_ |     \_\_ |
+| Backend | Workers | Time (s) ↓ | Speedup ↑ | Peak RSS (GB) ↓ | End RSS (GB) ↓ | Hidden copies (MB) ↓ | Recycles |
+|----|---:|---:|---:|---:|---:|---:|---:|
+| Serial baseline | 1 | \_\_ | 1.0× | \_\_ | \_\_ | \_\_ | 0 |
+| parallel::mclapply | 8 | \_\_ | \_\_× | \_\_ | \_\_ | \_\_ | 0 |
+| future.apply (multisession) | 8 | \_\_ | \_\_× | \_\_ | \_\_ | \_\_ | 0 |
+| foreach + doParallel | 8 | \_\_ | \_\_× | \_\_ | \_\_ | \_\_ | 0 |
+| **shard** | 8 | \_\_ | \_\_× | \_\_ | \_\_ | \_\_ | \_\_ |
 
 ### Benchmark B: 10k-task simulation sweep (memory drift stress test)
 
-| Backend              | Workers | Time (s) ↓ | Peak RSS (GB) ↓ | End RSS (GB) ↓ | RSS drift (GB) ↓ | Failures | Recycles |
-|----------------------|--------:|-----------:|----------------:|---------------:|-----------------:|---------:|---------:|
-| foreach + doParallel |       8 |       \_\_ |            \_\_ |           \_\_ |             \_\_ |     \_\_ |        0 |
-| future.apply         |       8 |       \_\_ |            \_\_ |           \_\_ |             \_\_ |     \_\_ |        0 |
-| **shard**            |       8 |       \_\_ |            \_\_ |           \_\_ |             \_\_ |     \_\_ |     \_\_ |
+| Backend | Workers | Time (s) ↓ | Peak RSS (GB) ↓ | End RSS (GB) ↓ | RSS drift (GB) ↓ | Failures | Recycles |
+|----|---:|---:|---:|---:|---:|---:|---:|
+| foreach + doParallel | 8 | \_\_ | \_\_ | \_\_ | \_\_ | \_\_ | 0 |
+| future.apply | 8 | \_\_ | \_\_ | \_\_ | \_\_ | \_\_ | 0 |
+| **shard** | 8 | \_\_ | \_\_ | \_\_ | \_\_ | \_\_ | \_\_ |
 
 **What “good” looks like** - Peak RSS: substantially lower than
 PSOCK-based approaches for big shared inputs - End RSS: returns close to

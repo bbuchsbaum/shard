@@ -69,6 +69,9 @@ shared_diagnostics(x)
 #> $materialize_calls
 #> [1] 0
 #> 
+#> $coerce_calls
+#> [1] 0
+#> 
 #> $length
 #> [1] 100
 #> 

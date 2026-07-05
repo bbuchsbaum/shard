@@ -43,7 +43,7 @@ res <- shard_map(shards(100, workers = 2), function(s) sum(s$idx), workers = 2)
 pool_stop()
 copy_report(res)
 #> shard data copy report
-#> Generated: 2026-04-05 20:45:06 
+#> Generated: 2026-07-05 11:16:59 
 #> 
 #> Borrowed inputs:
 #>   Exports: 0 

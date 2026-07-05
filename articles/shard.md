@@ -1,6 +1,7 @@
 # Getting Started with shard
 
 ``` r
+
 library(shard)
 ```
 
@@ -19,6 +20,7 @@ parallel. With shard, you share the matrix, allocate an output buffer,
 and map over column indices:
 
 ``` r
+
 set.seed(42)
 X <- matrix(rnorm(5000), nrow = 100, ncol = 50)
 
@@ -55,11 +57,11 @@ to reassemble. The workers wrote directly into `out`.
 
 shard’s workflow revolves around three things:
 
-| Object           | Constructor                                                          | Purpose                                          |
-|:-----------------|:---------------------------------------------------------------------|:-------------------------------------------------|
-| Shared input     | [`share()`](https://bbuchsbaum.github.io/shard/reference/share.md)   | Immutable, zero-copy data visible to all workers |
-| Output buffer    | [`buffer()`](https://bbuchsbaum.github.io/shard/reference/buffer.md) | Writable shared memory that workers fill in      |
-| Shard descriptor | [`shards()`](https://bbuchsbaum.github.io/shard/reference/shards.md) | Index ranges that partition the work             |
+| Object | Constructor | Purpose |
+|:---|:---|:---|
+| Shared input | [`share()`](https://bbuchsbaum.github.io/shard/reference/share.md) | Immutable, zero-copy data visible to all workers |
+| Output buffer | [`buffer()`](https://bbuchsbaum.github.io/shard/reference/buffer.md) | Writable shared memory that workers fill in |
+| Shard descriptor | [`shards()`](https://bbuchsbaum.github.io/shard/reference/shards.md) | Index ranges that partition the work |
 
 ### Sharing inputs
 
@@ -68,15 +70,16 @@ places an R object into shared memory. Workers attach to the same
 segment instead of receiving a copy:
 
 ``` r
+
 X_shared <- share(X)
 is_shared(X_shared)
 #> [1] TRUE
 shared_info(X_shared)
 #> $path
-#> [1] "/tmp/shard_10685_1775421961_1775421963"
+#> [1] "/shard_10284_1783250269_1783250271"
 #> 
 #> $backing
-#> [1] "mmap"
+#> [1] "shm"
 #> 
 #> $size
 #> [1] 40000
@@ -100,10 +103,10 @@ shared_info(X_shared)
 #> [1] 40000
 #> 
 #> $segment_info$backing
-#> [1] "mmap"
+#> [1] "shm"
 #> 
 #> $segment_info$path
-#> [1] "/tmp/shard_10685_1775421961_1775421963"
+#> [1] "/shard_10284_1783250269_1783250271"
 #> 
 #> $segment_info$readonly
 #> [1] TRUE
@@ -122,6 +125,7 @@ creates typed shared memory that workers write to using standard R
 indexing:
 
 ``` r
+
 buf <- buffer("double", dim = c(10, 5))
 buf[1:5, 1] <- rnorm(5)
 buf[6:10, 1] <- rnorm(5)
@@ -134,6 +138,7 @@ Buffers support `"double"`, `"integer"`, `"logical"`, and `"raw"` types.
 For matrices and arrays, pass a `dim` vector:
 
 ``` r
+
 int_buf <- buffer("integer", dim = 100)
 mat_buf <- buffer("double", dim = c(50, 20))
 ```
@@ -145,6 +150,7 @@ partitions a range of indices into chunks for parallel execution. It
 auto-tunes the block size based on the number of workers:
 
 ``` r
+
 blocks <- shards(1000, workers = 4)
 blocks
 #> shard descriptor
@@ -158,6 +164,7 @@ blocks
 Each shard carries an `idx` field with its assigned indices:
 
 ``` r
+
 blocks[[1]]$idx[1:10]  # first 10 indices of shard 1
 #>  [1]  1  2  3  4  5  6  7  8  9 10
 ```
@@ -169,6 +176,7 @@ is the engine. It dispatches shards to a supervised worker pool, passes
 shared inputs, and collects diagnostics:
 
 ``` r
+
 set.seed(1)
 X <- matrix(rnorm(2000), nrow = 100, ncol = 20)
 X_shared <- share(X)
@@ -201,6 +209,7 @@ If your function returns a value (instead of writing to a buffer), shard
 gathers the results:
 
 ``` r
+
 blocks <- shards(10, workers = 2)
 run <- shard_map(
   blocks,
@@ -240,6 +249,7 @@ sharding, and buffering automatically.
 applies a scalar function over each column of a matrix:
 
 ``` r
+
 set.seed(1)
 X <- matrix(rnorm(2000), nrow = 100, ncol = 20)
 y <- rnorm(100)
@@ -265,6 +275,7 @@ are collected into a vector.
 is a parallel `lapply` with automatic sharing of large list elements:
 
 ``` r
+
 chunks <- lapply(1:10, function(i) rnorm(100))
 
 means <- shard_lapply_shared(
@@ -286,9 +297,10 @@ call records timing, memory, and worker statistics. Use
 inspect them:
 
 ``` r
+
 report(result = run)
 #> shard_report (summary)
-#> Generated: 2026-04-05 20:46:03 
+#> Generated: 2026-07-05 11:17:51 
 #> 
 #> Pool:
 #>   Workers: 2 
@@ -297,9 +309,9 @@ report(result = run)
 #>   Stats: 32 tasks, 0 recycles, 0 deaths
 #> 
 #> Memory:
-#>   Total RSS: 158.7 MB 
-#>   Peak RSS: 79.4 MB 
-#>   Mean RSS: 79.4 MB
+#>   Total RSS: 159.1 MB 
+#>   Peak RSS: 79.6 MB 
+#>   Mean RSS: 79.5 MB
 ```
 
 For focused views:
@@ -316,6 +328,7 @@ creates a worker pool on first use and reuses it. You can also manage
 the pool explicitly:
 
 ``` r
+
 # Create a pool with 4 workers and a 1GB memory cap
 pool_create(n = 4, rss_limit = "1GB")
 
@@ -340,6 +353,7 @@ common class of parallel bugs where a worker accidentally modifies
 shared data, triggering a silent copy:
 
 ``` r
+
 shard_map(
   shards(10),
   borrow = list(X = share(matrix(1:100, 10, 10))),
@@ -361,6 +375,7 @@ for details.
 When you are done, stop the pool to release worker processes:
 
 ``` r
+
 pool_stop()
 ```
 

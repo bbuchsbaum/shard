@@ -7,8 +7,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <title>Getting Started with shard • shard</title>
 <script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<link href="../deps/bootstrap-5.3.1/bootstrap.min.css" rel="stylesheet">
-<script src="../deps/bootstrap-5.3.1/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
+<link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
+<script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><meta property="og:title" content="Getting Started with shard">
 </head>
@@ -20,7 +20,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">shard</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -150,10 +150,10 @@ attach to the same segment instead of receiving a copy:</p>
 <span><span class="co">#&gt; [1] TRUE</span></span>
 <span><span class="fu"><a href="../reference/shared_info.html">shared_info</a></span><span class="op">(</span><span class="va">X_shared</span><span class="op">)</span></span>
 <span><span class="co">#&gt; $path</span></span>
-<span><span class="co">#&gt; [1] "/tmp/shard_10685_1775421961_1775421963"</span></span>
+<span><span class="co">#&gt; [1] "/shard_10284_1783250269_1783250271"</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $backing</span></span>
-<span><span class="co">#&gt; [1] "mmap"</span></span>
+<span><span class="co">#&gt; [1] "shm"</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $size</span></span>
 <span><span class="co">#&gt; [1] 40000</span></span>
@@ -177,10 +177,10 @@ attach to the same segment instead of receiving a copy:</p>
 <span><span class="co">#&gt; [1] 40000</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $segment_info$backing</span></span>
-<span><span class="co">#&gt; [1] "mmap"</span></span>
+<span><span class="co">#&gt; [1] "shm"</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $segment_info$path</span></span>
-<span><span class="co">#&gt; [1] "/tmp/shard_10685_1775421961_1775421963"</span></span>
+<span><span class="co">#&gt; [1] "/shard_10284_1783250269_1783250271"</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $segment_info$readonly</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span>
@@ -351,7 +351,7 @@ worker statistics. Use <code><a href="../reference/report.html">report()</a></co
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/report.html">report</a></span><span class="op">(</span>result <span class="op">=</span> <span class="va">run</span><span class="op">)</span></span>
 <span><span class="co">#&gt; shard_report (summary)</span></span>
-<span><span class="co">#&gt; Generated: 2026-04-05 20:46:03 </span></span>
+<span><span class="co">#&gt; Generated: 2026-07-05 11:17:51 </span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; Pool:</span></span>
 <span><span class="co">#&gt;   Workers: 2 </span></span>
@@ -360,9 +360,9 @@ worker statistics. Use <code><a href="../reference/report.html">report()</a></co
 <span><span class="co">#&gt;   Stats: 32 tasks, 0 recycles, 0 deaths</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; Memory:</span></span>
-<span><span class="co">#&gt;   Total RSS: 158.7 MB </span></span>
-<span><span class="co">#&gt;   Peak RSS: 79.4 MB </span></span>
-<span><span class="co">#&gt;   Mean RSS: 79.4 MB</span></span></code></pre></div>
+<span><span class="co">#&gt;   Total RSS: 159.1 MB </span></span>
+<span><span class="co">#&gt;   Peak RSS: 79.6 MB </span></span>
+<span><span class="co">#&gt;   Mean RSS: 79.5 MB</span></span></code></pre></div>
 <p>For focused views:</p>
 <ul>
 <li>

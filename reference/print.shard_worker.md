@@ -30,11 +30,11 @@ The input `x`, invisibly.
 p <- pool_create(1)
 print(p$workers[[1]])
 #> shard worker [1]
-#>   PID: 9147 
+#>   PID: 8749 
 #>   Status: alive 
-#>   RSS baseline: 68.7 MB 
+#>   RSS baseline: 69.7 MB 
 #>   Recycles: 0 
-#>   Spawned: 2026-04-05 20:45:31 
+#>   Spawned: 2026-07-05 11:17:22 
 pool_stop(p)
 # }
 ```

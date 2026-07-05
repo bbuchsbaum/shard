@@ -17,16 +17,16 @@ with persistent context through git-backed storage.
 
 ### Key Concepts
 
-| Term        | Definition                                                            |
-|-------------|-----------------------------------------------------------------------|
-| **Town**    | Management headquarters coordinating workers across Rigs              |
-| **Rig**     | Project-specific Git repository (this project is a Rig)               |
-| **Mayor**   | Chief coordinator initiating Convoys and distributing work            |
+| Term | Definition |
+|----|----|
+| **Town** | Management headquarters coordinating workers across Rigs |
+| **Rig** | Project-specific Git repository (this project is a Rig) |
+| **Mayor** | Chief coordinator initiating Convoys and distributing work |
 | **Polecat** | Ephemeral worker agent producing Merge Requests in isolated worktrees |
-| **Crew**    | Long-lived, named agents maintaining persistent context               |
-| **Convoy**  | Work-order grouping related Beads for tracking                        |
-| **Hook**    | Special pinned Bead for each agent functioning as work queue          |
-| **GUPP**    | “If there is work on your Hook, YOU MUST RUN IT”                      |
+| **Crew** | Long-lived, named agents maintaining persistent context |
+| **Convoy** | Work-order grouping related Beads for tracking |
+| **Hook** | Special pinned Bead for each agent functioning as work queue |
+| **GUPP** | “If there is work on your Hook, YOU MUST RUN IT” |
 
 ### Agent Roles
 
@@ -79,16 +79,16 @@ confirmation. This makes Gas Town a coordinated, responsive system.
 
 ### Essential Commands
 
-| Command                               | Purpose                                               |
-|---------------------------------------|-------------------------------------------------------|
-| `bd ready`                            | List tasks without blockers (your next work)          |
-| `bd create "title" -p 1`              | Create task (P0=critical, P1=high, P2=medium, P3=low) |
-| `bd show <id>`                        | View issue details and history                        |
-| `bd update <id> --status in_progress` | Mark task as in progress                              |
-| `bd close <id> --reason "text"`       | Close completed task                                  |
-| `bd dep add <child> <parent>`         | Add dependency                                        |
-| `bd list --json`                      | List all open issues                                  |
-| `bd sync`                             | Force sync to git                                     |
+| Command | Purpose |
+|----|----|
+| `bd ready` | List tasks without blockers (your next work) |
+| `bd create "title" -p 1` | Create task (P0=critical, P1=high, P2=medium, P3=low) |
+| `bd show <id>` | View issue details and history |
+| `bd update <id> --status in_progress` | Mark task as in progress |
+| `bd close <id> --reason "text"` | Close completed task |
+| `bd dep add <child> <parent>` | Add dependency |
+| `bd list --json` | List all open issues |
+| `bd sync` | Force sync to git |
 
 ### Critical Rules for Agents
 

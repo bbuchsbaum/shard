@@ -23,12 +23,14 @@ It focuses on three things that are often painful in R parallelism:
 From CRAN (once released):
 
 ``` r
+
 install.packages("shard")
 ```
 
 Development version:
 
 ``` r
+
 # install.packages("pak")
 pak::pak("bbuchsbaum/shard")
 ```
@@ -40,6 +42,7 @@ pak::pak("bbuchsbaum/shard")
 ### 1) Share large inputs (read-only by default)
 
 ``` r
+
 X <- shard::share(X)   # matrix/array/vector
 Y <- shard::share(Y)
 ```
@@ -53,12 +56,14 @@ Instead of returning giant objects from each worker, write to a
 preallocated buffer:
 
 ``` r
+
 out <- shard::buffer("double", dim = c(1e6))   # example: 1M outputs
 ```
 
 ### 3) Run shard_map() over shards
 
 ``` r
+
 blocks <- shard::shards(1e6, block_size = "auto")
 
 run <- shard::shard_map(
@@ -116,6 +121,7 @@ After a run, `shard` can report:
 - recycling events, retries, timing
 
 ``` r
+
 rep <- shard::report(run)
 print(rep)
 
@@ -135,6 +141,7 @@ runtime.
 ### Column-wise apply (scalar return)
 
 ``` r
+
 X <- matrix(rnorm(1e6), nrow = 1000)
 
 scores <- shard::shard_apply_matrix(
@@ -149,6 +156,7 @@ scores <- shard::shard_apply_matrix(
 ### List lapply (guarded gather)
 
 ``` r
+
 xs <- lapply(1:1000, function(i) rnorm(100))
 
 out <- shard::shard_lapply_shared(

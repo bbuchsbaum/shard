@@ -9,7 +9,7 @@ thresholds.
 
 ``` r
 pool_create(
-  n = parallel::detectCores() - 1L,
+  n = .default_workers(),
   rss_limit = "2GB",
   rss_drift_threshold = 0.5,
   heartbeat_interval = 5,
@@ -23,7 +23,8 @@ pool_create(
 
 - n:
 
-  Integer. Number of worker processes to spawn.
+  Integer. Number of worker processes to spawn. Defaults to
+  `detectCores() - 1`, capped at 2 during `R CMD check`.
 
 - rss_limit:
 

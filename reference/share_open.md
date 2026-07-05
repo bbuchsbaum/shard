@@ -35,7 +35,9 @@ A `shard_shared` object attached to the existing segment.
 shared <- share(1:50)
 info <- shared_info(shared)
 reopened <- share_open(info$path, backing = "mmap")
+#> Error in segment_open(path, backing = backing, readonly = TRUE): Failed to open shared memory segment
 close(reopened)
+#> Error: object 'reopened' not found
 close(shared)
 # }
 ```

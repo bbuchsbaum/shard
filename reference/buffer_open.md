@@ -42,7 +42,9 @@ A `shard_buffer` object attached to the existing segment.
 buf <- buffer("double", dim = 10)
 path <- buffer_path(buf)
 buf2 <- buffer_open(path, type = "double", dim = 10, backing = "mmap")
+#> Error in segment_open(path, backing = backing, readonly = readonly): Failed to open shared memory segment
 buffer_close(buf2, unlink = FALSE)
+#> Error: object 'buf2' not found
 buffer_close(buf)
 # }
 ```
