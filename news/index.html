@@ -35,7 +35,7 @@
 
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="shard-020">shard 0.2.0<a class="anchor" aria-label="anchor" href="#shard-020"></a></h2>
-<p>Internal performance and correctness refactor (Phases 1–5). No user-facing API was added or removed; all changes improve the behavior, speed, or robustness of the existing runtime.</p>
+<p>Internal performance and correctness refactor. No user-facing API was removed; apart from a new <code>path=</code> argument to <code><a href="../reference/as_shared.html">as_shared()</a></code> and the deprecation of the unused <code>pool_create(heartbeat_interval=)</code>, all changes improve the behavior, speed, or robustness of the existing runtime.</p>
 <div class="section level3">
 <h3 id="performance-0-2-0">Performance<a class="anchor" aria-label="anchor" href="#performance-0-2-0"></a></h3>
 <ul><li>Overhauled the task-dispatch core: the worker function and diagnostics setup are now exported once per dispatch instead of per task, and run-level diagnostics are gated behind <code>diagnostics = TRUE</code>. This sharply reduces dispatch wall-clock and task-payload size on many-shard workloads.</li>
@@ -43,6 +43,12 @@
 <li>Non-contiguous (strided) shard index sets are compacted on the wire and reconstructed in the worker, cutting serialization cost for sparse selections.</li>
 <li>On Linux, <code>backing = "auto"</code> now maps shared memory on tmpfs; added <code>madvise()</code> access hints and a cached segment base pointer.</li>
 <li>Buffer sparse (non-contiguous) reads and writes use typed C gather/scatter instead of a full read-modify-write, while bulk contiguous sub-block writes keep their fast path.</li>
+<li>Contiguous buffer reads (<code>buf[]</code>, <code>as.vector(buf)</code>, per-shard slice reads) now use a single typed C read instead of a raw intermediate plus <code><a href="https://rdrr.io/r/base/readBin.html" class="external-link">readBin()</a></code>, halving allocation and copy volume when materializing results.</li>
+<li>Master-side chunk-queue management is O(1) per chunk (cursor-based dequeue, preallocated completion storage); completed chunks retain only minimal metadata by default, releasing shard descriptors as the run progresses.</li>
+<li>Worker liveness probes reuse a <code>ps</code> handle cached at spawn time (also more robust against PID reuse) instead of creating one per check per poll tick.</li>
+<li>Buffer index validation and contiguity detection are allocation-free and preserve ALTREP-compact index ranges.</li>
+<li>Indexing a buffer with 3 or more dimensions now gathers/scatters only the selection instead of materializing the whole buffer; array assignment no longer breaks the lock-free disjoint parallel-write guarantee.</li>
+<li>The online autotuner and <code><a href="../reference/stream_map.html">stream_map()</a></code> no longer grow result lists incrementally across phases/partitions.</li>
 </ul></div>
 <div class="section level3">
 <h3 id="reproducibility-and-correctness-0-2-0">Reproducibility and correctness<a class="anchor" aria-label="anchor" href="#reproducibility-and-correctness-0-2-0"></a></h3>
@@ -58,6 +64,16 @@
 <li>
 <code><a href="../reference/shard_reduce.html">shard_reduce()</a></code>: minimal reducer environment, per-shard seed streams, and corrected automatic chunking and <code>init</code> semantics.</li>
 <li>Worker recycling replays a bootstrap manifest so borrowed inputs and outputs are correctly re-exported to restarted workers.</li>
+<li>Fixed an integer overflow that broke <code><a href="../reference/share.html">share()</a></code> for atomic vectors over 2GB (about 269 million doubles).</li>
+<li>Fixed <code><a href="../reference/shard_reduce.html">shard_reduce()</a></code> receiving a stale output-buffer handle when run after <code><a href="../reference/shard_map.html">shard_map()</a></code> on the same pool with a same-named <code>out=</code> buffer.</li>
+<li>C layer hardening: shared-memory offset/length validation is overflow-safe (negative or non-finite values now error cleanly instead of reading or writing out of bounds), freshly created ALTREP objects are protected from garbage collection during construction, shard ALTREP methods no longer misidentify other packages’ ALTREP objects, and the shared task queue validates its header before use.</li>
+<li>
+<code><a href="../reference/table_write.html">table_write()</a></code> validates <code>shard_id</code>, so an NA id can no longer produce a part file that <code><a href="../reference/table_finalize.html">table_finalize()</a></code> silently drops.</li>
+<li>Fixed <code><a href="../reference/row_layout.html">row_layout()</a></code> erroring when a trailing shard has zero rows, and <code><a href="../reference/shard_crossprod.html">shard_crossprod()</a></code> failing on matrices with fewer than 8 columns.</li>
+<li>Worker liveness detection no longer reports dead workers as alive on systems without the <code>ps</code> package.</li>
+<li>On macOS, the <code>"shm"</code> backing now works: generated segment names previously exceeded the Darwin name-length limit, so <code>shm_open()</code> always failed.</li>
+<li>
+<code>shard_map(health_check_interval=)</code> is honoured when supplied explicitly (profile presets no longer override it), and <code>share(name=)</code> now applies to fast-path atomic shares. <code>pool_create(heartbeat_interval=)</code> is deprecated: it was never consulted (health checks are per-chunk, not time-based).</li>
 </ul></div>
 <div class="section level3">
 <h3 id="autotuning-and-configuration-0-2-0">Autotuning and configuration<a class="anchor" aria-label="anchor" href="#autotuning-and-configuration-0-2-0"></a></h3>
@@ -70,6 +86,11 @@
 <ul><li>Substantially expanded unit-test coverage of buffers, views, tables, kernels, and internal helpers.</li>
 </ul></div>
 </div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.1.1" id="shard-011">shard 0.1.1<a class="anchor" aria-label="anchor" href="#shard-011"></a></h2><p class="text-muted">CRAN release: 2026-04-05</p>
+<ul><li>Fixed a gcc-UBSAN report: the task-queue header used a C89 <code>tasks[1]</code> trailing-array idiom; changed to a C99 flexible array member.</li>
+<li>Default worker counts now respect <code>_R_CHECK_LIMIT_CORES_</code> and are capped at 2 during <code>R CMD check</code>, at all call sites (<code><a href="../reference/pool_create.html">pool_create()</a></code>, <code><a href="../reference/shard_map.html">shard_map()</a></code>, <code><a href="../reference/shards.html">shards()</a></code>, <code><a href="../reference/shard_reduce.html">shard_reduce()</a></code>).</li>
+</ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.0" id="shard-010">shard 0.1.0<a class="anchor" aria-label="anchor" href="#shard-010"></a></h2><p class="text-muted">CRAN release: 2026-04-03</p>
 <ul><li>Initial CRAN release.</li>

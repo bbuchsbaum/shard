@@ -34,7 +34,7 @@ print(buf)
 #>   Length: 10 
 #>   Size: 80 bytes
 #>   Backing: shm 
-#>   Path: /shard_6789_1784313793_1784313800 
+#>   Path: /shd1900_6a5a787c_6a5a7886 
 buffer_close(buf)
 # }
 ```

@@ -74,7 +74,11 @@ that triggers recycling (default 0.5 = 50% growth).</p></dd>
 
 
 <dt id="arg-heartbeat-interval">heartbeat_interval<a class="anchor" aria-label="anchor" href="#arg-heartbeat-interval"></a></dt>
-<dd><p>Numeric. Seconds between health checks (default 5).</p></dd>
+<dd><p>Deprecated and unused. Pool health checks are
+triggered per dispatched chunk rather than on a wall-clock interval; use
+the <code>health_check_interval</code> argument of <code><a href="shard_map.html">shard_map()</a></code> / <code><a href="shard_reduce.html">shard_reduce()</a></code>
+to control cadence. Supplying a non-default value emits a deprecation
+warning and otherwise has no effect.</p></dd>
 
 
 <dt id="arg-min-recycle-interval">min_recycle_interval<a class="anchor" aria-label="anchor" href="#arg-min-recycle-interval"></a></dt>

@@ -92,7 +92,11 @@ select a registered kernel via <code>kernel=</code> instead of providing <code>f
 
 <dt id="arg-borrow">borrow<a class="anchor" aria-label="anchor" href="#arg-borrow"></a></dt>
 <dd><p>Named list of shared inputs. These are exported to workers
-once and reused across shards. Treated as read-only by default.</p></dd>
+once and reused across shards. Treated as read-only by default. Large
+inputs that are not already shared (see <code><a href="share.html">share()</a></code>) are copied into a
+temporary shared segment on every <code>shard_map()</code> call and destroyed on
+exit; for iterative workflows over the same data, call <code><a href="share.html">share()</a></code> once
+up front to pay that copy only once.</p></dd>
 
 
 <dt id="arg-out">out<a class="anchor" aria-label="anchor" href="#arg-out"></a></dt>
@@ -231,7 +235,9 @@ decomposition is used and online autotuning is disabled. If NULL
 
 
 <dt id="arg-health-check-interval">health_check_interval<a class="anchor" aria-label="anchor" href="#arg-health-check-interval"></a></dt>
-<dd><p>Integer. Check worker health every N shards (default 10).</p></dd>
+<dd><p>Integer. Check worker health every N shards
+(default 10). The <code>profile</code> presets adjust this (<code>"memory"</code> = 5,
+<code>"speed"</code> = 50) unless a value is supplied explicitly.</p></dd>
 
 </dl></div>
     <div class="section level2">

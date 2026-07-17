@@ -87,8 +87,12 @@ the shared data (advanced use case).</p></dd>
 
 
 <dt id="arg-name">name<a class="anchor" aria-label="anchor" href="#arg-name"></a></dt>
-<dd><p>Optional name for the shared object. If NULL (default), a unique
-name is generated. Named shares can be opened by name in other processes.</p></dd>
+<dd><p>Optional name for the shared object's backing segment. If NULL
+(default), a unique name is generated. Named shares can be opened by name
+in other processes via <code><a href="segment_open.html">segment_open()</a></code>. Applies to non-deep shares only
+(both the atomic fast path and the serialized path); it is ignored with a
+warning for <code>deep = TRUE</code>, which fans out into multiple segments with
+generated names.</p></dd>
 
 
 <dt id="arg-deep">deep<a class="anchor" aria-label="anchor" href="#arg-deep"></a></dt>

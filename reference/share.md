@@ -48,8 +48,13 @@ share(
 
 - name:
 
-  Optional name for the shared object. If NULL (default), a unique name
-  is generated. Named shares can be opened by name in other processes.
+  Optional name for the shared object's backing segment. If NULL
+  (default), a unique name is generated. Named shares can be opened by
+  name in other processes via
+  [`segment_open()`](https://bbuchsbaum.github.io/shard/reference/segment_open.md).
+  Applies to non-deep shares only (both the atomic fast path and the
+  serialized path); it is ignored with a warning for `deep = TRUE`,
+  which fans out into multiple segments with generated names.
 
 - deep:
 

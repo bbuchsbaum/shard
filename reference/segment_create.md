@@ -48,7 +48,7 @@ segment_info(seg)
 #> [1] "shm"
 #> 
 #> $path
-#> [1] "/shard_6789_1784313808_1784313807"
+#> [1] "/shd1900_6a5a7889_6a5a788d"
 #> 
 #> $readonly
 #> [1] FALSE

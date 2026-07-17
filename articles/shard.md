@@ -76,7 +76,7 @@ is_shared(X_shared)
 #> [1] TRUE
 shared_info(X_shared)
 #> $path
-#> [1] "/shard_10325_1784313829_1784313831"
+#> [1] "/shd26cb_6a5a789c_6a5a789e"
 #> 
 #> $backing
 #> [1] "shm"
@@ -106,7 +106,7 @@ shared_info(X_shared)
 #> [1] "shm"
 #> 
 #> $segment_info$path
-#> [1] "/shard_10325_1784313829_1784313831"
+#> [1] "/shd26cb_6a5a789c_6a5a789e"
 #> 
 #> $segment_info$readonly
 #> [1] TRUE
@@ -300,7 +300,7 @@ inspect them:
 
 report(result = run)
 #> shard_report (summary)
-#> Generated: 2026-07-17 18:43:51 
+#> Generated: 2026-07-17 18:46:53 
 #> 
 #> Pool:
 #>   Workers: 2 
@@ -309,9 +309,9 @@ report(result = run)
 #>   Stats: 32 tasks, 0 recycles, 0 deaths
 #> 
 #> Memory:
-#>   Total RSS: 158.9 MB 
-#>   Peak RSS: 79.5 MB 
-#>   Mean RSS: 79.4 MB
+#>   Total RSS: 159.6 MB 
+#>   Peak RSS: 79.8 MB 
+#>   Mean RSS: 79.8 MB
 ```
 
 For focused views:

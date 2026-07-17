@@ -18,7 +18,7 @@ dispatch_chunks(
   scheduler_policy = NULL,
   on_result = NULL,
   store_results = TRUE,
-  retain_chunks = TRUE,
+  retain_chunks = FALSE,
   diagnostics = TRUE
 )
 ```
@@ -76,8 +76,11 @@ dispatch_chunks(
 
 - retain_chunks:
 
-  Logical (advanced). If FALSE, completed chunk descriptors are stored
-  minimally (avoids retaining large shard lists in memory).
+  Logical (advanced). If FALSE (the default), completed chunk
+  descriptors are stored minimally (id, retry count, result), avoiding a
+  second copy of large shard lists held until the run ends. Set to TRUE
+  to retain full chunk descriptors alongside results. Failed chunks are
+  always retained in full.
 
 - diagnostics:
 

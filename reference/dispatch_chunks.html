@@ -54,7 +54,7 @@ Handles worker death and recycling transparently by requeuing failed chunks.</p>
 <span>  scheduler_policy <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  on_result <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  store_results <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>  retain_chunks <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  retain_chunks <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  diagnostics <span class="op">=</span> <span class="cn">TRUE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -108,8 +108,11 @@ not retained in the returned <code>results</code> list (streaming use cases).</p
 
 
 <dt id="arg-retain-chunks">retain_chunks<a class="anchor" aria-label="anchor" href="#arg-retain-chunks"></a></dt>
-<dd><p>Logical (advanced). If FALSE, completed chunk descriptors
-are stored minimally (avoids retaining large shard lists in memory).</p></dd>
+<dd><p>Logical (advanced). If FALSE (the default), completed
+chunk descriptors are stored minimally (id, retry count, result), avoiding
+a second copy of large shard lists held until the run ends. Set to TRUE to
+retain full chunk descriptors alongside results. Failed chunks are always
+retained in full.</p></dd>
 
 
 <dt id="arg-diagnostics">diagnostics<a class="anchor" aria-label="anchor" href="#arg-diagnostics"></a></dt>

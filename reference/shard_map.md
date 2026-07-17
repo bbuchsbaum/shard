@@ -53,7 +53,14 @@ shard_map(
 - borrow:
 
   Named list of shared inputs. These are exported to workers once and
-  reused across shards. Treated as read-only by default.
+  reused across shards. Treated as read-only by default. Large inputs
+  that are not already shared (see
+  [`share()`](https://bbuchsbaum.github.io/shard/reference/share.md))
+  are copied into a temporary shared segment on every `shard_map()` call
+  and destroyed on exit; for iterative workflows over the same data,
+  call
+  [`share()`](https://bbuchsbaum.github.io/shard/reference/share.md)
+  once up front to pay that copy only once.
 
 - out:
 
@@ -220,7 +227,9 @@ shard_map(
 
 - health_check_interval:
 
-  Integer. Check worker health every N shards (default 10).
+  Integer. Check worker health every N shards (default 10). The
+  `profile` presets adjust this (`"memory"` = 5, `"speed"` = 50) unless
+  a value is supplied explicitly.
 
 ## Value
 

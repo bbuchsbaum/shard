@@ -26,7 +26,7 @@ A named list with fields `path`, `backing`, `size`, `readonly`,
 shared <- share(1:100)
 shared_info(shared)
 #> $path
-#> [1] "/shard_6789_1784313819_1784313824"
+#> [1] "/shd1900_6a5a7893_6a5a789e"
 #> 
 #> $backing
 #> [1] "shm"
@@ -56,7 +56,7 @@ shared_info(shared)
 #> [1] "shm"
 #> 
 #> $segment_info$path
-#> [1] "/shard_6789_1784313819_1784313824"
+#> [1] "/shd1900_6a5a7893_6a5a789e"
 #> 
 #> $segment_info$readonly
 #> [1] TRUE

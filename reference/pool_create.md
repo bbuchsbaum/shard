@@ -38,7 +38,14 @@ pool_create(
 
 - heartbeat_interval:
 
-  Numeric. Seconds between health checks (default 5).
+  Deprecated and unused. Pool health checks are triggered per dispatched
+  chunk rather than on a wall-clock interval; use the
+  `health_check_interval` argument of
+  [`shard_map()`](https://bbuchsbaum.github.io/shard/reference/shard_map.md)
+  /
+  [`shard_reduce()`](https://bbuchsbaum.github.io/shard/reference/shard_reduce.md)
+  to control cadence. Supplying a non-default value emits a deprecation
+  warning and otherwise has no effect.
 
 - min_recycle_interval:
 

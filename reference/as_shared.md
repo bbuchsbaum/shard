@@ -6,7 +6,7 @@ returns an ALTREP view.
 ## Usage
 
 ``` r
-as_shared(x, readonly = TRUE, backing = "auto", cow = NULL)
+as_shared(x, readonly = TRUE, backing = "auto", cow = NULL, path = NULL)
 ```
 
 ## Arguments
@@ -27,6 +27,15 @@ as_shared(x, readonly = TRUE, backing = "auto", cow = NULL)
 
   Copy-on-write policy for the resulting shared vector. One of `"deny"`,
   `"audit"`, or `"allow"`. If NULL, defaults based on `readonly`.
+
+- path:
+
+  Optional path (mmap backing) or name (shm backing) for the underlying
+  segment. When `NULL` (default) an anonymous temporary segment is
+  created; when supplied, the segment is created with that name so it
+  can be reopened via
+  [`segment_open()`](https://bbuchsbaum.github.io/shard/reference/segment_open.md)
+  in other processes.
 
 ## Value
 

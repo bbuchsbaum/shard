@@ -31,7 +31,7 @@ A list with health status per worker and actions taken.
 # \donttest{
 p <- pool_create(2)
 pool_health_check(p)
-#> Pool health check at 2026-07-17 18:43:08 
+#> Pool health check at 2026-07-17 18:46:16 
 #> Stats: recycles = 0 , deaths = 0 , tasks = 0 
 #> All workers healthy
 pool_stop(p)

@@ -41,7 +41,7 @@ buffer_info(buf)
 #> [1] "shm"
 #> 
 #> $path
-#> [1] "/shard_6789_1784313777_1784313788"
+#> [1] "/shd1900_6a5a786f_6a5a787a"
 #> 
 #> $readonly
 #> [1] FALSE

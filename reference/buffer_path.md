@@ -26,7 +26,7 @@ the segment is anonymous.
 # \donttest{
 buf <- buffer("double", dim = 10)
 buffer_path(buf)
-#> [1] "/shard_6789_1784313777_1784313790"
+#> [1] "/shd1900_6a5a786f_6a5a787c"
 buffer_close(buf)
 # }
 ```

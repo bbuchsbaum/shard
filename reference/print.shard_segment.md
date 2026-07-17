@@ -32,7 +32,7 @@ print(seg)
 #> <shard_segment>
 #>   Size: 1,024 bytes
 #>   Backing: shm 
-#>   Path: /shard_6789_1784313801_1784313803 
+#>   Path: /shd1900_6a5a7883_6a5a7889 
 #>   Read-only: FALSE 
 #>   Owns segment: TRUE 
 segment_close(seg)
