@@ -79,7 +79,7 @@ stream_map <- function(x, f, ...) {
 stream_map.shard_row_groups <- function(x, f, ...) {
   if (!is.function(f)) stop("f must be a function", call. = FALSE)
   it <- iterate_row_groups(x)
-  out <- list()
+  out <- vector("list", length(x$files))
   i <- 0L
   repeat {
     chunk <- it()
@@ -87,6 +87,7 @@ stream_map.shard_row_groups <- function(x, f, ...) {
     i <- i + 1L
     out[[i]] <- f(chunk, ...)
   }
+  if (i < length(out)) out <- out[seq_len(i)]
   out
 }
 

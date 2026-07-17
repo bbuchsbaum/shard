@@ -6,7 +6,7 @@
 ^configure$
 ^cleanup$
 ^shard\.Rcheck$
-^\\.\\.Rcheck$
+^\.\.Rcheck$
 ^shard.*\.tar\.gz$
 ^target$
 ^src/.*\.(o|so|dll)$
@@ -23,6 +23,7 @@
 ^\.claude$
 ^\.omc$
 ^\.planning$
+^planning$
 ^AGENTS\.md$
 ^CLAUDE\.md$
 ^PRD\..*\.json$
@@ -32,5 +33,4 @@
 ^\.covr_result\.rds$
 ^LICENSE\.md$
 ^cran-comments\.md$
-^NEWS\.md$
 ^CRAN-SUBMISSION$

@@ -15,7 +15,11 @@ NULL
 #'   as first argument, followed by borrowed inputs and outputs. You can also
 #'   select a registered kernel via `kernel=` instead of providing `fun=`.
 #' @param borrow Named list of shared inputs. These are exported to workers
-#'   once and reused across shards. Treated as read-only by default.
+#'   once and reused across shards. Treated as read-only by default. Large
+#'   inputs that are not already shared (see [share()]) are copied into a
+#'   temporary shared segment on every `shard_map()` call and destroyed on
+#'   exit; for iterative workflows over the same data, call [share()] once
+#'   up front to pay that copy only once.
 #' @param out Named list of output buffers (from `buffer()`). Workers write
 #'   results directly to these buffers.
 #' @param kernel Optional. Name of a registered kernel (see [list_kernels()]).
@@ -98,7 +102,9 @@ NULL
 #' @param init_expr Expression to evaluate in each worker on startup.
 #' @param timeout Numeric. Seconds to wait for each shard (default 3600).
 #' @param max_retries Integer. Maximum retries per shard on failure (default 3).
-#' @param health_check_interval Integer. Check worker health every N shards (default 10).
+#' @param health_check_interval Integer. Check worker health every N shards
+#'   (default 10). The `profile` presets adjust this (`"memory"` = 5,
+#'   `"speed"` = 50) unless a value is supplied explicitly.
 #'
 #' @return A `shard_result` object containing:
 #'   - `results`: List of results from each shard (if fun returns values)
@@ -188,11 +194,15 @@ shard_map <- function(shards,
   workers <- as.integer(workers)
   if (is.na(workers) || workers < 1L) workers <- 1L
 
-  # Apply profile settings
+  # Apply profile settings. An explicitly supplied health_check_interval wins
+  # over the profile preset.
+  hci_supplied <- !missing(health_check_interval)
   profile_settings <- get_profile_settings(profile, mem_cap, recycle)
   mem_cap <- profile_settings$mem_cap
   rss_drift_threshold <- profile_settings$rss_drift_threshold
-  health_check_interval <- profile_settings$health_check_interval
+  if (!hci_supplied) {
+    health_check_interval <- profile_settings$health_check_interval
+  }
 
   # Convert integer to shard_descriptor if needed (after worker/profile resolution).
   if (shards_is_scalar_n) {
@@ -628,9 +638,11 @@ shard_map_online_ <- function(n,
 
   cursor <- 1L
   shard_id <- 1L
-  all_shards <- list()
-  all_results <- list()
-  all_failures <- list()
+  # Accumulate per phase and concatenate once after the loop: appending with
+  # c() inside the loop recopies the full accumulated lists every phase.
+  shard_phases <- list()
+  result_phases <- list()
+  failure_phases <- list()
 
   # Aggregate dispatch diagnostics across phases.
   agg_diag <- list(
@@ -669,7 +681,7 @@ shard_map_online_ <- function(n,
     )
     shard_id <- shard_id + length(phase_shards)
 
-    all_shards <- c(all_shards, phase_shards)
+    shard_phases[[length(shard_phases) + 1L]] <- phase_shards
     phase_desc <- structure(
       list(
         n = phase_end - cursor + 1L,
@@ -702,9 +714,11 @@ shard_map_online_ <- function(n,
     if (!isTRUE(auto_table)) {
       # Flatten phase results into per-shard results and append.
       phase_res <- if (use_chunk_size > 1L) unlist(dr$results, recursive = FALSE) else dr$results
-      all_results <- c(all_results, phase_res)
+      result_phases[[length(result_phases) + 1L]] <- phase_res
     }
-    if (length(dr$failures)) all_failures <- c(all_failures, dr$failures)
+    if (length(dr$failures)) {
+      failure_phases[[length(failure_phases) + 1L]] <- dr$failures
+    }
 
     # Update aggregate diagnostics.
     agg_diag$health_checks <- c(agg_diag$health_checks, dr$diagnostics$health_checks %||% list())
@@ -790,6 +804,10 @@ shard_map_online_ <- function(n,
       bs <- bs_next
     }
   }
+
+  all_shards <- unlist(shard_phases, recursive = FALSE, use.names = FALSE) %||% list()
+  all_results <- unlist(result_phases, recursive = FALSE) %||% list()
+  all_failures <- unlist(failure_phases, recursive = FALSE) %||% list()
 
   full_desc <- structure(
     list(

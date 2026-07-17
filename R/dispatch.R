@@ -27,8 +27,11 @@ NULL
 #'   chunk completion. Used by [shard_reduce()] to stream reductions.
 #' @param store_results Logical (advanced). If FALSE, successful chunk values are
 #'   not retained in the returned `results` list (streaming use cases).
-#' @param retain_chunks Logical (advanced). If FALSE, completed chunk descriptors
-#'   are stored minimally (avoids retaining large shard lists in memory).
+#' @param retain_chunks Logical (advanced). If FALSE (the default), completed
+#'   chunk descriptors are stored minimally (id, retry count, result), avoiding
+#'   a second copy of large shard lists held until the run ends. Set to TRUE to
+#'   retain full chunk descriptors alongside results. Failed chunks are always
+#'   retained in full.
 #'
 #' @return A \code{shard_dispatch_result} object with results and diagnostics.
 #' @export
@@ -47,7 +50,7 @@ dispatch_chunks <- function(chunks, fun, ...,
                             scheduler_policy = NULL,
                             on_result = NULL,
                             store_results = TRUE,
-                            retain_chunks = TRUE,
+                            retain_chunks = FALSE,
                             diagnostics = TRUE) {
   if (is.null(pool)) {
     pool <- pool_get()

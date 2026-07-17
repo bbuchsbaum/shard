@@ -231,6 +231,10 @@ shared_reset_diagnostics <- function(x) {
 #' @param backing Backing type for the segment: "auto", "mmap", or "shm"
 #' @param cow Copy-on-write policy for the resulting shared vector. One of
 #'   `"deny"`, `"audit"`, or `"allow"`. If NULL, defaults based on `readonly`.
+#' @param path Optional path (mmap backing) or name (shm backing) for the
+#'   underlying segment. When `NULL` (default) an anonymous temporary segment
+#'   is created; when supplied, the segment is created with that name so it can
+#'   be reopened via [segment_open()] in other processes.
 #' @return An ALTREP vector backed by shared memory
 #' @export
 #' @examples
@@ -241,7 +245,7 @@ shared_reset_diagnostics <- function(x) {
 #' y <- x[1:10]
 #' is_shared_vector(y)
 #' }
-as_shared <- function(x, readonly = TRUE, backing = "auto", cow = NULL) {
+as_shared <- function(x, readonly = TRUE, backing = "auto", cow = NULL, path = NULL) {
     if (!is.atomic(x) || is.null(x)) {
         stop("x must be an atomic vector")
     }
@@ -262,12 +266,15 @@ as_shared <- function(x, readonly = TRUE, backing = "auto", cow = NULL) {
         "logical" = 4L,
         "raw"     = 1L
     )
-    size <- length(x) * elem_size
+    # Compute in double: length(x) * elem_size is int*int and overflows to NA
+    # for large vectors (e.g. >= 269M doubles), breaking share() on its headline
+    # >2GB use case.
+    size <- as.double(length(x)) * elem_size
     # mmap(2) of length 0 is invalid; allocate a 1-byte segment for empty vectors.
-    alloc_size <- max(size, 1L)
+    alloc_size <- max(size, 1)
 
     # Create segment and write data
-    seg <- segment_create(alloc_size, backing = backing)
+    seg <- segment_create(alloc_size, backing = backing, path = path)
     if (size > 0) {
         segment_write(seg, x, offset = 0)
     }

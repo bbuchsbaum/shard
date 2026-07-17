@@ -856,8 +856,12 @@ fetch_deep_reconstruct <- function(node) {
 #' @param readonly Logical. If TRUE (default), the segment is protected after
 #'   writing, making it read-only. Set to FALSE only if you need to modify
 #'   the shared data (advanced use case).
-#' @param name Optional name for the shared object. If NULL (default), a unique
-#'   name is generated. Named shares can be opened by name in other processes.
+#' @param name Optional name for the shared object's backing segment. If NULL
+#'   (default), a unique name is generated. Named shares can be opened by name
+#'   in other processes via [segment_open()]. Applies to non-deep shares only
+#'   (both the atomic fast path and the serialized path); it is ignored with a
+#'   warning for `deep = TRUE`, which fans out into multiple segments with
+#'   generated names.
 #' @param deep Logical. If TRUE, recursively traverse lists and data.frames,
 #'   sharing individual components that meet the size threshold. When FALSE
 #'   (default), the entire object is serialized as one unit.
@@ -911,8 +915,11 @@ share <- function(x,
         !is_shared_vector(x)) {
         cow <- if (isTRUE(readonly)) "deny" else "allow"
         # Build with cow='allow' so we can attach attributes, then lock down
-        # by setting shard_cow to the requested policy.
-        shared <- as_shared(x, readonly = readonly, backing = backing, cow = "allow")
+        # by setting shard_cow to the requested policy. `name` is threaded to
+        # the backing segment so a named atomic share is openable by name,
+        # matching the serialized (non-fast) path.
+        shared <- as_shared(x, readonly = readonly, backing = backing,
+                            cow = "allow", path = name)
 
         # Preserve non-class attributes (dim, dimnames, names, tsp, etc).
         attrs <- attributes(x)
@@ -934,6 +941,14 @@ share <- function(x,
     # Traversal owns validation so large valid object graphs are not walked once
     # for validation and again for sharing.
     if (deep) {
+        # A deep share fans out into many segments with generated names, so a
+        # single `name` has no well-defined target. Warn rather than silently
+        # dropping it.
+        if (!is.null(name)) {
+            warning("share(): 'name' is ignored for deep shares (deep = TRUE), ",
+                    "which create multiple segments with generated names.",
+                    call. = FALSE)
+        }
         # Create environment for memoization state
         env <- new.env(parent = emptyenv())
         env$seen <- new.env(parent = emptyenv())       # identity -> {path, node_id, shared}

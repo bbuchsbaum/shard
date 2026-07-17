@@ -93,8 +93,22 @@ static R_altrep_class_t shard_real_class;
 static R_altrep_class_t shard_lgl_class;
 static R_altrep_class_t shard_raw_class;
 
-/* Helper: Get info struct from ALTREP object */
+/* Helper: Get info struct from ALTREP object.
+ *
+ * Only treat x as one of shard's own ALTREP classes after verifying class
+ * identity. A foreign ALTREP (arrow, lazy vectors, deferred-string, ...) can
+ * also store an EXTPTRSXP in data1; blindly casting its payload to
+ * shard_altrep_info_t* would be a garbage dereference (A3). The class objects
+ * are installed in shard_altrep_init() at package load, so they are always
+ * valid by the time any method or entry point can call this. */
 static shard_altrep_info_t *get_info(SEXP x) {
+    if (!ALTREP(x)) return NULL;
+    if (!R_altrep_inherits(x, shard_int_class) &&
+        !R_altrep_inherits(x, shard_real_class) &&
+        !R_altrep_inherits(x, shard_lgl_class) &&
+        !R_altrep_inherits(x, shard_raw_class)) {
+        return NULL;
+    }
     SEXP data1 = R_altrep_data1(x);
     if (TYPEOF(data1) != EXTPTRSXP) return NULL;
     return (shard_altrep_info_t *)R_ExternalPtrAddr(data1);
@@ -222,6 +236,17 @@ static size_t element_size_for_type(int type) {
     }
 }
 
+/* Validate an R-supplied offset/length (arriving as a double) before casting.
+ * Non-finite, negative, or out-of-range values would wrap to a huge
+ * size_t/R_xlen_t and defeat the downstream bounds checks (A4). `what` names
+ * the argument for the error message. Returns the validated double. */
+static double checked_nonneg(double d, double maxv, const char *what) {
+    if (!R_FINITE(d) || d < 0 || d > maxv) {
+        error("%s must be a finite, non-negative value within range", what);
+    }
+    return d;
+}
+
 /*
  * ALTREP method implementations
  */
@@ -289,9 +314,10 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
                                               new_info->parent));
     R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
-    /* Create new ALTREP object */
+    /* Create new ALTREP object. PROTECT before the allocating setAttrib/
+     * install/getAttrib calls below, which can trigger GC (A1). */
     R_altrep_class_t cls = get_class_for_type(info->sexp_type);
-    SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+    SEXP result = PROTECT(R_new_altrep(cls, info_ptr, R_NilValue));
 
     /* Preserve user-visible attributes needed for policy enforcement */
     setAttrib(result, R_ClassSymbol, getAttrib(x, R_ClassSymbol));
@@ -302,7 +328,7 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
         setAttrib(result, sym_ro, getAttrib(x, sym_ro));
     }
 
-    UNPROTECT(1);
+    UNPROTECT(2); /* info_ptr, result */
     return result;
 }
 
@@ -392,8 +418,10 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
     const char *path = CHAR(STRING_ELT(path_sexp, 0));
 
     int backing = INTEGER(VECTOR_ELT(state, 1))[0];
-    size_t off = (size_t)REAL(VECTOR_ELT(state, 2))[0];
-    R_xlen_t len = (R_xlen_t)REAL(VECTOR_ELT(state, 3))[0];
+    size_t off = (size_t)checked_nonneg(REAL(VECTOR_ELT(state, 2))[0],
+                                        (double)SIZE_MAX, "offset");
+    R_xlen_t len = (R_xlen_t)checked_nonneg(REAL(VECTOR_ELT(state, 3))[0],
+                                            (double)R_XLEN_T_MAX, "length");
     int ro = LOGICAL(VECTOR_ELT(state, 4))[0];
     int deny_write = 0;
     const char *cow_str = NULL;
@@ -422,9 +450,10 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
         error("Failed to open shared memory segment for ALTREP unserialize");
     }
 
-    /* Validate bounds against segment size */
+    /* Validate bounds against segment size (overflow-safe: never form the
+     * possibly-wrapping product off + len * elem_size). */
     size_t seg_size = shard_segment_size(seg);
-    if (off + (size_t)len * elem_size > seg_size) {
+    if (off > seg_size || (size_t)len > (seg_size - off) / elem_size) {
         shard_segment_close(seg, 0);
         error("Serialized ALTREP range exceeds segment size");
     }
@@ -455,9 +484,10 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
     SEXP info_ptr = PROTECT(R_MakeExternalPtr(info, seg_xptr, R_NilValue));
     R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
-    /* Rebuild as the correct shard ALTREP class for this stored type */
+    /* Rebuild as the correct shard ALTREP class for this stored type.
+     * PROTECT before the allocating setAttrib/mkString/install calls (A1). */
     R_altrep_class_t acls = get_class_for_type(sexp_type);
-    SEXP result = R_new_altrep(acls, info_ptr, R_NilValue);
+    SEXP result = PROTECT(R_new_altrep(acls, info_ptr, R_NilValue));
 
     /* Restore user-visible attributes for policy enforcement */
     setAttrib(result, R_ClassSymbol, mkString("shard_shared_vector"));
@@ -472,7 +502,7 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
         setAttrib(result, sym_ro, ScalarLogical(ro));
     }
 
-    UNPROTECT(2);
+    UNPROTECT(3); /* seg_xptr, info_ptr, result */
     return result;
 }
 
@@ -656,8 +686,10 @@ static SEXP altvec_extract_subset(SEXP x, SEXP indx, SEXP call) {
                                                   new_info->parent));
         R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
+        /* PROTECT the fresh ALTREP before the allocating setAttrib/install/
+         * getAttrib calls below, which can trigger GC (A1). */
         R_altrep_class_t cls = get_class_for_type(info->sexp_type);
-        SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+        SEXP result = PROTECT(R_new_altrep(cls, info_ptr, R_NilValue));
 
         /* Preserve user-visible attributes needed for policy enforcement */
         setAttrib(result, R_ClassSymbol, getAttrib(x, R_ClassSymbol));
@@ -668,7 +700,7 @@ static SEXP altvec_extract_subset(SEXP x, SEXP indx, SEXP call) {
             setAttrib(result, sym_ro, getAttrib(x, sym_ro));
         }
 
-        UNPROTECT(1);
+        UNPROTECT(2); /* info_ptr, result */
         return result;
     }
 
@@ -881,8 +913,9 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
         error("Unsupported SEXP type: %d", sexp_type);
     }
 
-    size_t off = (size_t)REAL(offset)[0];
-    R_xlen_t len = (R_xlen_t)REAL(length)[0];
+    size_t off = (size_t)checked_nonneg(REAL(offset)[0], (double)SIZE_MAX, "offset");
+    R_xlen_t len = (R_xlen_t)checked_nonneg(REAL(length)[0],
+                                            (double)R_XLEN_T_MAX, "length");
     int ro = LOGICAL(readonly)[0];
     int deny_write = 0;
 
@@ -904,9 +937,10 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
         deny_write = 0;
     }
 
-    /* Validate bounds */
+    /* Validate bounds (overflow-safe: never form the possibly-wrapping
+     * product off + len * elem_size). */
     size_t seg_size = shard_segment_size(segment);
-    if (off + len * elem_size > seg_size) {
+    if (off > seg_size || (size_t)len > (seg_size - off) / elem_size) {
         error("Requested range exceeds segment size (offset=%zu, length=%lld, elem_size=%zu, seg_size=%zu)",
               off, (long long)len, elem_size, seg_size);
     }
@@ -936,9 +970,10 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
     SEXP info_ptr = PROTECT(R_MakeExternalPtr(info, seg, R_NilValue));
     R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
-    /* Create ALTREP object */
+    /* Create ALTREP object. PROTECT before the allocating setAttrib/mkString/
+     * install calls below, which can trigger GC (A1). */
     R_altrep_class_t cls = get_class_for_type(sexp_type);
-    SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+    SEXP result = PROTECT(R_new_altrep(cls, info_ptr, R_NilValue));
 
     /*
      * Mark as a shard shared object and record policy. We use a lightweight
@@ -957,7 +992,7 @@ SEXP C_shard_altrep_create(SEXP seg, SEXP type, SEXP offset, SEXP length, SEXP r
         setAttrib(result, sym_ro, ScalarLogical(ro));
     }
 
-    UNPROTECT(1);
+    UNPROTECT(2); /* info_ptr, result */
     return result;
 }
 
@@ -972,14 +1007,20 @@ SEXP C_shard_altrep_view(SEXP x, SEXP start, SEXP length) {
         error("Invalid shard ALTREP vector");
     }
 
-    R_xlen_t st = (R_xlen_t)REAL(start)[0];
-    R_xlen_t len = (R_xlen_t)REAL(length)[0];
+    double st_d = REAL(start)[0];
+    double len_d = REAL(length)[0];
+    if (!R_FINITE(st_d) || !R_FINITE(len_d)) {
+        error("start and length must be finite");
+    }
+    R_xlen_t st = (R_xlen_t)st_d;
+    R_xlen_t len = (R_xlen_t)len_d;
 
-    /* Validate range */
+    /* Validate range: reject negative start/length and any extent that would
+     * overflow past the end of the parent vector (A4). */
     if (st < 0 || st >= info->length) {
         error("start index out of bounds");
     }
-    if (st + len > info->length) {
+    if (len < 0 || len > info->length - st) {
         error("view extends beyond vector bounds");
     }
 
@@ -1009,8 +1050,9 @@ SEXP C_shard_altrep_view(SEXP x, SEXP start, SEXP length) {
     R_RegisterCFinalizerEx(info_ptr, info_finalizer, TRUE);
 
     R_altrep_class_t cls = get_class_for_type(info->sexp_type);
-    /* data2 is reserved for a private, materialized COW copy on write. */
-    SEXP result = R_new_altrep(cls, info_ptr, R_NilValue);
+    /* data2 is reserved for a private, materialized COW copy on write.
+     * PROTECT before the allocating setAttrib/install/getAttrib calls (A1). */
+    SEXP result = PROTECT(R_new_altrep(cls, info_ptr, R_NilValue));
 
     /* Preserve user-visible attributes needed for policy enforcement */
     setAttrib(result, R_ClassSymbol, getAttrib(x, R_ClassSymbol));
@@ -1021,7 +1063,7 @@ SEXP C_shard_altrep_view(SEXP x, SEXP start, SEXP length) {
         setAttrib(result, sym_ro, getAttrib(x, sym_ro));
     }
 
-    UNPROTECT(1);
+    UNPROTECT(2); /* info_ptr, result */
     return result;
 }
 

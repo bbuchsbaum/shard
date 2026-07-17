@@ -19,7 +19,11 @@ NULL
 #'   Can be bytes (numeric) or human-readable (e.g., "2GB"). Default is "2GB".
 #' @param rss_drift_threshold Numeric. Fraction of RSS increase from baseline
 #'   that triggers recycling (default 0.5 = 50% growth).
-#' @param heartbeat_interval Numeric. Seconds between health checks (default 5).
+#' @param heartbeat_interval Deprecated and unused. Pool health checks are
+#'   triggered per dispatched chunk rather than on a wall-clock interval; use
+#'   the `health_check_interval` argument of [shard_map()] / [shard_reduce()]
+#'   to control cadence. Supplying a non-default value emits a deprecation
+#'   warning and otherwise has no effect.
 #' @param min_recycle_interval Numeric. Minimum time in seconds between recycling
 #'   the same worker (default 1.0). This prevents thrashing PSOCK worker creation
 #'   under extremely tight RSS limits.
@@ -47,6 +51,16 @@ pool_create <- function(n = .default_workers(),
   if (is.na(n)) n <- 1L
   if (n < 1L) {
     stop("pool_create: n must be >= 1", call. = FALSE)
+  }
+
+  # heartbeat_interval is deprecated: nothing ever read it (health checks are
+  # count-driven per dispatched chunk, not time-driven). Warn on non-default
+  # use rather than silently ignoring it.
+  if (!isTRUE(heartbeat_interval == 5)) {
+    warning("pool_create(): 'heartbeat_interval' is deprecated and has no ",
+            "effect. Health checks run per dispatched chunk; use the ",
+            "'health_check_interval' argument of shard_map()/shard_reduce() ",
+            "to control cadence.", call. = FALSE)
   }
 
   rss_limit_bytes <- parse_bytes(rss_limit)

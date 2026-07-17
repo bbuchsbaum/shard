@@ -411,12 +411,12 @@ dim.shard_buffer <- function(x) {
     }
 
     if (allow_negative) {
-        if (any(idx < 0L)) {
-            if (any(idx > 0L)) {
+        if (length(idx) && min(idx) < 0L) {
+            if (max(idx) > 0L) {
                 stop("Index out of bounds", call. = FALSE)
             }
             drop <- -idx[idx < 0L]
-            if (any(drop < 1L | drop > n)) {
+            if (min(drop) < 1L || max(drop) > n) {
                 stop("Index out of bounds", call. = FALSE)
             }
             return(seq_len(n)[-unique(drop)])
@@ -424,14 +424,20 @@ dim.shard_buffer <- function(x) {
         idx <- idx[idx != 0L]
     }
 
-    if (any(idx < 1L | idx > n)) {
+    # min/max instead of `any(idx < 1L | idx > n)`: no logical temporaries, and
+    # O(1) on ALTREP-compact ranges (which shard descriptors preserve).
+    if (length(idx) && (min(idx) < 1L || max(idx) > n)) {
         stop("Index out of bounds", call. = FALSE)
     }
     idx
 }
 
 .buffer_is_contiguous <- function(idx) {
-    length(idx) <= 1L || all(diff(idx) == 1L)
+    n <- length(idx)
+    # Span + strict sortedness == consecutive run; avoids diff(), which
+    # materializes ALTREP-compact index ranges twice.
+    n <= 1L ||
+        (idx[[n]] - idx[[1L]] + 1L == n && !is.unsorted(idx, strictly = TRUE))
 }
 
 .buffer_selector <- function(idx, n, missing_selector = FALSE, allow_negative = FALSE) {
@@ -479,6 +485,29 @@ dim.shard_buffer <- function(x) {
     as.integer(as.vector(outer(row_idx, (col_idx - 1L) * nrow, `+`)))
 }
 
+# Column-major linear indices for an n-dimensional (>= 3-D) selection, without
+# materializing the buffer. Traversal order matches base array subsetting.
+.buffer_nd_linear_idx <- function(x, args) {
+    dm <- x$dim
+    if (length(args) != length(dm)) {
+        stop("incorrect number of dimensions", call. = FALSE)
+    }
+    sels <- vector("list", length(dm))
+    for (d in seq_along(dm)) {
+        sels[[d]] <- .buffer_selector(args[[d]], as.integer(dm[[d]]),
+                                      allow_negative = TRUE)
+    }
+    lens <- vapply(sels, function(s) s$len, integer(1))
+    linear <- as.double(.buffer_selector_indices(sels[[1L]]))
+    stride <- 1
+    for (d in seq_along(dm)[-1L]) {
+        stride <- stride * as.double(dm[[d - 1L]])
+        offs <- (as.double(.buffer_selector_indices(sels[[d]])) - 1) * stride
+        linear <- as.vector(outer(linear, offs, `+`))
+    }
+    list(idx = linear, lens = lens)
+}
+
 .buffer_read_matrix_column_ranges <- function(x, rows, cols, nrow) {
     result <- .buffer_empty(x$type)
     length(result) <- rows$len * cols$len
@@ -520,21 +549,25 @@ dim.shard_buffer <- function(x) {
 .buffer_read_range <- function(x, start, count) {
     if (count == 0L) return(.buffer_empty(x$type))
 
-    offset <- (start - 1L) * x$elem_size
-    nbytes <- count * x$elem_size
+    # Double arithmetic: element offsets can exceed .Machine$integer.max bytes.
+    offset <- (as.double(start) - 1) * x$elem_size
+    nbytes <- as.double(count) * x$elem_size
 
-    raw_data <- segment_read(x$segment, offset = offset, size = nbytes)
+    # Typed read straight from the mapping: one allocation + one memcpy,
+    # instead of a raw intermediate plus readBin() (two full copies).
+    result <- .Call(
+        "C_shard_segment_read_range",
+        x$segment$ptr,
+        offset,
+        as.double(count),
+        x$type,
+        PACKAGE = "shard"
+    )
 
     .buffer_diag_env$reads <- .buffer_diag_env$reads + 1L
     .buffer_diag_env$read_bytes <- .buffer_diag_env$read_bytes + nbytes
 
-    # Convert raw to appropriate type
-    switch(x$type,
-        "double"  = readBin(raw_data, "double", n = count),
-        "integer" = readBin(raw_data, "integer", n = count),
-        "logical" = as.logical(readBin(raw_data, "integer", n = count)),
-        "raw"     = raw_data
-    )
+    result
 }
 
 # Internal: read arbitrary element indices from buffer without materializing all.
@@ -561,7 +594,8 @@ dim.shard_buffer <- function(x) {
     count <- length(values)
     if (count == 0L) return(invisible(NULL))
 
-    offset <- (start - 1L) * x$elem_size
+    # Double arithmetic: element offsets can exceed .Machine$integer.max bytes.
+    offset <- (as.double(start) - 1) * x$elem_size
 
     # Convert values to appropriate type and write
     typed_values <- .buffer_cast_values(x$type, values)
@@ -677,12 +711,18 @@ dim.shard_buffer <- function(x) {
         return(result)
     }
 
-    # General array case
+    # General array case: gather only the selection instead of materializing
+    # the whole buffer.
     args <- c(list(i), if (!missing(j)) list(j), list(...))
-    # Read all data and use standard array subsetting
-    all_data <- .buffer_read_range(x, 1L, x$n)
-    dim(all_data) <- x$dim
-    do.call(`[`, c(list(all_data), args, list(drop = drop)))
+    sel <- .buffer_nd_linear_idx(x, args)
+    result <- if (.buffer_is_contiguous(sel$idx)) {
+        .buffer_read_range(x, sel$idx[[1L]], length(sel$idx))
+    } else {
+        .buffer_read_indices(x, sel$idx)
+    }
+    dim(result) <- sel$lens
+    if (drop) result <- drop(result)
+    result
 }
 
 #' Assign to Buffer Elements
@@ -778,13 +818,22 @@ dim.shard_buffer <- function(x) {
       return(invisible(x))
     }
 
-    # General array case
-    all_data <- .buffer_read_range(x, 1L, x$n)
-    dim(all_data) <- x$dim
+    # General array case: write only the selection. A whole-buffer
+    # read-modify-write would break the lock-free disjoint parallel-write
+    # guarantee the 1-D/2-D paths preserve.
     args <- c(list(i), if (!missing(j)) list(j), list(...))
-    all_data <- do.call(`[<-`, c(list(all_data), args, list(value = value)))
-    dim(all_data) <- NULL
-    .buffer_write_range(x, 1L, all_data)
+    sel <- .buffer_nd_linear_idx(x, args)
+    n_target <- prod(sel$lens)
+    if (n_target == 0) return(invisible(x))
+    values <- .buffer_cast_values(x$type, as.vector(value))
+    if (length(values) != n_target) {
+        values <- rep_len(values, n_target)
+    }
+    if (.buffer_is_contiguous(sel$idx)) {
+        .buffer_write_range(x, sel$idx[[1L]], values)
+    } else {
+        .buffer_write_indices(x, sel$idx, values)
+    }
     invisible(x)
 }
 

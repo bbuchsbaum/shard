@@ -30,8 +30,12 @@ data frames, and any object that can be serialized with \code{serialize()}.}
 writing, making it read-only. Set to FALSE only if you need to modify
 the shared data (advanced use case).}
 
-\item{name}{Optional name for the shared object. If NULL (default), a unique
-name is generated. Named shares can be opened by name in other processes.}
+\item{name}{Optional name for the shared object's backing segment. If NULL
+(default), a unique name is generated. Named shares can be opened by name
+in other processes via \code{\link[=segment_open]{segment_open()}}. Applies to non-deep shares only
+(both the atomic fast path and the serialized path); it is ignored with a
+warning for \code{deep = TRUE}, which fans out into multiple segments with
+generated names.}
 
 \item{deep}{Logical. If TRUE, recursively traverse lists and data.frames,
 sharing individual components that meet the size threshold. When FALSE

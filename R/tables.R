@@ -202,7 +202,10 @@ row_layout <- function(shards, rows_per_shard) {
   for (i in seq_len(shards$num_shards)) {
     n <- sizes[i]
     if (n == 0L) {
-      layout[[i]] <- NULL
+      # Leave the pre-allocated NULL entry in place. Assigning `layout[[i]] <-
+      # NULL` deletes the element and shortens the list, which desynchronises
+      # positions and makes the later names<- fail for a trailing zero-row
+      # shard.
       next
     }
     layout[[i]] <- idx_range(cur, cur + n - 1L)
@@ -550,8 +553,24 @@ table_sink <- function(schema,
   )
 }
 
+.validate_sink_shard_id <- function(shard_id) {
+  # A bad id would name the partition "part-NA.rds", which
+  # table_finalize()'s "^part-[0-9]+\\.rds$" glob silently drops = data loss.
+  # Require a single positive, non-NA, integer-valued id and fail loudly.
+  if (length(shard_id) != 1L || !is.numeric(shard_id) && !is.integer(shard_id)) {
+    stop("shard_id must be a single positive integer for table_sink writes",
+         call. = FALSE)
+  }
+  sid <- suppressWarnings(as.integer(shard_id))
+  if (is.na(sid) || sid < 1L || !isTRUE(shard_id == sid)) {
+    stop("shard_id must be a single positive integer for table_sink writes (got ",
+         format(shard_id), ")", call. = FALSE)
+  }
+  sid
+}
+
 .sink_part_path <- function(sink, shard_id) {
-  file.path(sink$path, sprintf("part-%06d.rds", as.integer(shard_id)))
+  file.path(sink$path, sprintf("part-%06d.rds", .validate_sink_shard_id(shard_id)))
 }
 
 .sink_manifest_rds_path <- function(sink) {
@@ -810,6 +829,9 @@ table_write.shard_table_sink <- function(target, rows_or_shard_id, data, ...) {
 
   shard_id <- rows_or_shard_id
   if (missing(shard_id)) stop("shard_id is required for table_sink writes", call. = FALSE)
+  # Validate up front so a bad id fails loudly here rather than silently
+  # producing a "part-NA.rds" partition that table_finalize() drops.
+  shard_id <- .validate_sink_shard_id(shard_id)
   if (!dir.exists(sink$path)) dir.create(sink$path, recursive = TRUE, showWarnings = FALSE)
   if (is.data.frame(data)) {
     data <- as.list(data)

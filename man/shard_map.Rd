@@ -38,7 +38,11 @@ as first argument, followed by borrowed inputs and outputs. You can also
 select a registered kernel via \verb{kernel=} instead of providing \verb{fun=}.}
 
 \item{borrow}{Named list of shared inputs. These are exported to workers
-once and reused across shards. Treated as read-only by default.}
+once and reused across shards. Treated as read-only by default. Large
+inputs that are not already shared (see \code{\link[=share]{share()}}) are copied into a
+temporary shared segment on every \code{shard_map()} call and destroyed on
+exit; for iterative workflows over the same data, call \code{\link[=share]{share()}} once
+up front to pay that copy only once.}
 
 \item{out}{Named list of output buffers (from \code{buffer()}). Workers write
 results directly to these buffers.}
@@ -150,7 +154,9 @@ decomposition is used and online autotuning is disabled. If NULL
 
 \item{max_retries}{Integer. Maximum retries per shard on failure (default 3).}
 
-\item{health_check_interval}{Integer. Check worker health every N shards (default 10).}
+\item{health_check_interval}{Integer. Check worker health every N shards
+(default 10). The \code{profile} presets adjust this (\code{"memory"} = 5,
+\code{"speed"} = 50) unless a value is supplied explicitly.}
 }
 \value{
 A \code{shard_result} object containing:

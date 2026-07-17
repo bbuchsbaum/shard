@@ -24,7 +24,11 @@ Can be bytes (numeric) or human-readable (e.g., "2GB"). Default is "2GB".}
 \item{rss_drift_threshold}{Numeric. Fraction of RSS increase from baseline
 that triggers recycling (default 0.5 = 50\% growth).}
 
-\item{heartbeat_interval}{Numeric. Seconds between health checks (default 5).}
+\item{heartbeat_interval}{Deprecated and unused. Pool health checks are
+triggered per dispatched chunk rather than on a wall-clock interval; use
+the \code{health_check_interval} argument of \code{\link[=shard_map]{shard_map()}} / \code{\link[=shard_reduce]{shard_reduce()}}
+to control cadence. Supplying a non-default value emits a deprecation
+warning and otherwise has no effect.}
 
 \item{min_recycle_interval}{Numeric. Minimum time in seconds between recycling
 the same worker (default 1.0). This prevents thrashing PSOCK worker creation

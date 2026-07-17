@@ -101,6 +101,27 @@ static size_t taskq_required_size(int n_tasks) {
     return sizeof(shard_taskq_header_t) + (size_t)n_tasks * sizeof(shard_taskq_task_t);
 }
 
+#if SHARD_HAVE_ATOMICS
+/*
+ * Load n_tasks from the shared header and validate it against the segment
+ * size before any code iterates over tasks[]. The header lives in
+ * cross-process shared memory and must be treated as untrusted input: a
+ * corrupt or hostile n_tasks would otherwise drive out-of-bounds reads and
+ * writes over the flexible tasks[] array. The bound is computed without
+ * multiplication so a huge n_tasks cannot wrap size_t.
+ */
+static int taskq_checked_n(shard_segment_t *seg, shard_taskq_header_t *hdr) {
+    int n = atomic_load(&hdr->n_tasks);
+    size_t have = shard_segment_size(seg);
+    if (n < 1 ||
+        have < sizeof(shard_taskq_header_t) ||
+        (size_t)n > (have - sizeof(shard_taskq_header_t)) / sizeof(shard_taskq_task_t)) {
+        error("task queue header is invalid (n_tasks=%d exceeds segment capacity)", n);
+    }
+    return n;
+}
+#endif /* SHARD_HAVE_ATOMICS */
+
 SEXP C_shard_taskq_supported(void) {
 #if SHARD_HAVE_ATOMICS
     /* The queue synchronizes master and workers through atomics in a mapped
@@ -126,6 +147,9 @@ SEXP C_shard_taskq_init(SEXP seg_ptr, SEXP n_tasks_) {
     size_t have = shard_segment_size(seg);
     if (have < need) {
         error("segment too small for task queue (need %zu bytes, have %zu)", need, have);
+    }
+    if (seg->readonly) {
+        error("cannot initialize task queue in a read-only segment");
     }
 
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
@@ -184,9 +208,7 @@ static int taskq_try_claim_slot(shard_taskq_header_t *hdr, int i, int worker_id)
  * reset_claims after a worker death) are found by a linear sweep that runs
  * only once the cursor has reached the end AND unfinished tasks remain.
  */
-static int taskq_claim_one(shard_taskq_header_t *hdr, int worker_id) {
-    int n = atomic_load(&hdr->n_tasks);
-
+static int taskq_claim_one(shard_taskq_header_t *hdr, int worker_id, int n) {
     for (;;) {
         int i = atomic_fetch_add(&hdr->claim_cursor, 1);
         if (i >= n) {
@@ -224,7 +246,8 @@ SEXP C_shard_taskq_claim(SEXP seg_ptr, SEXP worker_id_) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    return ScalarInteger(taskq_claim_one(hdr, worker_id));
+    int n = taskq_checked_n(seg, hdr);
+    return ScalarInteger(taskq_claim_one(hdr, worker_id, n));
 #else
     /* Fallback: no atomics => no true shm_queue mode (taskq_supported()
      * returns FALSE and the R layer never dispatches via shm_queue). */
@@ -249,13 +272,13 @@ SEXP C_shard_taskq_claim_range(SEXP seg_ptr, SEXP worker_id_, SEXP max_tasks_) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    int n = atomic_load(&hdr->n_tasks);
+    int n = taskq_checked_n(seg, hdr);
     if (k > n) k = n;
 
     SEXP ids = PROTECT(allocVector(INTSXP, k));
     int m = 0;
     while (m < k) {
-        int id = taskq_claim_one(hdr, worker_id);
+        int id = taskq_claim_one(hdr, worker_id, n);
         if (id == 0) break;
         INTEGER(ids)[m++] = id;
     }
@@ -281,7 +304,7 @@ SEXP C_shard_taskq_mark_done(SEXP seg_ptr, SEXP task_id_) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    int n = atomic_load(&hdr->n_tasks);
+    int n = taskq_checked_n(seg, hdr);
     if (task_id > n) error("task_id out of range");
     int idx = task_id - 1;
     atomic_store(&hdr->tasks[idx].state, SHARD_TASKQ_DONE);
@@ -304,7 +327,7 @@ SEXP C_shard_taskq_mark_error(SEXP seg_ptr, SEXP task_id_, SEXP max_retries_) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    int n = atomic_load(&hdr->n_tasks);
+    int n = taskq_checked_n(seg, hdr);
     if (task_id > n) error("task_id out of range");
     int idx = task_id - 1;
 
@@ -334,7 +357,7 @@ SEXP C_shard_taskq_reset_claims(SEXP seg_ptr, SEXP worker_id_) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    int n = atomic_load(&hdr->n_tasks);
+    int n = taskq_checked_n(seg, hdr);
     int reset = 0;
     for (int i = 0; i < n; i++) {
         int st = atomic_load(&hdr->tasks[i].state);
@@ -356,7 +379,7 @@ SEXP C_shard_taskq_stats(SEXP seg_ptr) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    int n = atomic_load(&hdr->n_tasks);
+    int n = taskq_checked_n(seg, hdr);
     int done = atomic_load(&hdr->done_count);
     int failed = atomic_load(&hdr->failed_count);
     int retries = atomic_load(&hdr->retry_total);
@@ -397,7 +420,7 @@ SEXP C_shard_taskq_failures(SEXP seg_ptr) {
     shard_taskq_header_t *hdr = hdr_from_seg(seg);
 
 #if SHARD_HAVE_ATOMICS
-    int n = atomic_load(&hdr->n_tasks);
+    int n = taskq_checked_n(seg, hdr);
     /* Count failures */
     int nf = 0;
     for (int i = 0; i < n; i++) {

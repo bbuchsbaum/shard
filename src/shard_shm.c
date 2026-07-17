@@ -44,8 +44,10 @@
 /* Maximum path length for temp files */
 #define SHARD_MAX_PATH 4096
 
-/* Prefix for temporary shared memory segments */
-#define SHARD_SHM_PREFIX "/shard_"
+/* Prefix for POSIX shm object names. Kept short: the whole name (INCLUDING
+ * this leading-slash prefix) must fit within PSHMNAMLEN, which is only 31 on
+ * Darwin. See shard_shm_name() for the compact hex encoding. */
+#define SHARD_SHM_PREFIX "/shd"
 
 /* Simple counter for unique IDs (thread-safe not needed for R) */
 static unsigned int shard_counter = 0;
@@ -160,8 +162,22 @@ static char *shard_shm_name(void) {
     char *name = (char *)malloc(256);
     if (!name) return NULL;
 
-    snprintf(name, 256, "%s%d_%lld_%d",
-             SHARD_SHM_PREFIX, (int)getpid(), (long long)time(NULL), shard_unique_id());
+    /*
+     * POSIX shm object names must fit within PSHMNAMLEN (only 31 on Darwin),
+     * INCLUDING the leading slash. The old decimal "/shard_<pid>_<time>_<ctr>"
+     * form ran ~34 chars (10-digit epoch + a counter seeded from time), so
+     * shm_open() always failed with ENAMETOOLONG on macOS. Encode pid/time/
+     * counter in hex to stay within the limit while preserving uniqueness:
+     * the pid makes the name unique per live process and the monotonic counter
+     * makes it unique across rapid successive calls within a process. Worst
+     * case (all fields a full 32-bit hex): "/shd" + 8 + "_" + 8 + "_" + 8 = 30
+     * characters, safely <= 31 on every platform.
+     */
+    snprintf(name, 256, "%s%x_%x_%x",
+             SHARD_SHM_PREFIX,
+             (unsigned int)getpid(),
+             (unsigned int)time(NULL),
+             (unsigned int)shard_unique_id());
     return name;
 }
 
@@ -792,7 +808,8 @@ int shard_segment_write(shard_segment_t *seg, const void *data, size_t offset,
                         size_t size) {
     if (!seg || !seg->addr || !data) return -1;
     if (seg->readonly) return -1;
-    if (offset + size > seg->size) return -1;
+    /* Overflow-safe bounds check: offset + size can wrap size_t. */
+    if (offset > seg->size || size > seg->size - offset) return -1;
 
     memcpy((char *)seg->addr + offset, data, size);
     return 0;
@@ -841,6 +858,20 @@ static size_t shard_segment_index_offset(shard_segment_t *seg, SEXP idx,
 }
 
 /*
+ * Validate an R-supplied byte offset/length (arriving as a double) before
+ * casting to size_t. A negative value wraps to a huge size_t, and a
+ * non-finite or out-of-range value is undefined on cast; either would defeat
+ * the downstream bounds checks and drive out-of-bounds access. `what` names
+ * the argument for the error message.
+ */
+static size_t shard_checked_byte_arg(double d, const char *what) {
+    if (!R_FINITE(d) || d < 0 || d > (double)SIZE_MAX) {
+        error("%s must be a finite, non-negative byte count within range", what);
+    }
+    return (size_t)d;
+}
+
+/*
  * R interface functions
  */
 
@@ -878,7 +909,7 @@ SEXP shard_segment_wrap_xptr(shard_segment_t *seg) {
 /* Create segment and return external pointer */
 SEXP C_shard_segment_create(SEXP size, SEXP backing, SEXP path, SEXP readonly) {
     double dsize = REAL(size)[0];
-    if (dsize <= 0 || dsize > (double)SIZE_MAX) {
+    if (!R_FINITE(dsize) || dsize <= 0 || dsize > (double)SIZE_MAX) {
         error("Invalid size");
     }
 
@@ -958,7 +989,7 @@ SEXP C_shard_segment_write_raw(SEXP seg_ptr, SEXP data, SEXP offset) {
     if (!seg) error("Invalid segment");
     if (seg->readonly) error("Segment is read-only");
 
-    size_t off = (size_t)REAL(offset)[0];
+    size_t off = shard_checked_byte_arg(REAL(offset)[0], "offset");
     /* Use XLENGTH: LENGTH() truncates (or errors) for long vectors (> 2^31-1
      * elements), which are exactly the workload shared segments target. */
     size_t len = (size_t)XLENGTH(data);
@@ -994,10 +1025,11 @@ SEXP C_shard_segment_read_raw(SEXP seg_ptr, SEXP offset, SEXP size) {
     shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(seg_ptr);
     if (!seg) error("Invalid segment");
 
-    size_t off = (size_t)REAL(offset)[0];
-    size_t len = (size_t)REAL(size)[0];
+    size_t off = shard_checked_byte_arg(REAL(offset)[0], "offset");
+    size_t len = shard_checked_byte_arg(REAL(size)[0], "size");
 
-    if (off + len > seg->size) {
+    /* Overflow-safe bounds check: off + len can wrap size_t. */
+    if (off > seg->size || len > seg->size - off) {
         error("Read exceeds segment bounds");
     }
 
@@ -1008,7 +1040,14 @@ SEXP C_shard_segment_read_raw(SEXP seg_ptr, SEXP offset, SEXP size) {
     return result;
 }
 
-/* Gather typed elements at 1-based indices from a segment. */
+/* Gather typed elements at 1-based indices from a segment.
+ *
+ * Each index is validated exactly once (shard_segment_index_offset both
+ * bounds-checks and computes the byte offset), and the type dispatch is
+ * hoisted out of the per-element loop: one typed loop per branch instead of
+ * a switch per element. shard_segment_type_size() has already rejected any
+ * unsupported type, so the SEXP type passed to allocVector is always valid.
+ */
 SEXP C_shard_segment_gather_read(SEXP seg_ptr, SEXP idx, SEXP type) {
     shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(seg_ptr);
     if (!seg || !seg->addr) error("Invalid segment");
@@ -1017,31 +1056,44 @@ SEXP C_shard_segment_gather_read(SEXP seg_ptr, SEXP idx, SEXP type) {
     size_t elem_size = shard_segment_type_size(sexp_type);
     R_xlen_t nidx = XLENGTH(idx);
 
-    for (R_xlen_t k = 0; k < nidx; k++) {
-        (void)shard_segment_index_offset(seg, idx, k, elem_size);
-    }
-
     SEXP result = PROTECT(allocVector(sexp_type, nidx));
-    char *base = (char *)seg->addr;
+    const char *base = (const char *)seg->addr;
 
-    for (R_xlen_t k = 0; k < nidx; k++) {
-        size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
-        switch (sexp_type) {
-            case REALSXP:
-                memcpy(&REAL(result)[k], base + off, sizeof(double));
-                break;
-            case INTSXP:
-                memcpy(&INTEGER(result)[k], base + off, sizeof(int));
-                break;
-            case LGLSXP:
-                memcpy(&LOGICAL(result)[k], base + off, sizeof(int));
-                break;
-            case RAWSXP:
-                memcpy(&RAW(result)[k], base + off, sizeof(Rbyte));
-                break;
-            default:
-                error("Unsupported buffer type");
+    switch (sexp_type) {
+        case REALSXP: {
+            double *out = REAL(result);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(&out[k], base + off, sizeof(double));
+            }
+            break;
         }
+        case INTSXP: {
+            int *out = INTEGER(result);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(&out[k], base + off, sizeof(int));
+            }
+            break;
+        }
+        case LGLSXP: {
+            int *out = LOGICAL(result);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(&out[k], base + off, sizeof(int));
+            }
+            break;
+        }
+        case RAWSXP: {
+            Rbyte *out = RAW(result);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(&out[k], base + off, sizeof(Rbyte));
+            }
+            break;
+        }
+        default:
+            error("Unsupported buffer type");
     }
 
     UNPROTECT(1);
@@ -1063,32 +1115,100 @@ SEXP C_shard_segment_scatter_write(SEXP seg_ptr, SEXP idx, SEXP values, SEXP typ
         error("values length must match idx length");
     }
 
-    for (R_xlen_t k = 0; k < nidx; k++) {
-        (void)shard_segment_index_offset(seg, idx, k, elem_size);
-    }
-
+    /* One typed loop per branch; each index validated once (index_offset
+     * bounds-checks and computes the byte offset in a single pass). */
     char *base = (char *)seg->addr;
-    for (R_xlen_t k = 0; k < nidx; k++) {
-        size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
-        switch (sexp_type) {
-            case REALSXP:
-                memcpy(base + off, &REAL(values)[k], sizeof(double));
-                break;
-            case INTSXP:
-                memcpy(base + off, &INTEGER(values)[k], sizeof(int));
-                break;
-            case LGLSXP:
-                memcpy(base + off, &LOGICAL(values)[k], sizeof(int));
-                break;
-            case RAWSXP:
-                memcpy(base + off, &RAW(values)[k], sizeof(Rbyte));
-                break;
-            default:
-                error("Unsupported buffer type");
+    switch (sexp_type) {
+        case REALSXP: {
+            const double *in = REAL(values);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(base + off, &in[k], sizeof(double));
+            }
+            break;
         }
+        case INTSXP: {
+            const int *in = INTEGER(values);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(base + off, &in[k], sizeof(int));
+            }
+            break;
+        }
+        case LGLSXP: {
+            const int *in = LOGICAL(values);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(base + off, &in[k], sizeof(int));
+            }
+            break;
+        }
+        case RAWSXP: {
+            const Rbyte *in = RAW(values);
+            for (R_xlen_t k = 0; k < nidx; k++) {
+                size_t off = shard_segment_index_offset(seg, idx, k, elem_size);
+                memcpy(base + off, &in[k], sizeof(Rbyte));
+            }
+            break;
+        }
+        default:
+            error("Unsupported buffer type");
     }
 
     return ScalarReal((double)nidx * (double)elem_size);
+}
+
+/*
+ * Typed contiguous range read: copy n_elems values of the requested type,
+ * starting at a byte offset, directly from the mapped segment into a fresh R
+ * vector. This backs a zero-intermediate-copy buffer read from R (no raw
+ * staging vector + readBin round trip). Logical values are stored as 4-byte
+ * ints, mirroring C_shard_segment_gather_read.
+ *
+ * @param seg_ptr  segment external pointer
+ * @param offset   byte offset into the segment (REALSXP scalar, >= 0)
+ * @param n_elems  element count (REALSXP scalar, >= 0)
+ * @param type     one of "double", "integer", "logical", "raw" (STRSXP scalar)
+ */
+SEXP C_shard_segment_read_range(SEXP seg_ptr, SEXP offset, SEXP n_elems, SEXP type) {
+    shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(seg_ptr);
+    if (!seg || !seg->addr) error("Invalid segment");
+
+    if (TYPEOF(type) != STRSXP || XLENGTH(type) < 1) {
+        error("type must be a character scalar");
+    }
+    const char *type_str = CHAR(STRING_ELT(type, 0));
+    int sexp_type;
+    if (strcmp(type_str, "double") == 0) sexp_type = REALSXP;
+    else if (strcmp(type_str, "integer") == 0) sexp_type = INTSXP;
+    else if (strcmp(type_str, "logical") == 0) sexp_type = LGLSXP;
+    else if (strcmp(type_str, "raw") == 0) sexp_type = RAWSXP;
+    else error("Unsupported type: %s", type_str);
+
+    size_t elem_size = shard_segment_type_size(sexp_type);
+    size_t off = shard_checked_byte_arg(REAL(offset)[0], "offset");
+    size_t n = shard_checked_byte_arg(REAL(n_elems)[0], "n_elems");
+
+    /* Overflow-safe bounds: n * elem_size must fit in seg->size - off, without
+     * ever forming the (possibly wrapping) product n * elem_size. */
+    if (off > seg->size || n > (seg->size - off) / elem_size) {
+        error("Read range exceeds segment bounds");
+    }
+
+    SEXP result = PROTECT(allocVector(sexp_type, (R_xlen_t)n));
+    if (n > 0) {
+        void *dst;
+        switch (sexp_type) {
+            case REALSXP: dst = REAL(result); break;
+            case INTSXP:  dst = INTEGER(result); break;
+            case LGLSXP:  dst = LOGICAL(result); break;
+            case RAWSXP:  dst = RAW(result); break;
+            default:      dst = NULL; break; /* unreachable */
+        }
+        memcpy(dst, (const char *)seg->addr + off, n * elem_size);
+    }
+    UNPROTECT(1);
+    return result;
 }
 
 /* Make segment read-only */

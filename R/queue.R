@@ -20,21 +20,42 @@ queue_create <- function(chunks) {
     }
   }
 
+  n <- length(chunks)
   env <- new.env(parent = emptyenv())
+  # `pending` is consumed via the `head` cursor (claimed slots are NULLed out);
+  # it is never re-subset, so dequeue is O(1) instead of O(n) per chunk.
   env$pending <- chunks
+  env$head <- 1L
+  env$requeued <- list()  # retry overflow; small (failures only)
+  env$n_pending <- n
   env$in_flight <- list()
-  env$completed <- list()
+  # Completed chunks are stored by original position; `done` tracks which
+  # positions hold a completed chunk.
+  env$completed <- vector("list", n)
+  env$done <- logical(n)
+  env$n_completed <- 0L
   env$failed <- list()
   env$assignment <- list()  # chunk_id -> worker_id mapping
+  env$total_retries <- 0L
   env$order <- vapply(chunks, function(x) as.character(x$id), character(1))
+  pos <- new.env(parent = emptyenv(), hash = TRUE, size = max(n, 29L))
+  for (i in seq_len(n)) {
+    assign(env$order[[i]], i, envir = pos)
+  }
+  env$pos <- pos
 
   structure(
     list(
       env = env,
-      total = length(chunks)
+      total = n
     ),
     class = "shard_queue"
   )
+}
+
+# O(1) lookup of a chunk's storage position from its id.
+queue_pos_ <- function(env, chunk_id) {
+  get0(chunk_id, envir = env$pos, inherits = FALSE)
 }
 
 #' Get Next Chunk from Queue
@@ -47,12 +68,22 @@ queue_create <- function(chunks) {
 queue_next <- function(queue, worker_id) {
   env <- queue$env
 
-  if (length(env$pending) == 0) {
-    return(NULL)
+  chunk <- NULL
+  # Advance the cursor past claimed (NULLed) slots.
+  while (env$head <= length(env$pending)) {
+    chunk <- env$pending[[env$head]]
+    env$pending[env$head] <- list(NULL)
+    env$head <- env$head + 1L
+    if (!is.null(chunk)) break
   }
-
-  chunk <- env$pending[[1]]
-  env$pending <- env$pending[-1]
+  if (is.null(chunk)) {
+    if (length(env$requeued) == 0) {
+      return(NULL)
+    }
+    chunk <- env$requeued[[1L]]
+    env$requeued <- env$requeued[-1L]
+  }
+  env$n_pending <- env$n_pending - 1L
 
   # Track assignment
   chunk_id <- as.character(chunk$id)
@@ -64,24 +95,37 @@ queue_next <- function(queue, worker_id) {
 
 queue_next_where <- function(queue, worker_id, predicate = NULL) {
   env <- queue$env
-  if (length(env$pending) == 0) return(NULL)
+  if (env$n_pending == 0L) return(NULL)
   if (is.null(predicate)) return(queue_next(queue, worker_id))
   if (!is.function(predicate)) stop("predicate must be a function or NULL", call. = FALSE)
 
-  idx <- NA_integer_
-  for (i in seq_along(env$pending)) {
-    ch <- env$pending[[i]]
-    ok <- FALSE
-    ok <- tryCatch(isTRUE(predicate(ch)), error = function(e) FALSE)
-    if (ok) {
-      idx <- i
-      break
+  chunk <- NULL
+  if (env$head <= length(env$pending)) {
+    for (i in env$head:length(env$pending)) {
+      ch <- env$pending[[i]]
+      if (is.null(ch)) next
+      ok <- tryCatch(isTRUE(predicate(ch)), error = function(e) FALSE)
+      if (ok) {
+        chunk <- ch
+        env$pending[i] <- list(NULL)
+        if (i == env$head) env$head <- env$head + 1L
+        break
+      }
     }
   }
-  if (is.na(idx)) return(NULL)
-
-  chunk <- env$pending[[idx]]
-  env$pending <- env$pending[-idx]
+  if (is.null(chunk) && length(env$requeued) > 0) {
+    for (i in seq_along(env$requeued)) {
+      ch <- env$requeued[[i]]
+      ok <- tryCatch(isTRUE(predicate(ch)), error = function(e) FALSE)
+      if (ok) {
+        chunk <- ch
+        env$requeued <- env$requeued[-i]
+        break
+      }
+    }
+  }
+  if (is.null(chunk)) return(NULL)
+  env$n_pending <- env$n_pending - 1L
 
   chunk_id <- as.character(chunk$id)
   env$in_flight[[chunk_id]] <- chunk
@@ -103,19 +147,24 @@ queue_complete <- function(queue, chunk_id, result = NULL, retain = TRUE) {
 
   if (!is.null(env$in_flight[[chunk_id]])) {
     chunk <- env$in_flight[[chunk_id]]
+    pos <- queue_pos_(env, chunk_id)
     if (isTRUE(retain)) {
       chunk$result <- result
       chunk$completed_at <- Sys.time()
-      env$completed[[chunk_id]] <- chunk
+      env$completed[[pos]] <- chunk
     } else {
       # Keep only minimal completion metadata to avoid retaining large shard lists
       # when callers are doing streaming reductions.
-      env$completed[[chunk_id]] <- list(
+      env$completed[[pos]] <- list(
         id = chunk$id,
         completed_at = Sys.time(),
         retry_count = chunk$retry_count %||% 0L,
         result = result
       )
+    }
+    if (!env$done[[pos]]) {
+      env$done[[pos]] <- TRUE
+      env$n_completed <- env$n_completed + 1L
     }
     env$in_flight[[chunk_id]] <- NULL
     env$assignment[[chunk_id]] <- NULL
@@ -148,10 +197,12 @@ queue_fail <- function(queue, chunk_id, error = NULL, requeue = TRUE) {
   # Track retry count
   chunk$retry_count <- (chunk$retry_count %||% 0L) + 1L
   chunk$last_error <- error
+  env$total_retries <- env$total_retries + 1L
 
   if (requeue) {
-    # Put back in pending queue for retry
-    env$pending <- c(env$pending, list(chunk))
+    # Put back in the (small) retry overflow queue
+    env$requeued[[length(env$requeued) + 1L]] <- chunk
+    env$n_pending <- env$n_pending + 1L
   } else {
     # Mark as permanently failed
     chunk$failed_at <- Sys.time()
@@ -193,7 +244,7 @@ queue_requeue_worker <- function(queue, worker_id) {
 #' @noRd
 queue_is_done <- function(queue) {
   env <- queue$env
-  length(env$pending) == 0 && length(env$in_flight) == 0
+  env$n_pending == 0L && length(env$in_flight) == 0
 }
 
 #' Check if Queue Has Work
@@ -203,7 +254,7 @@ queue_is_done <- function(queue) {
 #' @keywords internal
 #' @noRd
 queue_has_pending <- function(queue) {
-  length(queue$env$pending) > 0
+  queue$env$n_pending > 0L
 }
 
 #' Get Queue Status
@@ -215,20 +266,13 @@ queue_has_pending <- function(queue) {
 queue_status <- function(queue) {
   env <- queue$env
 
-  # Count retries
-  total_retries <- sum(vapply(
-    c(env$completed, env$pending, env$in_flight, env$failed),
-    function(x) x$retry_count %||% 0L,
-    integer(1)
-  ))
-
   list(
     total = queue$total,
-    pending = length(env$pending),
+    pending = env$n_pending,
     in_flight = length(env$in_flight),
-    completed = length(env$completed),
+    completed = env$n_completed,
     failed = length(env$failed),
-    total_retries = total_retries
+    total_retries = env$total_retries
   )
 }
 
@@ -240,17 +284,17 @@ queue_status <- function(queue) {
 #' @noRd
 queue_results <- function(queue) {
   env <- queue$env
-  completed <- env$completed
-  ids <- names(completed)
-  if (length(ids) == 0) return(list())
+  if (env$n_completed == 0L) return(list())
 
-  # Prefer numeric id ordering for predictable, lapply/sapply-like behavior.
+  completed <- env$completed[env$done]
+  ids <- env$order[env$done]
+  names(completed) <- ids
+
+  # Prefer numeric id ordering for predictable, lapply/sapply-like behavior;
+  # storage order is creation order, which matches for default integer ids.
   num_ids <- suppressWarnings(as.integer(ids))
-  if (!anyNA(num_ids)) {
+  if (!anyNA(num_ids) && is.unsorted(num_ids)) {
     completed <- completed[order(num_ids)]
-  } else if (!is.null(env$order)) {
-    ord_ids <- intersect(env$order, ids)
-    completed <- completed[ord_ids]
   }
 
   lapply(completed, function(x) x$result)

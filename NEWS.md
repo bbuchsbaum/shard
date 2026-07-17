@@ -1,8 +1,9 @@
 # shard 0.2.0
 
-Internal performance and correctness refactor (Phases 1–5). No user-facing API
-was added or removed; all changes improve the behavior, speed, or robustness of
-the existing runtime.
+Internal performance and correctness refactor. No user-facing API was removed;
+apart from a new `path=` argument to `as_shared()` and the deprecation of the
+unused `pool_create(heartbeat_interval=)`, all changes improve the behavior,
+speed, or robustness of the existing runtime.
 
 ## Performance
 
@@ -18,6 +19,21 @@ the existing runtime.
 * Buffer sparse (non-contiguous) reads and writes use typed C gather/scatter
   instead of a full read-modify-write, while bulk contiguous sub-block writes
   keep their fast path.
+* Contiguous buffer reads (`buf[]`, `as.vector(buf)`, per-shard slice reads)
+  now use a single typed C read instead of a raw intermediate plus `readBin()`,
+  halving allocation and copy volume when materializing results.
+* Master-side chunk-queue management is O(1) per chunk (cursor-based dequeue,
+  preallocated completion storage); completed chunks retain only minimal
+  metadata by default, releasing shard descriptors as the run progresses.
+* Worker liveness probes reuse a `ps` handle cached at spawn time (also more
+  robust against PID reuse) instead of creating one per check per poll tick.
+* Buffer index validation and contiguity detection are allocation-free and
+  preserve ALTREP-compact index ranges.
+* Indexing a buffer with 3 or more dimensions now gathers/scatters only the
+  selection instead of materializing the whole buffer; array assignment no
+  longer breaks the lock-free disjoint parallel-write guarantee.
+* The online autotuner and `stream_map()` no longer grow result lists
+  incrementally across phases/partitions.
 
 ## Reproducibility and correctness
 
@@ -37,6 +53,28 @@ the existing runtime.
   corrected automatic chunking and `init` semantics.
 * Worker recycling replays a bootstrap manifest so borrowed inputs and outputs
   are correctly re-exported to restarted workers.
+* Fixed an integer overflow that broke `share()` for atomic vectors over 2GB
+  (about 269 million doubles).
+* Fixed `shard_reduce()` receiving a stale output-buffer handle when run after
+  `shard_map()` on the same pool with a same-named `out=` buffer.
+* C layer hardening: shared-memory offset/length validation is overflow-safe
+  (negative or non-finite values now error cleanly instead of reading or
+  writing out of bounds), freshly created ALTREP objects are protected from
+  garbage collection during construction, shard ALTREP methods no longer
+  misidentify other packages' ALTREP objects, and the shared task queue
+  validates its header before use.
+* `table_write()` validates `shard_id`, so an NA id can no longer produce a
+  part file that `table_finalize()` silently drops.
+* Fixed `row_layout()` erroring when a trailing shard has zero rows, and
+  `shard_crossprod()` failing on matrices with fewer than 8 columns.
+* Worker liveness detection no longer reports dead workers as alive on systems
+  without the `ps` package.
+* On macOS, the `"shm"` backing now works: generated segment names previously
+  exceeded the Darwin name-length limit, so `shm_open()` always failed.
+* `shard_map(health_check_interval=)` is honoured when supplied explicitly
+  (profile presets no longer override it), and `share(name=)` now applies to
+  fast-path atomic shares. `pool_create(heartbeat_interval=)` is deprecated:
+  it was never consulted (health checks are per-chunk, not time-based).
 
 ## Autotuning and configuration
 
@@ -50,6 +88,14 @@ the existing runtime.
 
 * Substantially expanded unit-test coverage of buffers, views, tables, kernels,
   and internal helpers.
+
+# shard 0.1.1
+
+* Fixed a gcc-UBSAN report: the task-queue header used a C89 `tasks[1]`
+  trailing-array idiom; changed to a C99 flexible array member.
+* Default worker counts now respect `_R_CHECK_LIMIT_CORES_` and are capped at
+  2 during `R CMD check`, at all call sites (`pool_create()`, `shard_map()`,
+  `shards()`, `shard_reduce()`).
 
 # shard 0.1.0
 

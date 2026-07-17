@@ -132,7 +132,9 @@ shards_list <- function(idxs) {
 
   structure(
     list(
-      n = length(shards),
+      # n is the total item count (matching shards()), not the shard count;
+      # print()/callers report it as "Items". num_shards holds the shard count.
+      n = sum(vapply(shards, function(s) s$len, integer(1))),
       block_size = NA_integer_,
       strategy = "list",
       num_shards = length(shards),

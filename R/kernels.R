@@ -114,6 +114,12 @@ shard_crossprod <- function(X,
   cand_x <- cand_x[cand_x <= p]
   cand_y <- cand_y[cand_y <= v]
 
+  # For matrices narrower than the smallest candidate (e.g. p < 8), the filter
+  # empties the vector and max(integer(0)) -> -Inf downstream. Always keep at
+  # least one candidate clamped to the actual number of columns.
+  if (length(cand_x) == 0L) cand_x <- as.integer(p)
+  if (length(cand_y) == 0L) cand_y <- as.integer(v)
+
   if (!identical(block_x, "auto")) cand_x <- as.integer(block_x)
   if (!identical(block_y, "auto")) cand_y <- as.integer(block_y)
 

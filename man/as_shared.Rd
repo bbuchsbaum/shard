@@ -4,7 +4,7 @@
 \alias{as_shared}
 \title{Create a shared vector from an existing R vector}
 \usage{
-as_shared(x, readonly = TRUE, backing = "auto", cow = NULL)
+as_shared(x, readonly = TRUE, backing = "auto", cow = NULL, path = NULL)
 }
 \arguments{
 \item{x}{An atomic vector (integer, double, logical, or raw)}
@@ -15,6 +15,11 @@ as_shared(x, readonly = TRUE, backing = "auto", cow = NULL)
 
 \item{cow}{Copy-on-write policy for the resulting shared vector. One of
 \code{"deny"}, \code{"audit"}, or \code{"allow"}. If NULL, defaults based on \code{readonly}.}
+
+\item{path}{Optional path (mmap backing) or name (shm backing) for the
+underlying segment. When \code{NULL} (default) an anonymous temporary segment
+is created; when supplied, the segment is created with that name so it can
+be reopened via \code{\link[=segment_open]{segment_open()}} in other processes.}
 }
 \value{
 An ALTREP vector backed by shared memory

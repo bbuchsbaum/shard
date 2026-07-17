@@ -23,6 +23,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"C_shard_segment_read_raw",  (DL_FUNC) &C_shard_segment_read_raw,  3},
     {"C_shard_segment_gather_read",(DL_FUNC) &C_shard_segment_gather_read,3},
     {"C_shard_segment_scatter_write",(DL_FUNC) &C_shard_segment_scatter_write,4},
+    {"C_shard_segment_read_range",(DL_FUNC) &C_shard_segment_read_range,4},
     {"C_shard_segment_protect",   (DL_FUNC) &C_shard_segment_protect,   1},
     {"C_shard_segment_info",      (DL_FUNC) &C_shard_segment_info,      1},
     {"C_shard_is_windows",        (DL_FUNC) &C_shard_is_windows,        0},

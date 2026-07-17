@@ -15,7 +15,7 @@ dispatch_chunks(
   scheduler_policy = NULL,
   on_result = NULL,
   store_results = TRUE,
-  retain_chunks = TRUE,
+  retain_chunks = FALSE,
   diagnostics = TRUE
 )
 }
@@ -46,8 +46,11 @@ chunk completion. Used by \code{\link[=shard_reduce]{shard_reduce()}} to stream 
 \item{store_results}{Logical (advanced). If FALSE, successful chunk values are
 not retained in the returned \code{results} list (streaming use cases).}
 
-\item{retain_chunks}{Logical (advanced). If FALSE, completed chunk descriptors
-are stored minimally (avoids retaining large shard lists in memory).}
+\item{retain_chunks}{Logical (advanced). If FALSE (the default), completed
+chunk descriptors are stored minimally (id, retry count, result), avoiding
+a second copy of large shard lists held until the run ends. Set to TRUE to
+retain full chunk descriptors alongside results. Failed chunks are always
+retained in full.}
 
 \item{diagnostics}{Logical. Collect per-chunk worker diagnostics (view/
 buffer/table/scratch deltas) and aggregate them on the master (default

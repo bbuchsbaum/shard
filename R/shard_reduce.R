@@ -210,8 +210,12 @@ shard_reduce <- function(shards,
 
   on_partial <- function(tag, value, worker_id) {
     partial_count <<- partial_count + 1L
-    bs <- tryCatch(as.double(utils::object.size(value)), error = function(e) 0)
-    if (is.finite(bs) && bs > partial_bytes_max) partial_bytes_max <<- bs
+    # object.size() walks the whole partial; only pay for it when the size is
+    # actually reported (diagnostics). partial_bytes_max is unused otherwise.
+    if (diagnostics) {
+      bs <- tryCatch(as.double(utils::object.size(value)), error = function(e) 0)
+      if (is.finite(bs) && bs > partial_bytes_max) partial_bytes_max <<- bs
+    }
 
     id <- suppressWarnings(as.integer(tag))
     if (is.na(id)) {
@@ -328,51 +332,13 @@ make_chunk_reducer_ <- function(map_fun, combine_fun) {
       list()
     }
 
-    out <- list()
-    if (length(out_desc) > 0) {
-      if (!exists(".shard_out_opened", envir = .shard_worker_env, inherits = FALSE)) {
-        assign(".shard_out_opened", new.env(parent = emptyenv()), envir = .shard_worker_env)
-      }
-      opened <- get(".shard_out_opened", envir = .shard_worker_env)
-      for (nm in names(out_desc)) {
-        if (!exists(nm, envir = opened, inherits = FALSE)) {
-          d <- out_desc[[nm]]
-          if (is.null(d$kind) || identical(d$kind, "buffer")) {
-            opened[[nm]] <- buffer_open(
-              path = d$path,
-              type = d$type,
-              dim = d$dim,
-              backing = d$backing,
-              readonly = FALSE
-            )
-          } else if (identical(d$kind, "table_buffer")) {
-            cols <- list()
-            for (cn in names(d$columns)) {
-              cd <- d$columns[[cn]]
-              cols[[cn]] <- buffer_open(
-                path = cd$path,
-                type = cd$type,
-                dim = cd$dim,
-                backing = cd$backing,
-                readonly = FALSE
-              )
-            }
-            opened[[nm]] <- structure(
-              list(schema = d$schema, nrow = as.integer(d$nrow), backing = d$backing, columns = cols),
-              class = "shard_table_buffer"
-            )
-          } else if (identical(d$kind, "table_sink")) {
-            opened[[nm]] <- structure(
-              list(schema = d$schema, mode = d$mode, path = d$path, format = d$format),
-              class = "shard_table_sink"
-            )
-          } else {
-            stop("Unsupported out descriptor kind: ", d$kind, call. = FALSE)
-          }
-        }
-        out[[nm]] <- opened[[nm]]
-      }
-    }
+    # Open (and per-worker cache) the output handles via the canonical opener
+    # shared with the shm_queue dispatch path. A previous drifted copy here
+    # cached raw handles under the same `.shard_out_opened` key that
+    # shard_map's executor fills with `list(key=, obj=)` wrappers; after a
+    # shard_map run on the same pool the reducer then received the wrapper
+    # instead of the buffer (key-invalidation-free, cross-mode collision).
+    out <- open_out_from_desc_(out_desc)
 
     borrow_names <- chunk$borrow_names
     out_names <- chunk$out_names
