@@ -25,9 +25,13 @@ test_that("pin_workers runs the pinning loop when affinity is supported", {
   on.exit(pool_stop(), add = TRUE)
 
   testthat::local_mocked_bindings(affinity_supported = function() TRUE, .package = "shard")
+  testthat::local_mocked_bindings(
+    detectCores = function(...) NA_integer_,
+    .package = "parallel"
+  )
 
-  # cores = NULL exercises the detectCores() branch; set_affinity() may return
-  # FALSE on unsupported platforms, but the loop and clusterCall path still run.
+  # cores = NULL exercises the detectCores() fallback; set_affinity() may
+  # return FALSE on unsupported platforms, but the loop still runs.
   ok_spread <- pin_workers(strategy = "spread")
   expect_type(ok_spread, "logical")
   expect_length(ok_spread, 1L)

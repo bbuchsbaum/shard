@@ -19,7 +19,9 @@ test_that(".buffer_is_zero_init classifies init values per type", {
 })
 
 test_that("buffer_open rejects a size mismatch", {
-  buf <- buffer("double", dim = 8)
+  # Use a fixed backing so the path is reopened with the same mechanism on
+  # every platform.  "auto" resolves to POSIX shm on Linux but mmap on macOS.
+  buf <- buffer("double", dim = 8, backing = "mmap")
   on.exit(buffer_close(buf), add = TRUE)
   path <- buffer_path(buf)
   skip_if(is.null(path))

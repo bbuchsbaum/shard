@@ -61,8 +61,11 @@ pin_workers <- function(pool = NULL,
   }
 
   if (is.null(cores)) {
-    ncores <- parallel::detectCores()
-    cores <- seq.int(0L, as.integer(ncores) - 1L)
+    ncores <- as.integer(parallel::detectCores())
+    if (length(ncores) != 1L || is.na(ncores) || ncores < 1L) {
+      ncores <- 1L
+    }
+    cores <- seq.int(0L, ncores - 1L)
   }
   cores <- as.integer(cores)
   cores <- cores[!is.na(cores)]
