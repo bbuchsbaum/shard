@@ -32,7 +32,7 @@ res <- shard_reduce(4L, map = function(s) sum(s$idx),
 pool_stop()
 print(res)
 #> shard_reduce result
-#>   Duration: 1.33 seconds 
+#>   Duration: 1.28 seconds 
 #>   Partials: 4 
 #>   Partial max bytes: 56 B 
 # }
