@@ -47,6 +47,11 @@ print.shard_shared_vector <- function(x, ...) {
 `[<-.shard_shared_vector` <- function(x, ..., value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
 
+    # This call identifies a real mutation. A generic ALTREP writable-DATAPTR
+    # request cannot do that because range(), which.max(), and relational
+    # operators also request writable pointers while only reading.
+    x <- .Call("C_shard_altrep_prepare_write", x, PACKAGE = "shard")
+
     # NextMethod() is unreliable for primitive replacement functions when the
     # object only has a single custom class. Temporarily drop the class to force
     # base replacement semantics (while keeping shard_* attributes).
@@ -69,6 +74,7 @@ print.shard_shared_vector <- function(x, ...) {
 #' @export
 `[[<-.shard_shared_vector` <- function(x, ..., value) {
     if (identical(.shard_cow_policy(x), "deny")) .shard_stop_cow_deny()
+    x <- .Call("C_shard_altrep_prepare_write", x, PACKAGE = "shard")
     cls <- class(x)
     class(x) <- NULL
     x <- .Primitive("[[<-")(x, ..., value = value)

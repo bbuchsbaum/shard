@@ -65,6 +65,22 @@ pool_create <- function(n = .default_workers(),
 
   rss_limit_bytes <- parse_bytes(rss_limit)
 
+  # Both feed `if (exceeds_limit || exceeds_drift)` in pool_health_check();
+  # an NA here would abort the health check, and with it the dispatch that
+  # calls it.
+  # Type matters as much as NA-ness: a character threshold would turn the
+  # comparison into a string comparison rather than erroring.
+  if (!is.numeric(rss_limit_bytes) || length(rss_limit_bytes) != 1L ||
+        is.na(rss_limit_bytes)) {
+    stop("pool_create(): 'rss_limit' must be a single non-NA numeric value ",
+         "or a size string such as \"2GB\"", call. = FALSE)
+  }
+  if (!is.numeric(rss_drift_threshold) || length(rss_drift_threshold) != 1L ||
+        is.na(rss_drift_threshold)) {
+    stop("pool_create(): 'rss_drift_threshold' must be a single non-NA ",
+         "numeric value", call. = FALSE)
+  }
+
   # Stop existing pool if any
   if (!is.null(.pool_env$pool)) {
     pool_stop()
@@ -368,6 +384,27 @@ pool_health_check <- function(pool = NULL, busy_workers = NULL) {
       current_rss <- worker_rss(w)
       baseline <- w$rss_baseline %||% current_rss
 
+      if (is.na(current_rss)) {
+        # The RSS read can come back NA when the worker exits between the
+        # liveness probe above and this call, or when the platform reader
+        # fails. There is nothing to judge drift against, so leave the worker
+        # alone; if it really is gone, the next tick's liveness check restarts
+        # it. Comparing NA here would abort the whole health check.
+        w$needs_recycle <- isTRUE(w$needs_recycle)
+        pool$workers[[i]] <- w
+        action$reason <- "rss_unavailable"
+        actions[[i]] <- action
+        next
+      }
+
+      if (is.na(baseline)) {
+        # The baseline is captured with the same reader at spawn/recycle, so
+        # it can be NA even when the current reading succeeds. Adopt the
+        # current value instead of propagating NA into the comparison.
+        baseline <- current_rss
+        w$rss_baseline <- current_rss
+      }
+
       drift <- (current_rss - baseline) / max(baseline, 1)
       exceeds_limit <- current_rss > pool$rss_limit_bytes
       exceeds_drift <- drift > pool$rss_drift_threshold
@@ -574,14 +611,33 @@ print.shard_health_report <- function(x, ...) {
       ", tasks =", x$pool_stats$total_tasks, "\n")
 
   actions_summary <- vapply(x$worker_actions, function(a) a$action, character(1))
+  reasons <- vapply(
+    x$worker_actions,
+    function(a) a$reason %||% NA_character_,
+    character(1)
+  )
+  unreadable <- sum(!is.na(reasons) & reasons == "rss_unavailable")
+
   if (all(actions_summary == "none")) {
-    cat("All workers healthy\n")
+    if (unreadable > 0L) {
+      # Saying "healthy" here would overstate the check: memory was never
+      # successfully read for these workers, so no drift conclusion was drawn.
+      cat("No action taken; memory use unreadable for", unreadable,
+          if (unreadable == 1L) "worker\n" else "workers\n")
+    } else {
+      cat("All workers healthy\n")
+    }
   } else {
     cat("Actions taken:\n")
     for (a in x$worker_actions) {
       if (a$action != "none") {
         cat("  Worker", a$worker_id, ":", a$action, "(", a$reason, ")\n")
       }
+    }
+    if (unreadable > 0L) {
+      # Report this alongside actions too, not only when nothing happened.
+      cat("Memory use unreadable for", unreadable,
+          if (unreadable == 1L) "worker\n" else "workers\n")
     }
   }
   invisible(x)

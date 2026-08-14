@@ -11,6 +11,7 @@
  */
 
 #include "shard_shm.h"
+#include "shard_altrep.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -426,6 +427,10 @@ void shard_segment_close(shard_segment_t *seg, int unlink) {
     }
     registry_remove(seg);
 
+    /* The mapping is about to go away while ALTREP vectors may still hold
+     * resolved pointers into it. Drop those caches before unmapping. */
+    shard_altrep_invalidate_cached_ptrs();
+
     if (seg->addr) {
         UnmapViewOfFile(seg->addr);
         seg->addr = NULL;
@@ -458,17 +463,31 @@ void shard_segment_close(shard_segment_t *seg, int unlink) {
 
 int shard_segment_protect(shard_segment_t *seg) {
     if (!seg || !seg->addr) return -1;
+    if (seg->readonly) return 0;
 
     /*
-     * Change the protection of the mapped view to read-only, mirroring the
-     * mprotect(PROT_READ) semantics of the Unix implementation. This is
-     * valid for views created with MapViewOfFile: PAGE_READONLY is
-     * compatible with mappings created as PAGE_READWRITE.
+     * Replace the shared view with one writable FILE_MAP_COPY view. This is
+     * logically read-only to shard (segment_write() checks seg->readonly),
+     * but R's read-only algorithms may safely ask ALTREP for a writable
+     * pointer without forcing a complete R-vector copy. Dirty pages remain
+     * process-private and are never written back to the shared object.
      */
-    DWORD old_protect = 0;
-    if (!VirtualProtect(seg->addr, seg->size, PAGE_READONLY, &old_protect)) {
-        return -1;
+    void *private_addr = MapViewOfFile(seg->map_handle, FILE_MAP_COPY,
+                                       0, 0, seg->size);
+    if (private_addr) {
+        UnmapViewOfFile(seg->addr);
+        seg->addr = private_addr;
+        seg->private_cow = 1;
+        seg->readonly = 1;
+        shard_altrep_invalidate_cached_ptrs();
+        return 0;
     }
+
+    /* Conservative fallback on platforms/mapping handles that cannot make a
+     * copy view. ALTREP will use its full private-vector path in this case. */
+    DWORD old_protect = 0;
+    if (!VirtualProtect(seg->addr, seg->size, PAGE_READONLY, &old_protect)) return -1;
+    seg->private_cow = 0;
     seg->readonly = 1;
     return 0;
 }
@@ -747,6 +766,10 @@ void shard_segment_close(shard_segment_t *seg, int unlink_seg) {
     }
     registry_remove(seg);
 
+    /* The mapping is about to go away while ALTREP vectors may still hold
+     * resolved pointers into it. Drop those caches before unmapping. */
+    shard_altrep_invalidate_cached_ptrs();
+
     if (seg->addr && seg->addr != MAP_FAILED) {
         munmap(seg->addr, seg->size);
         seg->addr = NULL;
@@ -778,10 +801,26 @@ void shard_segment_close(shard_segment_t *seg, int unlink_seg) {
 
 int shard_segment_protect(shard_segment_t *seg) {
     if (!seg || !seg->addr) return -1;
+    if (seg->readonly) return 0;
 
-    if (mprotect(seg->addr, seg->size, PROT_READ) < 0) {
-        return -1;
+    /* Use one writable MAP_PRIVATE view rather than a second alias. Logical
+     * writes are still rejected by segment_write(), while read-only R code
+     * that requests writable DATAPTR keeps zero-copy/RSS behavior. */
+    void *private_addr = mmap(NULL, seg->size, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE, seg->fd, 0);
+    if (private_addr != MAP_FAILED) {
+        munmap(seg->addr, seg->size);
+        seg->addr = private_addr;
+        seg->private_cow = 1;
+        seg->readonly = 1;
+        shard_altrep_invalidate_cached_ptrs();
+        return 0;
     }
+
+    /* Conservative fallback: preserve the hard protection and let ALTREP
+     * materialize if a writable pointer is later requested. */
+    if (mprotect(seg->addr, seg->size, PROT_READ) < 0) return -1;
+    seg->private_cow = 0;
     seg->readonly = 1;
     return 0;
 }
@@ -950,6 +989,10 @@ SEXP C_shard_segment_close(SEXP seg_ptr, SEXP unlink) {
     if (seg) {
         shard_segment_close(seg, LOGICAL(unlink)[0]);
         R_ClearExternalPtr(seg_ptr);
+        /* Clearing the handle invalidates this segment for every ALTREP
+         * vector that resolves through it, even when other handles kept the
+         * mapping alive (refcount > 1). Re-resolution must be forced. */
+        shard_altrep_invalidate_cached_ptrs();
     }
 
     return R_NilValue;
@@ -987,34 +1030,30 @@ SEXP C_shard_segment_path(SEXP seg_ptr) {
 SEXP C_shard_segment_write_raw(SEXP seg_ptr, SEXP data, SEXP offset) {
     shard_segment_t *seg = (shard_segment_t *)R_ExternalPtrAddr(seg_ptr);
     if (!seg) error("Invalid segment");
+    if (!seg->addr) error("Segment is not mapped");
     if (seg->readonly) error("Segment is read-only");
 
     size_t off = shard_checked_byte_arg(REAL(offset)[0], "offset");
     /* Use XLENGTH: LENGTH() truncates (or errors) for long vectors (> 2^31-1
      * elements), which are exactly the workload shared segments target. */
     size_t len = (size_t)XLENGTH(data);
+    const void *src = NULL;
 
-    if (TYPEOF(data) == RAWSXP) {
-        if (shard_segment_write(seg, RAW(data), off, len) < 0) {
-            error("Write failed");
-        }
-    } else if (TYPEOF(data) == REALSXP) {
-        len *= sizeof(double);
-        if (shard_segment_write(seg, REAL(data), off, len) < 0) {
-            error("Write failed");
-        }
-    } else if (TYPEOF(data) == INTSXP) {
-        len *= sizeof(int);
-        if (shard_segment_write(seg, INTEGER(data), off, len) < 0) {
-            error("Write failed");
-        }
-    } else if (TYPEOF(data) == LGLSXP) {
-        len *= sizeof(int);
-        if (shard_segment_write(seg, LOGICAL(data), off, len) < 0) {
-            error("Write failed");
-        }
-    } else {
-        error("Unsupported data type");
+    switch (TYPEOF(data)) {
+        case RAWSXP:  src = RAW(data);                             break;
+        case REALSXP: src = REAL(data);    len *= sizeof(double);  break;
+        case INTSXP:  src = INTEGER(data); len *= sizeof(int);     break;
+        case LGLSXP:  src = LOGICAL(data); len *= sizeof(int);     break;
+        default:      error("Unsupported data type");
+    }
+
+    if (shard_segment_write(seg, src, off, len) < 0) {
+        /* Every remaining failure mode is the bounds check (the invalid,
+         * unmapped and read-only cases are all rejected above), so report the
+         * arithmetic that failed instead of a bare "Write failed". */
+        error("Write of %llu bytes at offset %llu exceeds segment size of %llu bytes",
+              (unsigned long long)len, (unsigned long long)off,
+              (unsigned long long)seg->size);
     }
 
     return ScalarReal((double)len);

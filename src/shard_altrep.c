@@ -73,19 +73,39 @@ typedef struct shard_altrep_info {
 /*
  * Phase 3.7: global generation counter for resolved-pointer caches.
  *
- * The resolved base pointer of a shard ALTREP vector can change for exactly
- * one reason: a COW materialization stores a private copy in some vector's
- * data2 slot (altvec_dataptr, writable path), which can redirect reads for
- * that vector AND for all views below it in the parent chain. The segment
- * mapping itself never moves: mmap addresses are fixed for the lifetime of
- * a shard_segment_t, the attach registry shares (never remaps) mappings,
- * and munmap only happens when the last handle dies -- impossible while any
- * view is alive, per the ownership graph above. So bumping this counter at
- * the single R_set_altrep_data2() site is a complete invalidation protocol.
- * Starts at 1 so a zeroed cached_gen is never valid. Single-threaded (R
- * main thread) by construction.
+ * A cached resolved pointer stops being valid for three reasons:
+ *
+ *   1. A COW materialization stores a private copy in some vector's data2
+ *      slot (altvec_dataptr, writable path), which redirects reads for that
+ *      vector AND for all views below it in the parent chain. Handled at the
+ *      R_set_altrep_data2() site.
+ *
+ *   2. The segment mapping is torn down. The ownership graph above keeps the
+ *      mapping alive against *GC*, but NOT against an explicit close:
+ *      segment_close() / close() unmap on demand, no matter how many ALTREP
+ *      vectors still point into the mapping. A pointer cached by a read
+ *      before the close would otherwise be handed back afterwards, reading
+ *      unmapped (possibly re-used) memory. Handled by
+ *      shard_altrep_invalidate_cached_ptrs(), called from shard_shm.c on
+ *      every teardown path.
+ *
+ *   3. segment_protect() replaces a shared mapping with a process-private
+ *      mapping at a new address so read-only DATAPTR requests stay zero-copy.
+ *
+ * Bumping this counter at those sites is a complete invalidation protocol:
+ * the next access re-resolves, and a closed segment resolves to NULL, which
+ * the read paths turn into an R error. Starts at 1 so a zeroed cached_gen is
+ * never valid. Single-threaded (R main thread) by construction.
  */
 static uint64_t shard_data2_gen = 1;
+
+/* Invalidate every cached resolved pointer. Called whenever a segment
+ * mapping is closed or unmapped (see reason 2 above). Cheap and rare:
+ * segment teardown is not on any hot path, and the only cost of a spurious
+ * call is one re-resolution per live vector. */
+void shard_altrep_invalidate_cached_ptrs(void) {
+    shard_data2_gen++;
+}
 
 /* ALTREP class objects - one per supported type */
 static R_altrep_class_t shard_int_class;
@@ -139,7 +159,7 @@ static void *vec_data_ptr(SEXP v, int type) {
  * If the vector has been materialized (data2 is a non-ALTREP vector), returns that.
  * Note: Views store the parent ALTREP in data2 for reference counting, so we
  * must check if data2 is ALTREP (parent ref) vs regular vector (materialized). */
-static void *resolve_data_ptr(SEXP x, shard_altrep_info_t *info) {
+static void *resolve_private_data_ptr(SEXP x, shard_altrep_info_t *info) {
     /* Check if we have a materialized copy in data2 */
     SEXP data2 = R_altrep_data2(x);
     if (data2 != R_NilValue && !ALTREP(data2)) {
@@ -172,13 +192,24 @@ static void *resolve_data_ptr(SEXP x, shard_altrep_info_t *info) {
         cur_info = pinfo;
     }
 
-    /* Otherwise use the shared memory segment */
+    return NULL;
+}
+
+static void *resolve_data_ptr(SEXP x, shard_altrep_info_t *info) {
+    /* Explicit close is terminal even after a vector has acquired a private
+     * data2 copy. Validate the public handle before consulting it.
+     * shard_segment_close() bumps the cache generation, so this slow path is
+     * guaranteed after close. */
     shard_segment_t *seg = get_segment(info);
     if (!seg) return NULL;
 
     void *base = shard_segment_addr(seg);
     if (!base) return NULL;
 
+    void *private_ptr = resolve_private_data_ptr(x, info);
+    if (private_ptr) return private_ptr;
+
+    /* Otherwise use the shared memory segment */
     return (char *)base + info->offset;
 }
 
@@ -200,6 +231,54 @@ static void *get_data_ptr(SEXP x, shard_altrep_info_t *info) {
         info->cached_gen = shard_data2_gen;
     }
     return resolved;
+}
+
+/* Helper: resolve the data pointer for a read that has no way to report
+ * failure to its caller, and error if the backing mapping is gone (typically
+ * because the segment was explicitly closed).
+ *
+ * The Elt and Get_region methods below cannot signal failure through their
+ * return values: an Elt method returning NA is indistinguishable from a
+ * genuine NA in the data, and a Get_region method returning a short count
+ * leaves the caller's buffer uninitialized -- R's ITERATE_BY_REGION consumers
+ * (sum(), mean(), max(), ...) then read whatever happened to be on the stack.
+ * Both are silent wrong answers, so they must be hard errors instead.
+ *
+ * Copy paths guard this on n > 0: a zero-length copy never dereferences the
+ * result, so demanding a live mapping for it would make as.integer() error on
+ * a closed length-0 vector while length(), sum() and [ still succeed. */
+static void *require_data_ptr(SEXP x, shard_altrep_info_t *info) {
+    void *ptr = get_data_ptr(x, info);
+    if (!ptr) {
+        Rf_error("shard ALTREP: underlying shared memory segment is no longer valid");
+    }
+    return ptr;
+}
+
+/* Materialize this ALTREP into its own data2 slot for a confirmed mutation.
+ * This is deliberately separate from altvec_dataptr(writable=TRUE): several
+ * base R algorithms pass writable=TRUE while only reading. */
+static void *materialize_for_write(SEXP x, shard_altrep_info_t *info) {
+    SEXP data2 = R_altrep_data2(x);
+    if (data2 != R_NilValue && !ALTREP(data2)) {
+        return vec_data_ptr(data2, TYPEOF(data2));
+    }
+
+    R_xlen_t n = info->length;
+    void *src = (n > 0) ? require_data_ptr(x, info) : NULL;
+    SEXP materialized = PROTECT(allocVector(info->sexp_type, n));
+    void *dst = vec_data_ptr(materialized, info->sexp_type);
+    if (dst && n > 0) {
+        memcpy(dst, src, n * info->element_size);
+    }
+
+    R_set_altrep_data2(x, materialized);
+    shard_data2_gen++;
+    info->cached_ptr = dst;
+    info->cached_gen = shard_data2_gen;
+    info->materialize_calls++;
+    UNPROTECT(1);
+    return dst;
 }
 
 /* Finalizer for info struct (Phase 3.6): only frees the malloc'd struct.
@@ -281,15 +360,17 @@ static SEXP altrep_duplicate(SEXP x, Rboolean deep) {
     shard_altrep_info_t *info = get_info(x);
     if (!info) return R_NilValue;
 
-    /* For deep copy, materialize to regular vector */
+    /* For deep copy, materialize to regular vector. Resolve the source
+     * before allocating: a dead segment must error, not hand back a vector
+     * of whatever allocVector() left in place. */
     if (deep) {
         info->materialize_calls++;
         R_xlen_t n = info->length;
+        void *src = (n > 0) ? require_data_ptr(x, info) : NULL;
         SEXP result = PROTECT(allocVector(info->sexp_type, n));
 
-        void *src = get_data_ptr(x, info);
         void *dst = vec_data_ptr(result, info->sexp_type);
-        if (src && dst) {
+        if (dst && n > 0) {
             memcpy(dst, src, n * info->element_size);
         }
         UNPROTECT(1);
@@ -360,10 +441,10 @@ static SEXP altrep_serialized_state(SEXP x) {
     if (!seg || !seg->path) {
         info->materialize_calls++;
         R_xlen_t n = info->length;
+        void *src = (n > 0) ? require_data_ptr(x, info) : NULL;
         SEXP result = PROTECT(allocVector(info->sexp_type, n));
-        void *src = get_data_ptr(x, info);
         void *dst = vec_data_ptr(result, info->sexp_type);
-        if (src && dst) {
+        if (dst && n > 0) {
             memcpy(dst, src, n * info->element_size);
         }
         UNPROTECT(1);
@@ -386,7 +467,12 @@ static SEXP altrep_serialized_state(SEXP x) {
     SET_VECTOR_ELT(state, 1, ScalarInteger((int)seg->backing));
     SET_VECTOR_ELT(state, 2, ScalarReal((double)info->offset));
     SET_VECTOR_ELT(state, 3, ScalarReal((double)info->length));
-    SET_VECTOR_ELT(state, 4, ScalarLogical(info->readonly));
+    /* Serialize the EFFECTIVE read-only state, not the creation-time
+     * snapshot. If segment_protect() ran after this vector was built,
+     * info->readonly is stale; shipping it would make the receiver re-attach
+     * the segment O_RDWR and write straight through the protection that the
+     * local vector honours by copy-on-write. See altvec_dataptr(). */
+    SET_VECTOR_ELT(state, 4, ScalarLogical(info->readonly || seg->readonly));
     {
         SEXP sym_cow = install("shard_cow");
         SEXP cow_attr = getAttrib(x, sym_cow);
@@ -514,6 +600,18 @@ static SEXP altrep_unserialize(SEXP cls, SEXP state) {
 static void *altvec_dataptr(SEXP x, Rboolean writable) {
     shard_altrep_info_t *info = get_info(x);
     if (!info) return NULL;
+    shard_segment_t *seg = NULL;
+
+    /* A private data2 representation does not outlive an explicit close of
+     * the public shared object. Validate the handle before the fast path below
+     * returns it. Zero-length vectors are exempt: no caller can dereference
+     * their data pointer. */
+    if (info->length > 0) {
+        seg = get_segment(info);
+        if (!seg || !shard_segment_addr(seg)) {
+            Rf_error("shard ALTREP: underlying shared memory segment is no longer valid");
+        }
+    }
 
     /*
      * cow='deny' (info->deny_write): writes must never reach the shared
@@ -524,23 +622,48 @@ static void *altvec_dataptr(SEXP x, Rboolean writable) {
      * error would make deny vectors unusable for ordinary reads -- including
      * worker-side borrows, which unserialize with deny_write=1.
      *
-     * Enforcement therefore has three cooperating layers:
-     *   1. The segment itself is mprotect(PROT_READ) / VirtualProtect
-     *      PAGE_READONLY, so the shared bytes physically cannot change.
+     * Enforcement therefore has cooperating layers:
+     *   1. segment_protect() makes the mapping process-private, so no write
+     *      can reach disk or another process.
      *   2. R-level replacement methods ([<-, names<-, dim<-, ...) error
      *      with cow='deny' for classed access.
-     *   3. Here, a writable request is served from a PRIVATE materialized
-     *      copy in data2 (never the shared mapping), so even a bypassed
-     *      write (e.g. after unclass()) can only touch a transient copy,
-     *      never the shared segment.
+     *   3. Vectors created readonly serve writable requests from a private
+     *      materialized data2 copy, so an unclass() bypass does not even
+     *      mutate the process-private segment view.
      */
+
+    /*
+     * info->readonly is a snapshot taken when this vector was created, and
+     * the mapping can be made logically read-only afterwards.
+     * segment_protect() cannot reach back into vectors that already exist,
+     * so consult the live segment state and its physical mapping mode too.
+     */
+    int readonly = info->readonly;
+    if (writable && !readonly) {
+        if (!seg) seg = get_segment(info);
+        if (seg && seg->readonly) {
+            /* segment_protect() normally replaced the shared mapping with a
+             * single writable MAP_PRIVATE / FILE_MAP_COPY view. Returning it
+             * preserves the pre-fix zero-copy read path without permitting
+             * writes to reach disk or another process. Actual classed writes
+             * are prepared explicitly by the R replacement methods. */
+            if (seg->private_cow) {
+                info->dataptr_calls++;
+                return require_data_ptr(x, info);
+            }
+
+            /* Platform fallback used a PROT_READ mapping: retain the full
+             * private-vector safety path rather than returning it for a write. */
+            readonly = 1;
+        }
+    }
 
     /*
      * Enforce readonly via copy-on-write: when writable access is requested
      * but the vector is readonly, materialize to a private copy stored in
      * data2. Subsequent accesses will use the materialized copy.
      */
-    if (writable && info->readonly) {
+    if (writable && readonly) {
         SEXP data2 = R_altrep_data2(x);
 
         /*
@@ -553,41 +676,13 @@ static void *altvec_dataptr(SEXP x, Rboolean writable) {
             return vec_data_ptr(data2, TYPEOF(data2));
         }
 
-        /* Materialize: allocate R vector and copy shared memory data */
-        info->materialize_calls++;
-        R_xlen_t n = info->length;
-        SEXP materialized = PROTECT(allocVector(info->sexp_type, n));
-
-        void *src = get_data_ptr(x, info);
-        if (!src) {
-            UNPROTECT(1);
-            Rf_error("shard ALTREP: underlying shared memory segment is no longer valid");
-        }
-        void *dst = vec_data_ptr(materialized, info->sexp_type);
-        if (dst && n > 0) {
-            memcpy(dst, src, n * info->element_size);
-        }
-
-        /* Store in data2 for future access. This is the ONLY site that can
-         * change how get_data_ptr() resolves (for this vector and for views
-         * below it), so bump the global generation to invalidate all cached
-         * resolved pointers (3.7). Cache our own new resolution directly. */
-        R_set_altrep_data2(x, materialized);
-        shard_data2_gen++;
-        info->cached_ptr = dst;
-        info->cached_gen = shard_data2_gen;
-        UNPROTECT(1);
-
+        void *dst = materialize_for_write(x, info);
         info->dataptr_calls++;
         return dst;
     }
 
     info->dataptr_calls++;
-    void *ptr = get_data_ptr(x, info);
-    if (!ptr) {
-        Rf_error("shard ALTREP: underlying shared memory segment is no longer valid");
-    }
-    return ptr;
+    return require_data_ptr(x, info);
 }
 
 /* Dataptr_or_null - returns pointer without side effects if possible */
@@ -717,8 +812,8 @@ static int altint_elt(SEXP x, R_xlen_t i) {
     shard_altrep_info_t *info = get_info(x);
     if (!info || i < 0 || i >= info->length) return NA_INTEGER;
 
-    int *data = (int *)get_data_ptr(x, info);
-    return data ? data[i] : NA_INTEGER;
+    int *data = (int *)require_data_ptr(x, info);
+    return data[i];
 }
 
 static R_xlen_t altint_get_region(SEXP x, R_xlen_t start, R_xlen_t size, int *buf) {
@@ -731,8 +826,7 @@ static R_xlen_t altint_get_region(SEXP x, R_xlen_t start, R_xlen_t size, int *bu
         size = info->length - start;
     }
 
-    int *data = (int *)get_data_ptr(x, info);
-    if (!data) return 0;
+    int *data = (int *)require_data_ptr(x, info);
 
     memcpy(buf, data + start, size * sizeof(int));
     return size;
@@ -746,8 +840,8 @@ static double altreal_elt(SEXP x, R_xlen_t i) {
     shard_altrep_info_t *info = get_info(x);
     if (!info || i < 0 || i >= info->length) return NA_REAL;
 
-    double *data = (double *)get_data_ptr(x, info);
-    return data ? data[i] : NA_REAL;
+    double *data = (double *)require_data_ptr(x, info);
+    return data[i];
 }
 
 static R_xlen_t altreal_get_region(SEXP x, R_xlen_t start, R_xlen_t size, double *buf) {
@@ -759,8 +853,7 @@ static R_xlen_t altreal_get_region(SEXP x, R_xlen_t start, R_xlen_t size, double
         size = info->length - start;
     }
 
-    double *data = (double *)get_data_ptr(x, info);
-    if (!data) return 0;
+    double *data = (double *)require_data_ptr(x, info);
 
     memcpy(buf, data + start, size * sizeof(double));
     return size;
@@ -774,8 +867,8 @@ static int altlogical_elt(SEXP x, R_xlen_t i) {
     shard_altrep_info_t *info = get_info(x);
     if (!info || i < 0 || i >= info->length) return NA_LOGICAL;
 
-    int *data = (int *)get_data_ptr(x, info);
-    return data ? data[i] : NA_LOGICAL;
+    int *data = (int *)require_data_ptr(x, info);
+    return data[i];
 }
 
 static R_xlen_t altlogical_get_region(SEXP x, R_xlen_t start, R_xlen_t size, int *buf) {
@@ -791,8 +884,8 @@ static Rbyte altraw_elt(SEXP x, R_xlen_t i) {
     shard_altrep_info_t *info = get_info(x);
     if (!info || i < 0 || i >= info->length) return 0;
 
-    Rbyte *data = (Rbyte *)get_data_ptr(x, info);
-    return data ? data[i] : 0;
+    Rbyte *data = (Rbyte *)require_data_ptr(x, info);
+    return data[i];
 }
 
 static R_xlen_t altraw_get_region(SEXP x, R_xlen_t start, R_xlen_t size, Rbyte *buf) {
@@ -804,8 +897,7 @@ static R_xlen_t altraw_get_region(SEXP x, R_xlen_t start, R_xlen_t size, Rbyte *
         size = info->length - start;
     }
 
-    Rbyte *data = (Rbyte *)get_data_ptr(x, info);
-    if (!data) return 0;
+    Rbyte *data = (Rbyte *)require_data_ptr(x, info);
 
     memcpy(buf, data + start, size * sizeof(Rbyte));
     return size;
@@ -1094,7 +1186,15 @@ SEXP C_shard_altrep_diagnostics(SEXP x) {
     SET_VECTOR_ELT(result, 2, ScalarReal((double)info->coerce_calls));
     SET_VECTOR_ELT(result, 3, ScalarReal((double)info->length));
     SET_VECTOR_ELT(result, 4, ScalarReal((double)info->offset));
-    SET_VECTOR_ELT(result, 5, ScalarLogical(info->readonly));
+    {
+        /* Effective, not creation-time: segment_protect() can make a vector
+         * copy-on-write after the fact, and this is the supported way to
+         * observe that. Matches what altvec_dataptr() actually enforces and
+         * what shared_info() reports. */
+        shard_segment_t *seg = get_segment(info);
+        int ro = info->readonly || (seg && seg->readonly);
+        SET_VECTOR_ELT(result, 5, ScalarLogical(ro));
+    }
     SET_VECTOR_ELT(result, 6, ScalarString(mkChar(type2char(info->sexp_type))));
 
     setAttrib(result, R_NamesSymbol, names);
@@ -1143,6 +1243,25 @@ SEXP C_shard_altrep_reset_diagnostics(SEXP x) {
     return R_NilValue;
 }
 
+/* Prepare a shard ALTREP for a mutation that has already passed the R-level
+ * COW policy check. Unlike a generic writable DATAPTR request, this call is
+ * proof that a write is about to happen, so a private R-vector copy is both
+ * necessary and correctly attributed. */
+SEXP C_shard_altrep_prepare_write(SEXP x) {
+    shard_altrep_info_t *info = get_info(x);
+    if (!info) error("x must be a shard ALTREP vector");
+
+    shard_segment_t *seg = get_segment(info);
+    if (!seg || !shard_segment_addr(seg)) {
+        error("shard ALTREP: underlying shared memory segment is no longer valid");
+    }
+
+    if (info->readonly || seg->readonly) {
+        (void)materialize_for_write(x, info);
+    }
+    return x;
+}
+
 /* Materialize an ALTREP vector to a standard R vector */
 SEXP C_shard_altrep_materialize(SEXP x) {
     if (!ALTREP(x)) {
@@ -1157,14 +1276,17 @@ SEXP C_shard_altrep_materialize(SEXP x) {
     /* Increment materialize counter */
     info->materialize_calls++;
 
-    /* Allocate standard R vector */
+    /* Resolve the source before allocating, so a dead segment errors rather
+     * than returning an uninitialized vector. */
     R_xlen_t n = info->length;
+    void *src = (n > 0) ? require_data_ptr(x, info) : NULL;
+
+    /* Allocate standard R vector */
     SEXP result = PROTECT(allocVector(info->sexp_type, n));
 
     /* Copy data from shared memory to R vector */
-    void *src = get_data_ptr(x, info);
     void *dst = vec_data_ptr(result, info->sexp_type);
-    if (src && dst && n > 0) {
+    if (dst && n > 0) {
         memcpy(dst, src, n * info->element_size);
     }
 

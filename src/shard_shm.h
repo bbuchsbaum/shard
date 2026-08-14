@@ -39,6 +39,7 @@ typedef struct shard_segment {
     size_t size;             /* Size in bytes */
     shard_backing_t backing; /* Backing type */
     int readonly;            /* Read-only flag */
+    int private_cow;         /* Mapping is writable but process-private */
     char *path;              /* File path (mmap) or shm name */
     int owns_shm;            /* Whether this handle owns the underlying segment */
     int refcount;            /* Live handles sharing this struct (>= 1) */

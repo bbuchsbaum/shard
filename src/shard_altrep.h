@@ -24,6 +24,18 @@ typedef struct shard_segment shard_segment_t;
 attribute_visible void shard_altrep_init(DllInfo *dll);
 
 /*
+ * Invalidate all cached resolved data pointers held by live shard ALTREP
+ * vectors.
+ *
+ * Must be called whenever a segment mapping is closed or unmapped: ALTREP
+ * vectors can outlive an explicit segment_close(), and they cache the
+ * resolved base pointer across reads. Without this, a read that happens
+ * before the close leaves a pointer into unmapped memory that a later read
+ * would reuse.
+ */
+void shard_altrep_invalidate_cached_ptrs(void);
+
+/*
  * Create an ALTREP vector backed by shared memory
  *
  * @param seg       Shared memory segment (external pointer)
@@ -78,6 +90,10 @@ attribute_visible SEXP C_shard_altrep_segment(SEXP x);
  * @return          R_NilValue (invisibly)
  */
 attribute_visible SEXP C_shard_altrep_reset_diagnostics(SEXP x);
+
+/* Prepare a shared vector for a confirmed R-level mutation by installing a
+ * private data2 copy when its segment is logically read-only. */
+attribute_visible SEXP C_shard_altrep_prepare_write(SEXP x);
 
 /*
  * Materialize an ALTREP shared vector to a standard R vector
