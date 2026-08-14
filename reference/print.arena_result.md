@@ -30,10 +30,10 @@ Returns `x` invisibly.
 info <- arena({ sum(1:10) }, diagnostics = TRUE)
 print(info)
 #> <arena_result>
-#>   Arena ID: arena_1_18462020.122 
+#>   Arena ID: arena_1_01375151.120 
 #>   Strict mode: FALSE 
-#>   RSS before: 200,667,136 bytes
-#>   RSS after: 200,667,136 bytes
+#>   RSS before: 199,933,952 bytes
+#>   RSS after: 199,933,952 bytes
 #>   RSS delta: 0 bytes
 #>   Result size: 56 bytes
 #> 

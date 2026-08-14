@@ -27,7 +27,7 @@ shared_segment(x)
 #> <shard_segment>
 #>   Size: 400 bytes
 #>   Backing: shm 
-#>   Path: /shd1900_6a5a7893_6a5a78a0 
+#>   Path: /shd19f2_6a7e7189_6a7e718f 
 #>   Read-only: TRUE 
 #>   Owns segment: TRUE 
 # }

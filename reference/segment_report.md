@@ -35,7 +35,7 @@ garbage collected, so this only shows segments with live references.
 # \donttest{
 segment_report()
 #> shard segment report
-#> Generated: 2026-07-17 18:46:34 
+#> Generated: 2026-08-14 01:38:07 
 #> 
 #> Backing types:
 #>   Available: mmap, shm 

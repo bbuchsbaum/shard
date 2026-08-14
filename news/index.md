@@ -1,6 +1,77 @@
 # Changelog
 
+## shard 0.2.1
+
+Bug-fix release addressing memory-safety and silent-wrong-answer defects
+when a shared vector is accessed after its segment has been closed.
+
+### Bug fixes
+
+- Fixed a use-after-unmap when reading a shared vector after
+  [`close()`](https://rdrr.io/r/base/connections.html) or
+  [`segment_close()`](https://bbuchsbaum.github.io/shard/reference/segment_close.md).
+  Shared vectors cache the resolved base pointer across reads, and
+  closing a segment unmapped it without invalidating that cache, so a
+  read performed before the close left a pointer into unmapped memory
+  that a later read would reuse. Depending on whether the operating
+  system had reused the address range, this crashed the R session or
+  silently returned garbage values. Segment teardown now invalidates all
+  cached pointers. Views were affected through their parent segment as
+  well.
+- Accessing a shared vector whose segment has been closed now raises
+  `"underlying shared memory segment is no longer valid"` from every
+  access path. Previously only the `DATAPTR` paths reported the error:
+  element access returned `NA`, and the region-copy methods used by
+  [`sum()`](https://rdrr.io/r/base/sum.html),
+  [`mean()`](https://rdrr.io/r/base/mean.html) and
+  [`max()`](https://rdrr.io/r/base/Extremes.html) returned a short count
+  without filling the caller’s buffer, so those reductions consumed
+  uninitialized memory and returned arbitrary values. Coercion and
+  materialization returned zero-filled vectors.
+  [`length()`](https://rdrr.io/r/base/length.html) continues to work on
+  a closed vector, as it reads no shared memory.
+- Fixed a bus error when
+  [`segment_protect()`](https://bbuchsbaum.github.io/shard/reference/segment_protect.md)
+  is called on a segment that already has a writable shared vector over
+  it. Each vector captured the segment’s read-only state at creation, so
+  it kept handing out writable pointers into a mapping that had since
+  been made read-only, and the write faulted. Protection now replaces
+  the shared mapping with a single process-private copy-on-write
+  mapping. Read-only operations that ask for a writable data pointer –
+  including [`range()`](https://rdrr.io/r/base/range.html),
+  [`which.max()`](https://rdrr.io/r/base/which.min.html) and comparison
+  operators – therefore keep their zero-copy behavior, while a real
+  classed mutation is explicitly materialized and writes through an
+  [`unclass()`](https://rdrr.io/r/base/class.html) bypass cannot reach
+  disk or another process. Vectors created by
+  [`share()`](https://bbuchsbaum.github.io/shard/reference/share.md) and
+  [`as_shared()`](https://bbuchsbaum.github.io/shard/reference/as_shared.md)
+  were unaffected, as those protect the segment before building the
+  vector. The same stale flag was written into the serialized form of
+  such a vector, so sending one to a worker re-opened the segment
+  read-write and writes reached the shared bytes; serialization now
+  carries the effective state.
+  [`shared_diagnostics()`](https://bbuchsbaum.github.io/shard/reference/shared_diagnostics.md)
+  likewise reports the effective read-only state rather than the value
+  captured at creation.
+- [`pool_health_check()`](https://bbuchsbaum.github.io/shard/reference/pool_health_check.md)
+  no longer aborts with `"missing value where TRUE/FALSE needed"` when a
+  worker’s resident-set size cannot be read. This happened when a worker
+  exited between the liveness probe and the memory reading, or when a
+  baseline captured at spawn was itself unavailable; such workers are
+  now left for the next tick’s liveness check instead, and the health
+  report says so rather than reporting all workers healthy.
+  [`pool_create()`](https://bbuchsbaum.github.io/shard/reference/pool_create.md)
+  now rejects an `NA` `rss_limit` or `rss_drift_threshold`, which
+  reached the same comparison.
+- [`segment_write()`](https://bbuchsbaum.github.io/shard/reference/segment_write.md)
+  now reports the write size, offset and segment size when a write does
+  not fit, instead of a bare `"Write failed"`. Writes to an unmapped
+  segment are rejected with a distinct message.
+
 ## shard 0.2.0
+
+CRAN release: 2026-07-17
 
 Internal performance and correctness refactor. No user-facing API was
 removed; apart from a new `path=` argument to
